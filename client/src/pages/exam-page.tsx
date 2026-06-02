@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useLocation } from "wouter";
 import { useSession } from "@supabase/auth-helpers-react";
+import { apiRequest } from "@/lib/queryClient";
 import { JobExam } from "@/components/job-exam";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,14 +11,30 @@ import { ArrowLeft, Briefcase, Clock, CheckCircle } from "lucide-react";
 export default function ExamPage() {
   const [, setLocation] = useLocation();
   const session = useSession();
-  const params = useParams<{ jobId?: string; jobTitle?: string }>();
-  
-  // Parse URL parameters
-  const jobId = params.jobId ? parseInt(params.jobId) : undefined;
-  const jobTitle = params.jobTitle || "Job Assessment";
-  
+  const params = useParams<{ jobId?: string }>();
 
-  
+  // The route is /exam/:jobId — there is no jobTitle param. Fetch the real
+  // title from the exam endpoint (which the candidate is already authorized to
+  // read, having applied) so the header doesn't read "Job Assessment for Job
+  // Assessment".
+  const jobId = params.jobId ? parseInt(params.jobId) : undefined;
+  const [jobTitle, setJobTitle] = useState("Job Assessment");
+
+  useEffect(() => {
+    if (!jobId || !session?.user) {return;}
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await apiRequest('GET', `/api/jobs/${jobId}/exam`);
+        const data = await response.json();
+        if (!cancelled && data?.jobTitle) {setJobTitle(data.jobTitle);}
+      } catch {
+        // Leave the generic fallback in place if the title can't be fetched.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [jobId, session?.user]);
+
   const [examStarted, setExamStarted] = useState(false);
   const [examCompleted, setExamCompleted] = useState(false);
   const [examResult, setExamResult] = useState<{ score: number; passed: boolean; ranking?: number; totalCandidates?: number; qualifiedForChat?: boolean; examFeedback?: string } | null>(null);
