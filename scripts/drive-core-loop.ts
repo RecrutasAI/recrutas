@@ -51,8 +51,10 @@ const EXAM_QUESTIONS = [
   { id: "q2", type: "multiple-choice", text: "What does SQL stand for?", options: ["Wrong", "Structured Query Language"], correctAnswer: 1, points: 10 },
   { id: "q3", type: "multiple-choice", text: "Big-O of binary search?", options: ["O(n)", "O(log n)"], correctAnswer: 1, points: 10 },
 ];
-// Answers that earn 100% (pick the option at the correctAnswer index).
-const CORRECT_ANSWERS = { q1: "let", q2: "Structured Query Language", q3: "O(log n)" };
+// Answers that earn 100%. The real exam UI (job-exam.tsx) submits the selected
+// option's 0-based index as a string, so mirror that exact encoding here — using
+// option text instead would mask the index/text mismatch this script exists to catch.
+const CORRECT_ANSWERS = { q1: "1", q2: "1", q3: "1" };
 
 async function main() {
   console.log("=== Driving the core product loop end-to-end ===\n");
