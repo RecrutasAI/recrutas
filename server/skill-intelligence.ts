@@ -560,13 +560,13 @@ function isCountryOnly(s: string): boolean {
 // "PURELOGICS New York" → { company: "PURELOGICS", rest: "New York" }.
 // Pulls an ALL-CAPS company prefix off a string. Returns null if absent.
 function splitAllCapsCompany(s: string): { company: string; rest: string } | null {
-  const m = s.match(/^([A-Z][A-Z0-9&'.\-]{2,}(?:\s+[A-Z][A-Z0-9&'.\-]+)*)\s+([A-Za-z].+)$/);
+  const m = s.match(/^([A-Z][A-Z0-9&'.-]{2,}(?:\s+[A-Z][A-Z0-9&'.-]+)*)\s+([A-Za-z].+)$/);
   if (!m) return null;
   const company = m[1].trim();
   const rest = m[2].trim();
   if (company.length < 3) return null;
   const firstRestTok = rest.split(/\s+/)[0] || '';
-  if (/^[A-Z][A-Z0-9&'.\-]+$/.test(firstRestTok)) return null;
+  if (/^[A-Z][A-Z0-9&'.-]+$/.test(firstRestTok)) return null;
   return { company, rest };
 }
 
@@ -660,7 +660,7 @@ export function reflowResumeText(text: string): string {
   // 3. Newline between mixed-case title text and an ALL-CAPS company token
   //    followed by a capitalized location word.
   s = s.replace(
-    /([a-z\)])[ \t]+(?=[A-Z][A-Z0-9&'.\-]{2,}(?:[ \t]+[A-Z][A-Z0-9&'.\-]+)*[ \t]+[A-Z][a-z])/g,
+    /([a-z)])[ \t]+(?=[A-Z][A-Z0-9&'.-]{2,}(?:[ \t]+[A-Z][A-Z0-9&'.-]+)*[ \t]+[A-Z][a-z])/g,
     '$1\n'
   );
 
@@ -683,7 +683,7 @@ export function reflowResumeText(text: string): string {
   //     PDF artifact where the last bullet of one job runs into the next job's
   //     title: "...delivered. Senior Data Scientist Machine Learning Engineer".
   //     Run AFTER rule 3 so titles aren't already broken out.
-  const TITLE_CASE_RUN = /[A-Z][A-Za-z]*(?:[ \t]+(?:[A-Z][A-Za-z&'.\-]*|&|and|of|the|to|for|\([A-Za-z0-9, /\-]+\)))+/;
+  const TITLE_CASE_RUN = /[A-Z][A-Za-z]*(?:[ \t]+(?:[A-Z][A-Za-z&'.-]*|&|and|of|the|to|for|\([A-Za-z0-9, /-]+\)))+/;
   s = s.split('\n').map(line => {
     const m = line.match(new RegExp('^(.+?\\.\\s+)(' + TITLE_CASE_RUN.source + ')[ \\t]*$'));
     if (m && /\b(engineer|developer|manager|analyst|designer|consultant|director|architect|scientist|specialist|coordinator|administrator|technician|associate|lead|principal|head|chief|founder|president|intern|advisor)\b/i.test(m[2])) {

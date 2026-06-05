@@ -21,7 +21,9 @@
 import { randomUUID } from "crypto";
 import { db, client } from "../server/db.js";
 import { users, candidateProfiles, jobApplications, chatRooms, chatMessages, jobExams, examAttempts, jobPostings } from "@shared/schema";
-import { eq, inArray, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
+import { sql } from "drizzle-orm/sql";
+import { inArray } from "drizzle-orm/sql/expressions";
 import { storage } from "../server/storage.js";
 import { notificationService } from "../server/notification-service.js";
 import { ExamService } from "../server/services/exam.service.js";

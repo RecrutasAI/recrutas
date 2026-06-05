@@ -15,7 +15,7 @@
  */
 
 import { db, client } from "../server/db.js";
-import { sql } from "drizzle-orm";
+import { sql } from "drizzle-orm/sql";
 import { storage } from "../server/storage.js";
 import { notificationService } from "../server/notification-service.js";
 import { callAI, isAIAvailable } from "../server/lib/ai-client.js";
