@@ -60,6 +60,7 @@ import {
 } from "../shared/schema.js";
 import { db, client } from "./db";
 import { eq, desc, asc, and, or } from "drizzle-orm";
+import { getTableColumns } from "drizzle-orm/utils";
 import { sql } from "drizzle-orm/sql";
 import { inArray } from "drizzle-orm/sql/expressions";
 import { supabaseAdmin } from "./lib/supabase-admin";
@@ -236,6 +237,11 @@ function isFromAts(source: string | null | undefined): boolean {
 // safely embedded inside a Postgres POSIX regex pattern.
 function escapePgRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Escape LIKE/ILIKE wildcards so a term is matched literally (default '\' escape).
+function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, '\\$&');
 }
 
 // Job board aggregators — excluded from the candidate feed (links don't go to actual job pages)
@@ -1228,6 +1234,13 @@ export class DatabaseStorage implements IStorage {
     let allJobs: any[];
     let vectorDistMap = new Map<number, number>();
 
+    // Hydrate projection that omits the two heavy embedding columns
+    // (vector_embedding text + embedding vector). Neither is needed downstream:
+    // Path A precomputes cosine distance in SQL; Path B has no candidate
+    // embedding so scoreJob never reads them. Skipping them is what keeps the
+    // hydrate fast (SELECT * over ~1000 rows ships ~8MB of embedding data).
+    const { embedding: _omitEmbedding, vectorEmbedding: _omitVectorEmbedding, ...slimColumns } = getTableColumns(jobPostings);
+
     if (candidateEmbedding && candidateEmbedding.length > 0 && client) {
       // ── Path A: pgvector semantic retrieval + keyword backup ──
       const vectorStr = `[${candidateEmbedding.join(',')}]`;
@@ -1330,20 +1343,25 @@ export class DatabaseStorage implements IStorage {
             // which is what lets ?| use the index. Replaces a per-row
             // jsonb_array_elements_text subplan per skill (~7.7s → ~50ms).
             sql`${jobPostings.skills} ?| ARRAY[${sql.join(candidateSkills.map(s => sql`${s}`), sql`, `)}]::text[]`,
+            // ILIKE (not ~* word-boundary regex) so these use the pg_trgm GIN
+            // index on title. The regex form can't use the index → a seq scan
+            // that cost ~40s alone; ILIKE substring match is ~26-85x faster and
+            // the scorer re-ranks on precise title relevance anyway.
             ...(titleMatchSkills.length > 0
               ? titleMatchSkills.map(skill =>
-                  sql`${jobPostings.title} ~* ${'\\y' + escapePgRegex(skill) + '\\y'}`
+                  sql`${jobPostings.title} ILIKE ${'%' + escapeLike(skill) + '%'}`
                 )
               : []),
             ...(roleTitleKeywords.length > 0
               ? roleTitleKeywords.map(keyword =>
-                  sql`${jobPostings.title} ~* ${'\\y' + escapePgRegex(keyword) + '\\y'}`
+                  sql`${jobPostings.title} ILIKE ${'%' + escapeLike(keyword) + '%'}`
                 )
               : []),
             ...((titleMatchSkills.length === 0 && roleTitleKeywords.length === 0) ? [sql`FALSE`] : []),
           ),
         ))
         .limit(1000);
+      console.timeEnd('keyword-query');
       const keywordIds = keywordJobs.map((r: any) => r.id);
       console.log(`[keyword] Retrieved ${keywordIds.length} jobs by keyword match`);
 
@@ -1354,9 +1372,26 @@ export class DatabaseStorage implements IStorage {
       if (mergedIds.length === 0) {
         allJobs = [];
       } else {
+        // Cosine distance for ALL merged ids in one query (~0.3s). The ANN query
+        // only returned distances for its own top-100; computing the rest here
+        // lets scoreJob use a precomputed distance for every job, so it never
+        // JSON.parses the per-row vector_embedding text — which in turn lets the
+        // hydrate skip the two embedding columns entirely (see below).
+        console.time('dist-query');
+        const distRows = await client.unsafe(
+          `SELECT id, (embedding <=> $1::vector) AS d FROM job_postings WHERE id = ANY($2::int[]) AND embedding IS NOT NULL`,
+          [vectorStr, mergedIds],
+        );
+        for (const r of distRows) vectorDistMap.set(Number(r.id), parseFloat(r.d));
+        console.timeEnd('dist-query');
+
+        // Slim hydrate (slimColumns omits the two heavy embedding columns). For a
+        // ~1000-row merged set, SELECT * spends ~40s shipping/decoding ~8MB of
+        // embedding data we no longer need (distances are precomputed above).
+        // Dropping them takes the hydrate from ~40s → ~3s.
         console.time('hydrate-query');
         allJobs = await db
-          .select()
+          .select(slimColumns)
           .from(jobPostings)
           .where(sql`${jobPostings.id} IN (${sql.join(mergedIds.map(id => sql`${id}`), sql`, `)})`)
           .orderBy(
@@ -1370,7 +1405,7 @@ export class DatabaseStorage implements IStorage {
       // ── Path B: keyword-only fallback (no embedding) ──
       console.time('keyword-only-query');
       allJobs = await db
-        .select()
+        .select(slimColumns)
         .from(jobPostings)
         .where(and(
           baseFilters,
@@ -1381,14 +1416,18 @@ export class DatabaseStorage implements IStorage {
             // which is what lets ?| use the index. Replaces a per-row
             // jsonb_array_elements_text subplan per skill (~7.7s → ~50ms).
             sql`${jobPostings.skills} ?| ARRAY[${sql.join(candidateSkills.map(s => sql`${s}`), sql`, `)}]::text[]`,
+            // ILIKE (not ~* word-boundary regex) so these use the pg_trgm GIN
+            // index on title. The regex form can't use the index → a seq scan
+            // that cost ~40s alone; ILIKE substring match is ~26-85x faster and
+            // the scorer re-ranks on precise title relevance anyway.
             ...(titleMatchSkills.length > 0
               ? titleMatchSkills.map(skill =>
-                  sql`${jobPostings.title} ~* ${'\\y' + escapePgRegex(skill) + '\\y'}`
+                  sql`${jobPostings.title} ILIKE ${'%' + escapeLike(skill) + '%'}`
                 )
               : []),
             ...(roleTitleKeywords.length > 0
               ? roleTitleKeywords.map(keyword =>
-                  sql`${jobPostings.title} ~* ${'\\y' + escapePgRegex(keyword) + '\\y'}`
+                  sql`${jobPostings.title} ILIKE ${'%' + escapeLike(keyword) + '%'}`
                 )
               : []),
             ...((titleMatchSkills.length === 0 && roleTitleKeywords.length === 0) ? [sql`FALSE`] : []),
