@@ -486,7 +486,32 @@ export async function registerRoutes(app: Express): Promise<Express> {
       console.error(`[ai-matches] Error after ${elapsed}ms:`, error?.message);
       finish();
       if (error?.message?.includes('timeout') || error?.message?.includes('cancel')) {
-        console.error(`[ai-matches][TIMEOUT] user=${req.user?.id} elapsed=${elapsed}ms limit=${TIMEOUT_MS}ms — returning empty result`);
+        const userId = req.user?.id;
+        const reqPage = Math.max(1, parseInt(req.query.page as string) || 1);
+        // On a matching timeout, serve the skill-relevant ATS discovery feed
+        // instead of empty — empty makes the client drop to the external
+        // aggregator fallback, which defeats the matched experience. Page 1 only
+        // (the feed is a single page); guard with a short timeout so a struggling
+        // function can't hang here too.
+        if (userId && reqPage === 1) {
+          try {
+            const DISCOVERY_MS = 8000;
+            let dTimer: NodeJS.Timeout;
+            const dTimeout = new Promise<never>((_, rej) => {
+              dTimer = setTimeout(() => rej(new Error('discovery timeout')), DISCOVERY_MS);
+            });
+            const discovery = await Promise.race([
+              storage.getDiscoveryFeedForCandidate(userId),
+              dTimeout,
+            ]) as any[];
+            clearTimeout(dTimer!);
+            const jobs = discovery.map((job: any, index: number) => formatJobMatch(job, index));
+            console.error(`[ai-matches][TIMEOUT] user=${userId} elapsed=${elapsed}ms — served ${jobs.length} discovery jobs`);
+            return res.json({ jobs, total: jobs.length, page: 1, hasMore: false });
+          } catch (fallbackErr: any) {
+            console.error(`[ai-matches][TIMEOUT] user=${userId} elapsed=${elapsed}ms — discovery fallback failed (${fallbackErr?.message}), returning empty`);
+          }
+        }
         return res.json({ jobs: [], total: 0, page: 1, hasMore: false });
       }
       res.status(500).json({

@@ -99,6 +99,7 @@ export interface IStorage {
   getJobPostings(recruiterId: string): Promise<JobPosting[]>;
   getJobPosting(id: number): Promise<JobPosting | undefined>;
   getJobRecommendations(candidateId: string, filters?: { jobTitle?: string; location?: string; workType?: string }, pagination?: { page: number; limit: number }): Promise<{ jobs: any[]; total: number; page: number; hasMore: boolean }>;
+  getDiscoveryFeedForCandidate(candidateId: string): Promise<any[]>;
   updateJobPosting(id: number, talentOwnerId: string, updates: Partial<InsertJobPosting>): Promise<JobPosting>;
   deleteJobPosting(id: number, talentOwnerId: string): Promise<void>;
 
@@ -967,12 +968,19 @@ export class DatabaseStorage implements IStorage {
   // against. Returns recent, trusted, platform-first jobs with matchScore=0 and
   // a 'discovery' tier so the UI can render them as "browse" rows rather than
   // ranked matches. Called by fetchScoredJobs in two empty-signal cases.
-  private async getDiscoveryFeed(excludeIds: number[], explanation: string): Promise<any[]> {
+  private async getDiscoveryFeed(
+    excludeIds: number[],
+    explanation: string,
+    relevance?: { skills?: string[]; roleKeywords?: string[] },
+  ): Promise<any[]> {
     const ninetyDaysAgo = new Date();
     ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
     const cutoffDateStr = ninetyDaysAgo.toISOString();
 
-    const discoveryJobs = await db
+    // Shared trusted-ATS query; `extraWhere` adds a relevance filter and
+    // `relevanceOrder` lets us rank the most on-target rows (role-title matches)
+    // ahead of the generic US/trust/recency ordering.
+    const runQuery = (extraWhere: any[], relevanceOrder: any[] = []) => db
       .select()
       .from(jobPostings)
       .where(and(
@@ -1011,15 +1019,49 @@ export class DatabaseStorage implements IStorage {
         // Exclude hidden and applied-to jobs
         ...(excludeIds.length > 0
           ? [sql`${jobPostings.id} NOT IN (${sql.join(excludeIds.map(id => sql`${id}`), sql`, `)})`]
-          : [])
+          : []),
+        ...extraWhere,
       ))
       .orderBy(
+        ...relevanceOrder,
         // Rank: platform first, then US, then unknown, then non-US
         usPriorityOrder,
         sql`${jobPostings.trustScore} DESC NULLS LAST`,
         sql`${jobPostings.createdAt} DESC`
       )
       .limit(20);
+
+    // Relevant-first: prefer ATS jobs whose TITLE matches the candidate's role
+    // keywords (e.g. "it support", "site reliability" — the strongest relevance
+    // signal) or whose skills overlap theirs (GIN-indexed ?|). Rank title matches
+    // ahead of skill-only matches so an IT-support candidate doesn't lead with
+    // sales/finance roles that merely share soft skills. Fall through to the
+    // generic recent-roles query when there's no relevant supply, so we never
+    // return empty (empty → the client drops to the external aggregator fallback).
+    const relevantSkills = (relevance?.skills || []).filter(s => s && s.length > 0);
+    const roleKeywords = (relevance?.roleKeywords || []).filter(k => k && k.length >= 3);
+    const titleMatch = roleKeywords.length > 0
+      ? or(...roleKeywords.map(k => sql`${jobPostings.title} ~* ${'\\y' + escapePgRegex(k) + '\\y'}`))
+      : undefined;
+    const skillMatch = relevantSkills.length > 0
+      ? sql`${jobPostings.skills} ?| ARRAY[${sql.join(relevantSkills.map(s => sql`${s}`), sql`, `)}]::text[]`
+      : undefined;
+    const relevanceWhere = [titleMatch, skillMatch].filter(Boolean) as any[];
+
+    let discoveryJobs: any[] = [];
+    if (relevanceWhere.length > 0) {
+      // Title matches sort first (0), skill-only matches after (1).
+      const relevanceOrder = titleMatch
+        ? [sql`CASE WHEN ${titleMatch} THEN 0 ELSE 1 END`]
+        : [];
+      discoveryJobs = await runQuery(
+        [relevanceWhere.length > 1 ? or(...relevanceWhere) : relevanceWhere[0]],
+        relevanceOrder,
+      );
+    }
+    if (discoveryJobs.length === 0) {
+      discoveryJobs = await runQuery([]);
+    }
 
     return discoveryJobs.map((job: any) => {
       const { freshness, daysOld } = getFreshnessLabel(job.createdAt);
@@ -1517,7 +1559,7 @@ export class DatabaseStorage implements IStorage {
     // real platform/ATS supply to show.
     if (finalJobs.length === 0) {
       console.log(`[fetchScoredJobs] 0 jobs cleared the 30% floor — falling back to discovery feed`);
-      return this.getDiscoveryFeed(excludeIds, 'Here are recent roles to explore while we tune your matches');
+      return this.getDiscoveryFeed(excludeIds, 'Here are recent roles to explore while we tune your matches', { skills: candidateSkills, roleKeywords: roleTitleKeywords });
     }
 
     return finalJobs.map(({ prefBoost: _p, compositeScore: _c, ...job }) => job);
@@ -1549,6 +1591,44 @@ export class DatabaseStorage implements IStorage {
       console.error('Error fetching job recommendations:', error);
       throw error;
     }
+  }
+
+  /**
+   * Skill-relevant ATS discovery feed for a single candidate. Lightweight (no
+   * scoring, no full hybrid retrieval) so it stays fast even when full matching
+   * is too slow to finish — the route serves this on a matching timeout so a
+   * candidate with a profile sees relevant ATS roles instead of dropping to the
+   * external aggregator fallback.
+   */
+  async getDiscoveryFeedForCandidate(candidateId: string): Promise<any[]> {
+    const [candidate, hiddenIds, appliedIds] = await Promise.all([
+      this.getCandidateUser(candidateId),
+      this.getHiddenJobIds(candidateId),
+      db.select({ jobId: jobApplications.jobId })
+        .from(jobApplications)
+        .where(eq(jobApplications.candidateId, candidateId))
+        .then(rows => rows.map(r => r.jobId)),
+    ]);
+    const excludeIds = [...new Set([...hiddenIds, ...appliedIds])];
+    const skills = candidate?.skills ? parseSkillsInput(candidate.skills) : [];
+
+    // Role-title keywords from parsed resume positions are the strongest fast
+    // relevance signal (e.g. "it support", "support engineer").
+    const candidateTitles: string[] = [];
+    const parsingData = (candidate as any)?.resumeParsingData;
+    if (parsingData?.positions && Array.isArray(parsingData.positions)) {
+      for (const pos of parsingData.positions) {
+        if (pos?.title && typeof pos.title === 'string' && pos.title.trim().length > 2) {
+          candidateTitles.push(pos.title.trim());
+        }
+      }
+    }
+    const roleKeywords = getRoleTitleKeywords(candidateTitles);
+
+    const explanation = (skills.length > 0 || roleKeywords.length > 0)
+      ? 'Showing relevant roles while we finish ranking your matches'
+      : 'Here are recent roles to explore';
+    return this.getDiscoveryFeed(excludeIds, explanation, { skills, roleKeywords });
   }
 
   /**
