@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Secret-scanning pre-commit hook. Blocks commits that introduce likely secrets.
+# Uses gitleaks if installed; otherwise falls back to a built-in pattern scan.
+# Enable once per clone:  git config core.hooksPath .githooks
+set -euo pipefail
+
+# Only scan staged, added/changed content (not deletions).
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --redact --no-banner && exit 0
+  echo "❌ gitleaks found a potential secret in staged changes. Commit blocked." >&2
+  exit 1
+fi
+
+# ---- Fallback: built-in regex scan over staged diff (added lines only) ----
+patterns=(
+  'AIza[0-9A-Za-z_-]{30,}'                       # Google / Gemini
+  'gsk_[A-Za-z0-9]{40,}'                         # Groq
+  'hf_[A-Za-z0-9]{30,}'                          # HuggingFace
+  'sk-(proj-)?[A-Za-z0-9]{40,}'                  # OpenAI
+  'sk_live_[A-Za-z0-9]{20,}'                     # Stripe secret (live)
+  'AKIA[0-9A-Z]{16}'                             # AWS access key id
+  'xox[bpas]-[0-9A-Za-z-]{10,}'                  # Slack
+  'SG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}'  # SendGrid
+  '-----BEGIN [A-Z ]*PRIVATE KEY-----'          # private keys
+  'postgres(ql)?://[^:@/ ]+:[^@/ ]+@[^/ ]+'     # DSN with inline creds
+)
+
+# Service_role Supabase JWTs are critical (anon JWTs are public — allowed).
+service_role_b64='c2VydmljZV9yb2xl'   # base64 of "service_role"
+
+added=$(git diff --cached --diff-filter=ACM -U0 | grep '^+' | grep -v '^+++' || true)
+hit=0
+for p in "${patterns[@]}"; do
+  if printf '%s' "$added" | grep -EnI "$p" >/dev/null 2>&1; then
+    echo "❌ Possible secret matching /$p/ in staged changes." >&2
+    hit=1
+  fi
+done
+if printf '%s' "$added" | grep -EnI "eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}" 2>/dev/null \
+   | grep -q "$service_role_b64"; then
+  echo "❌ Supabase service_role JWT detected in staged changes." >&2
+  hit=1
+fi
+
+if [ "$hit" -ne 0 ]; then
+  echo "Commit blocked. If this is a false positive, review the line, then bypass with: git commit --no-verify" >&2
+  exit 1
+fi
+exit 0
