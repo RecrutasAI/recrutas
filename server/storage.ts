@@ -1508,6 +1508,18 @@ export class DatabaseStorage implements IStorage {
       else scoreBuckets.gte75++;
     }
     console.log(`[fetchScoredJobs] scored=${recommendations.length} buckets=<30:${scoreBuckets.lt30} 30-50:${scoreBuckets.b30_50} 50-75:${scoreBuckets.b50_75} 75+:${scoreBuckets.gte75} → after 30%+ filter: ${finalJobs.length}`);
+
+    // A candidate WITH skills whose jobs all score below the 30% floor (common on
+    // the keyword-only path before the embedding lands — see embedding quota issue)
+    // would otherwise return [], which the feed reads as "zero matches" and drops
+    // the candidate to the external aggregator fallback. Serve the ATS discovery
+    // feed instead so a logged-in candidate never sees aggregators while we have
+    // real platform/ATS supply to show.
+    if (finalJobs.length === 0) {
+      console.log(`[fetchScoredJobs] 0 jobs cleared the 30% floor — falling back to discovery feed`);
+      return this.getDiscoveryFeed(excludeIds, 'Here are recent roles to explore while we tune your matches');
+    }
+
     return finalJobs.map(({ prefBoost: _p, compositeScore: _c, ...job }) => job);
   }
 
@@ -1591,7 +1603,7 @@ export class DatabaseStorage implements IStorage {
       // 2. Score using the same scoreJob used in the candidate feed — single source of truth
       const matches = [];
 
-      for (const { candidate_profiles: profile, users: user } of candidates as any[]) {
+      for (const { candidate_users: profile, users: user } of candidates as any[]) {
         const candSkills = parseSkillsInput(profile.skills);
         // Extract previous titles from parsing data
         const titles: string[] = [];

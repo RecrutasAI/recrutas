@@ -171,7 +171,14 @@ export class ExamService {
         if (question.type === 'multiple-choice') {
           let isCorrect = false;
           if (typeof question.correctAnswer === 'number' && Array.isArray(question.options)) {
-            const selectedIndex = question.options.indexOf(userAnswer);
+            // The client (job-exam.tsx) submits the selected option's 0-based
+            // index as a string. Interpret it as an index; fall back to a text
+            // match only if it isn't a valid index (defensive for callers that
+            // submit the option text instead).
+            let selectedIndex = parseInt(userAnswer, 10);
+            if (Number.isNaN(selectedIndex) || selectedIndex < 0 || selectedIndex >= question.options.length) {
+              selectedIndex = question.options.indexOf(userAnswer);
+            }
             isCorrect = selectedIndex !== -1 && selectedIndex >= question.correctAnswer;
           } else {
             isCorrect = userAnswer === question.correctAnswer;
