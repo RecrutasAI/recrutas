@@ -27,9 +27,9 @@ Recrutas is a candidate-first hiring platform built around one hard promise: **i
 4. Every candidate sees their status the same day — pass, waitlist, or not a fit
 
 **External jobs** (aggregated from 94+ companies via Greenhouse, Lever, Workday, Ashby, and custom scrapers):
-- Scraped 2× daily via GitHub Actions
-- Ghost jobs and dead links filtered out automatically every 6 hours
-- Quality-scored and matched to candidate profiles using ML embeddings
+- Scraped continuously via GitHub Actions (ATS every 4h, external boards + tech companies daily)
+- Ghost jobs and dead links filtered out automatically (daily liveness pass + in-process probes)
+- Quality-scored and matched to candidate profiles using pgvector embeddings + keyword fallback
 
 ---
 
@@ -62,16 +62,18 @@ Recrutas is a candidate-first hiring platform built around one hard promise: **i
 - [Deployment](#deployment)
 - [Key Gotchas & Lessons Learned](#key-gotchas--lessons-learned)
 - [External APIs & Startup Credits](#external-apis--startup-credits)
+- [Onboarding Human Developers](#onboarding-human-developers)
+- [Scaling on the Current Stack](#scaling-on-the-current-stack)
 
 ---
 
 ## Quick Start
 
 ### Prerequisites
-- Node.js 20.x
+- Node.js 20+ (CI runs on 22)
 - npm 10+
 - Supabase project (PostgreSQL + Auth + Storage)
-- Groq API key (resume parsing via Llama 3)
+- Groq API key (resume parsing via Llama 3) + Gemini API key (embeddings + PDF parse)
 
 ### Install & Run
 
@@ -120,7 +122,7 @@ and technical stakeholders.
 ```
                     ┌─────────────────────────────┐
                     │      GitHub Actions          │
-                    │  (12 cron workflows)         │
+                    │  (11 scheduled crons)        │
                     │  Scrape 6AM/6PM UTC          │
                     │  Ghost check every 6h        │
                     │  SLA enforcement daily       │
@@ -239,7 +241,7 @@ export const storage = new DatabaseStorage();
 
 ---
 
-### Slide 4: Database Schema (35 Tables)
+### Slide 4: Database Schema (36 Tables)
 
 **Source of truth:** `shared/schema.ts` (1004 lines)
 
@@ -575,6 +577,11 @@ fingerprint = MD5(message + first 3 stack frames)
 - Stored in `request_metrics` table
 - Admin dashboard shows p50/p95/p99 per endpoint, error rates, growth trends
 
+**Pipeline (cron) health** (in-house — `pipeline_runs` table):
+- Every scheduled GitHub Action writes a heartbeat (`ok`/`warning`/`failed` + counts + duration) on completion
+- Admin **Pipeline Health** card shows last-run status/age per pipeline, with **staleness** derived from each pipeline's expected interval (catches a job that dies before it can report)
+- Replaces relying on GitHub's failure email (which nobody watches — how the embedding outage stayed silently "green" for 18 days)
+
 **Analytics:** PostHog for product analytics (both client + server-side tracking)
 
 **Database connection management:** Background services auto-disable on Vercel serverless to prevent pool exhaustion. `ENABLE_BACKGROUND_SERVICES=true` to override.
@@ -583,24 +590,27 @@ fingerprint = MD5(message + first 3 stack frames)
 
 ### Slide 14: Background Jobs (GitHub Actions)
 
-**12 cron workflows — all authenticate via `CRON_SECRET` header:**
+**11 scheduled crons run on GitHub Actions (DB-credential'd, not HTTP):**
 
-| Workflow | Schedule | What it does |
-|----------|----------|-------------|
-| `scrape-tech-companies.yml` | 6AM/6PM UTC | Scrape 94+ ATS companies (4 tiers) |
-| `scrape-external-jobs.yml` | Twice daily | Adzuna, JSearch, etc. aggregation |
-| `scrape-ats-jobs.yml` | Daily | ATS-specific scraping |
-| `auto-hide-ghost-jobs.yml` | Every 6h | HTTP liveness probe → mark stale |
-| `purge-old-jobs.yml` | Daily | Delete external jobs > 60 days |
-| `discover-companies.yml` | Daily 2AM | Discover + probe 10 new companies |
-| `batch-embeddings.yml` | Daily | Generate embeddings for new jobs |
-| `enforce-response-sla.yml` | Daily | Auto-reject 24h+ unreviewed apps |
-| `warm-candidate-matches.yml` | Daily | Pre-compute matches for active users |
-| `retry-failed-parses.yml` | Daily | Re-parse failed resume extractions |
-| `cleanup-errors.yml` | Weekly Sun | Purge error_events > 30 days |
-| `resolve-adzuna-links.yml` | Weekly | Resolve Adzuna redirect chains |
+| Workflow | Schedule (UTC) | Script | What it does |
+|----------|----------------|--------|-------------|
+| `scrape-tech-companies.yml` | 6AM/6PM | `scrape-tier.ts` | Scrape 94+ ATS companies (3 tiers + cleanup) |
+| `scrape-ats-jobs.yml` | every 4h | `scrape-all-company-jobs.ts` | Resolve Adzuna URLs → ATS + JSON-LD scrape |
+| `scrape-external-jobs.yml` | daily 6:30 | `scrape-external-jobs.ts` | Adzuna, JSearch, etc. aggregation |
+| `discover-companies.yml` | daily 2AM | `discover-companies.ts` | Discover → probe → Apollo-seed new companies |
+| `batch-embeddings.yml` | 4×/day (0,6,12,18) | `batch-embedding.service.ts` | Embed new jobs + candidates (Gemini) |
+| `enforce-response-sla.yml` | hourly | `enforce-response-sla.ts` | Auto-reject 24h+ unreviewed apps (**the "one metric"**) |
+| `auto-hide-ghost-jobs.yml` | daily 4AM | `auto-hide-ghost-jobs.ts` | Close internal jobs stale 30+ days |
+| `purge-old-jobs.yml` | daily 5AM | `purge-old-jobs.ts` | Delete external jobs > 90 days |
+| `warm-candidate-matches.yml` | daily 4:30 | `warm-candidate-matches.ts` | Pre-compute matches for active users |
+| `retry-failed-parses.yml` | daily 3AM | `retry-failed-parses.ts` | Re-parse failed resume extractions (Gemini) |
+| `cleanup-errors.yml` | weekly Sun 6AM | `cleanup-errors.ts` | Purge `error_events` + `pipeline_runs` > 30 days |
 
-**CI pipeline** (`.github/workflows/ci.yml`): On every push/PR: type-check → lint → test → integration tests
+Manual-only workflows (`workflow_dispatch`): `resolve-adzuna-links`, `resolve-adzuna-searxng`, `push-schema-dev`, `run-migration`.
+
+**Pipeline health (2026-06):** every cron writes a heartbeat row to `pipeline_runs` via `runAsPipeline()` (`server/services/pipeline-run.service.ts`) — status (`ok`/`warning`/`failed`), counts, duration. The admin **Pipeline Health** card (`GET /api/admin/pipeline-health`) shows the last run per pipeline plus **staleness** (a job that dies before reporting still surfaces). The embedding cron classifies failures so it goes **RED only on a real outage** (depleted credits / bad key / provider down) and stays **GREEN on routine free-tier quota throttling** — so the GitHub failure email and the panel stay trustworthy rather than crying wolf.
+
+**CI pipeline** (`.github/workflows/ci.yml`): on every push/PR — type-check → lint → unit + integration tests → build verification → security analysis → quality gate.
 
 ---
 
@@ -668,7 +678,7 @@ base (node:22-alpine)
 |---------|------|---------|
 | Supabase | Free | PostgreSQL, Auth, Storage |
 | Groq | Free | Llama 3 inference (rate-limited) |
-| HuggingFace | Free Inference | BGE-M3 embeddings |
+| Gemini | Free | `gemini-embedding-001` (384-dim) embeddings + PDF multimodal parse |
 | Resend | Free (3K/mo) | Transactional email |
 | Vercel | Hobby | Hosting + serverless |
 | Upstash Redis | Free | Rate limiting, cache |
@@ -686,7 +696,7 @@ base (node:22-alpine)
 ```
 ┌─────────────────────┐     ┌──────────────────────────┐
 │   GitHub Actions     │     │     Vercel (Production)   │
-│   (12 cron jobs)     │     │   Frontend: Vite static   │
+│  (11 scheduled crons)│     │   Frontend: Vite static   │
 │   Scrape 6AM/6PM     │     │   Backend: Serverless fn  │
 │   Ghost check 6h     │     └────────────┬─────────────┘
 │   SLA enforce daily  │                  │
@@ -713,7 +723,7 @@ base (node:22-alpine)
 ┌──────────────┐ ┌────────────┐ ┌──────────────┐
 │  PostgreSQL  │ │  Supabase  │ │    Redis     │
 │  (Drizzle)   │ │  Auth +    │ │  (Upstash)   │
-│  35+ tables  │ │  Storage   │ │  Rate limits │
+│  36 tables   │ │  Storage   │ │  Rate limits │
 └──────────────┘ └────────────┘ │  Match cache │
                                 └──────────────┘
 ```
@@ -748,7 +758,7 @@ base (node:22-alpine)
 | OCR | Tesseract.js | Resume image text extraction fallback |
 | Email | Resend | Transactional email |
 | Real-time | WebSocket (ws) | Notifications, chat |
-| Background Jobs | Inngest + GitHub Actions | Async job processing + 12 cron workflows |
+| Background Jobs | GitHub Actions | 11 scheduled crons (ingestion, embeddings, SLA, cleanup) + in-app heartbeat health |
 | Dev Environment | Docker Compose | PostgreSQL + Redis + App containers |
 | Testing | Jest + Vitest + Playwright + Supertest | Unit, integration, E2E + API testing |
 | CI/CD | GitHub Actions + Vercel | Build, test, cron, deploy |
@@ -893,7 +903,7 @@ recrutas/
 │       └── metrics-api.ts              # Admin metrics endpoints
 │
 ├── shared/
-│   └── schema.ts                       # Drizzle schema — THE source of truth (958 lines, 35 tables)
+│   └── schema.ts                       # Drizzle schema — THE source of truth (~985 lines, 36 tables)
 │
 ├── scripts/
 │   ├── scrape-tier.ts                  # CLI scraper for tiered company lists
@@ -934,7 +944,7 @@ recrutas/
 
 ## Database Schema
 
-Source of truth: `shared/schema.ts` (958 lines, 35 tables)
+Source of truth: `shared/schema.ts` (~985 lines, 36 tables)
 
 ### Core Tables
 
@@ -1443,7 +1453,9 @@ Two-layer block to keep the feed direct-from-employer:
 
 ### Embeddings
 
-Candidate embeddings live in `candidate_users.vector_embedding` (computed at resume-parse time). Job embeddings should live in `job_postings.embedding` (pgvector type) — generation in `services/batch-embedding.service.ts`. **As of 2026-04-28, job embeddings have not been backfilled — pgvector retrieval returns 0 rows and the keyword lane carries all retrieval.** See `docs/IMPROVEMENT_ROADMAP.md` Phase 0.1 for the activation plan.
+Candidate embeddings live in `candidate_users.vector_embedding`/`embedding` (computed at resume-parse time); job embeddings in `job_postings.vector_embedding`/`embedding` (pgvector 384-dim, HNSW index) — generation in `services/batch-embedding.service.ts` via Google **`gemini-embedding-001`** (Matryoshka-truncated to 384 to fit the existing column; L2-normalized). Provider was migrated off HuggingFace (HF free-tier credits hit HTTP 402 ~2026-05-11, silently zeroing new embeddings).
+
+**Current state (2026-06):** the pgvector ANN lane is live and correct, but coverage is **partial (~16% of active jobs, 2/8 candidates)** because Gemini's free tier caps at ~1K embeds/day while the active inventory grows faster. Uncovered candidates fall back to the GIN-indexed keyword lane (lower quality). The batch cron drains the backlog at ~800–1K/day and **fails loud only on real outages, not quota throttling** (see Background Jobs). Clearing it fully needs Gemini billing enabled + one `--force` drain, or a switch to `batchEmbedContents` (multi-text/request). See `docs/IMPROVEMENT_ROADMAP.md` for the activation plan.
 
 ### Legacy Path
 
@@ -1882,7 +1894,7 @@ const { isConnected, lastMessage } = useWebSocketNotifications(userId);
 |----------|---------|-------------|
 | `GROQ_API_KEY` | Resume parsing, exam gen | Groq API key for Llama 3 |
 | `GEMINI_API_KEY` | AI fallback | Google Gemini fallback |
-| `HF_API_KEY` | Embeddings | Hugging Face Inference API |
+| `GEMINI_API_KEY` | Embeddings + PDF parse | Google Gemini (`gemini-embedding-001`, `gemini-2.0-flash`) |
 | `RESEND_API_KEY` | Email | Transactional email (Resend) |
 | `STRIPE_SECRET_KEY` | Payments | Stripe secret key |
 | `VITE_STRIPE_PUBLIC_KEY` | Payments (client) | Stripe publishable key |
@@ -2054,7 +2066,7 @@ Recrutas consumes several external APIs. As the platform scales, startup credit 
 |---------|---------|---------|-------------|-------------------|
 | **Supabase** | Database, Auth, Storage | `SUPABASE_*`, `POSTGRES_URL` | Free | $0 (free tier) |
 | **Groq** | Resume parsing, exam generation (Llama 3) | `GROQ_API_KEY` | Free | $0 (rate-limited) |
-| **HuggingFace** | Semantic embeddings (BGE-M3) | `HF_API_KEY` | Free Inference API | $0 |
+| **Google Gemini** | Semantic embeddings (`gemini-embedding-001`, 384-dim) + PDF parse | `GEMINI_API_KEY` | Free tier (~1K embeds/day) | $0 |
 | **Resend** | Transactional email | `RESEND_API_KEY` | Free (3K emails/mo) | $0 |
 | **Vercel** | Hosting & serverless | — | Hobby | $0 |
 
@@ -2118,6 +2130,65 @@ Programs to apply for as the platform scales. Sorted by estimated value.
 **Phase 2 (100–1K users):** Supabase Pro ($25/mo), Vercel Pro ($20/mo), Resend Pro ($20/mo). Apply for Google for Startups ($350K) and Supabase for Startups ($25K) before this phase.
 
 **Phase 3 (1K–10K users):** Dedicated vector DB (Pinecone/Weaviate), Redis Pro, paid Groq tier. Apply for AWS Activate and Firecrawl OSS program. Consider Stripe Atlas for incorporation + partner perks.
+
+---
+
+## Onboarding Human Developers
+
+An honest assessment of what it takes to bring a new engineer onto this codebase.
+
+**Size & shape:** ~78K lines of TypeScript/TSX — `server/` (87 files), `client/src/` (18 pages), `shared/schema.ts` (the contract), plus **76 operational scripts** and 16 GitHub Actions workflows. It is a **single-author codebase**, so the main risk is tribal knowledge — partly mitigated by an unusually thorough README, a "Gotchas" section, and `docs/`, but not by tests or types alone.
+
+**What makes onboarding *easy* (accelerators):**
+- **Conventional, popular stack** — React 18 + Vite + TanStack Query + Tailwind/shadcn on the front, Express + Drizzle + Postgres on the back. No bespoke framework; a mid-level full-stack dev already knows 80% of it.
+- **One source of truth for data** — `shared/schema.ts` (Drizzle) defines all 36 tables and types end-to-end; `tsc` is green, so the type system catches contract drift.
+- **Clear request path** — almost everything flows `routes.ts → storage.ts → Drizzle`. Once you find the route, you can trace the whole feature.
+- **This README** — deck-level architecture, an API reference, and a documented footgun list (Drizzle 0.39 nested-join bug, unreliable JWT `role` claim, pooler vs. direct URL) that would otherwise cost days each.
+
+**What makes onboarding *hard* (friction):**
+- **Two ~3,000-line god files** — `routes.ts` (3034) and `storage.ts` (3048). High cognitive load; merge-conflict prone; the biggest single refactor target before scaling the *team*.
+- **Large operational surface** — 76 scripts and 11 crons (scrapers, ATS probes, embeddings, SLA). The product is small; the *data plumbing* is where the real complexity and the institutional knowledge live.
+- **External-provider quirks** — Groq rate limits, Gemini free-tier embedding quota (~1K/day), pgvector/HNSW, Supabase pgBouncer pooler `CONNECT_TIMEOUT`s. These aren't in the code; they're learned by getting burned (or by reading the Gotchas section).
+- **Dual auth model** — Supabase JWT verified server-side, `role` resolved from the DB (not the token). Easy to get subtly wrong.
+- **Tests exist but are uneven** — Jest (unit/integration), Vitest (frontend), Playwright (e2e), but coverage is partial and Playwright is impractical in some sandboxes. Don't assume the suite protects you everywhere.
+
+**Realistic ramp time:**
+
+| Goal | Time to productive |
+|------|--------------------|
+| Ship a scoped **frontend** feature (new page/flow on an existing API) | **2–4 days** |
+| Ship a **backend** feature (new route + storage method + schema change) | **1 week** |
+| Safely modify **matching / ingestion / embeddings** | **2–4 weeks** (must understand the scoring lanes, scraper tiers, and provider limits) |
+| **Own** the system end-to-end (incl. the cron/data plumbing) | **1–2 months** |
+
+**Recommended first-week path:** read this README top-to-bottom → run `npm run dev:all` against a dev Supabase → trace one feature `route → storage → schema` → read the Gotchas → run a cron script locally (e.g. `scripts/enforce-response-sla.ts`) and watch it write a `pipeline_runs` heartbeat. **Highest-leverage early investment for the team:** split `routes.ts` and `storage.ts` by domain — that one refactor is what turns this from a solo codebase into a multi-developer one.
+
+**Bottom line:** *Low* difficulty to contribute features (familiar stack, strong docs, clean types); *moderate-to-high* difficulty to own the data/ops layer (breadth, provider quirks, two monolith files, bus-factor of one).
+
+---
+
+## Scaling on the Current Stack
+
+The architecture (Vercel serverless + Supabase Postgres + GitHub Actions crons + Upstash Redis + pgvector) was deliberately chosen to run at **$0 → ~$65/mo** and is well-matched to the **0–low-thousands of users** range. Below is what scales as-is, the bottlenecks **in the order they'll actually bite**, and when to graduate off the current design.
+
+**Scales comfortably as-is:**
+- **Read-heavy serving** — Vercel static frontend + serverless API + Redis match cache + Postgres handles low-thousands of users without architectural change. `/api/ai-matches` was already tuned **81s → ~15s cold / ~2.6s warm** (PR #13).
+- **Background work** — correctly offloaded to GitHub Actions crons (serverless can't hold long jobs), now observable via the `pipeline_runs` heartbeat panel.
+- **Vector search** — pgvector + HNSW is fine into the millions of rows; *retrieval* is not the ceiling.
+
+**Bottlenecks, in the order they bite:**
+1. **Embedding throughput (already biting).** Gemini free tier ≈ 1K embeds/day vs. an inventory that grows faster → only ~16% of jobs are ANN-eligible; the rest fall to the keyword lane. **Fix:** enable Gemini billing + one `--force` drain, or `batchEmbedContents` (multi-text/request). Cheap, unblocks match *quality* immediately.
+2. **DB connection pool.** Concurrent serverless invocations against the Supabase **pgBouncer pooler** (`:6543`) already surface `CONNECT_TIMEOUT`s under load. **Fix:** Supabase Pro (bigger pool), push hot reads to Redis, keep migrations on the direct URL.
+3. **Matching cost/latency at scale.** Scoring hundreds of jobs per request doesn't fan out to 10K+ active candidates. **Fix:** lean harder on precompute (`warm-candidate-matches` already exists) and move to a **dedicated vector DB (Pinecone/Weaviate)** once candidate×job volume grows.
+4. **Ingestion throughput.** Scrapers are concurrency-capped (`BATCH_SIZE=10`; undici drops connections past ~10 concurrent) and GitHub Actions jobs cap at 30 min. Fine for ~94 companies; not for thousands. **Fix:** a real worker queue (e.g. Inngest/QStash) + dedicated runners.
+5. **Serverless model limits.** Long-running and stateful work can't live in the request path. Real-time chat in particular wants a **persistent process** — verify the WebSocket path before relying on it under serverless; it's the most likely thing to force an architecture change.
+
+**When to graduate off the current architecture (~10K+ users):**
+- **Vector:** pgvector → managed Pinecone/Weaviate.
+- **Cache/limits:** Upstash Free → Redis Pro.
+- **Backend:** consider a **long-running host** (Render/Fly/ECS) for WebSockets + background workers instead of serverless + Actions — this is the single biggest architectural shift, and the rest (Postgres, Drizzle, React, the schema contract) carries over unchanged.
+
+**Net:** the stack scales *vertically* to low-thousands of users on Phase-2 spend with no redesign; the first real engineering work is **#1 (embeddings)** and **#2 (DB pool)**, both incremental. A redesign is only forced by real-time/stateful needs and 10K-user-class concurrency — and even then it's a backend-host swap, not a rewrite.
 
 ---
 
