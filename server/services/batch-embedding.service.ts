@@ -10,7 +10,7 @@
  */
 
 import { storage } from '../storage.js';
-import { generateEmbedding } from '../ml-matching.js';
+import { generateEmbedding, type EmbeddingFailureReason } from '../ml-matching.js';
 import { db, client } from '../db.js';
 import { jobPostings } from '../../shared/schema.js';
 import { eq } from 'drizzle-orm';
@@ -27,7 +27,7 @@ async function computeJobEmbedding(job: {
   description?: string;
   skills?: string[];
   requirements?: string[];
-}): Promise<number[]> {
+}): Promise<{ embedding: number[]; failureReason?: EmbeddingFailureReason }> {
   const text = [
     job.title,
     job.company,
@@ -37,7 +37,7 @@ async function computeJobEmbedding(job: {
   ].join(' ');
 
   const result = await generateEmbedding(text);
-  return result.embedding;
+  return { embedding: result.embedding, failureReason: result.failureReason };
 }
 
 export async function updateJobEmbedding(jobId: number): Promise<void> {
@@ -47,13 +47,18 @@ export async function updateJobEmbedding(jobId: number): Promise<void> {
     return;
   }
 
-  const embedding = await computeJobEmbedding(job);
+  const { embedding, failureReason } = await computeJobEmbedding(job);
   if (!embedding || embedding.length === 0) {
     // Loud failure: an empty vector means the embedding provider returned
     // nothing (e.g. depleted API credits / bad key). Throw instead of skipping
     // so callers — and the cron — surface it rather than silently no-op'ing.
     // A silent skip here is exactly what hid the HF 402 outage for 18 days.
-    throw new Error(`Empty embedding for job ${jobId} — embedding provider returned no vector`);
+    // Carry the failure class so the batch guard can tell quota throttling apart
+    // from a real outage.
+    throw Object.assign(
+      new Error(`Empty embedding for job ${jobId} — embedding provider returned no vector (${failureReason ?? 'unknown'})`),
+      { embeddingFailure: failureReason ?? 'outage' },
+    );
   }
   const vectorStr = `[${embedding.join(',')}]`;
 
@@ -72,12 +77,13 @@ export async function updateJobEmbedding(jobId: number): Promise<void> {
 export async function batchComputeEmbeddings(
   limit: number = 500,
   forceRefresh: boolean = false
-): Promise<{ processed: number; errors: number }> {
+): Promise<{ processed: number; errors: number; rateLimited: number }> {
   console.log(`[BatchEmbed] Starting batch embedding computation (limit: ${limit})`);
-  
+
   const startTime = Date.now();
   let processed = 0;
-  let errors = 0;
+  let errors = 0;        // hard failures — credits/auth/outage (loud)
+  let rateLimited = 0;   // routine free-tier quota 429s (expected, healthy)
 
   try {
     if (!db) throw new Error('Database not available');
@@ -107,9 +113,16 @@ export async function batchComputeEmbeddings(
 
             await updateJobEmbedding(job.id);
             processed++;
-          } catch (err) {
-            console.error(`[BatchEmbed] Error processing job ${job.id}:`, err);
-            errors++;
+          } catch (err: any) {
+            if (err?.embeddingFailure === 'rate_limit') {
+              // Quota throttle — provider is healthy, just out of free-tier
+              // budget for now. Don't count it as an error (would make the cron
+              // flap red every run once the daily cap is hit).
+              rateLimited++;
+            } else {
+              console.error(`[BatchEmbed] Error processing job ${job.id}:`, err);
+              errors++;
+            }
           }
         })
       );
@@ -118,20 +131,33 @@ export async function batchComputeEmbeddings(
     }
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.log(`[BatchEmbed] Completed in ${duration}s. Processed: ${processed}, Errors: ${errors}`);
+    console.log(`[BatchEmbed] Completed in ${duration}s. Processed: ${processed}, Hard errors: ${errors}, Rate-limited: ${rateLimited}`);
 
-    // Loud failure: if we attempted embeddings but every one (or most) failed,
-    // the provider is down/out of credits. Throw so the run exits non-zero and
-    // the GitHub Action goes RED instead of reporting green while writing nothing.
-    const attempted = processed + errors;
-    if (attempted > 0 && (processed === 0 || errors / attempted > 0.5)) {
+    // Loud failure — turn the cron RED — ONLY on a genuine outage: a hard error
+    // class (depleted credits, bad/blocked key, provider unreachable, malformed
+    // response), NOT the routine free-tier quota 429s. We go red when EITHER (a)
+    // we wrote nothing but hit hard errors, or (b) hard errors dominate the real
+    // attempts. Pure quota throttling stays GREEN with a warning below, so the
+    // GitHub failure email means "something is actually broken" rather than "we
+    // hit the daily cap again" — otherwise the alert is noise and a real outage
+    // gets ignored, which is the exact 18-day blind spot that started this.
+    const hardAttempted = processed + errors;
+    if (errors > 0 && (processed === 0 || errors / hardAttempted > 0.5)) {
       throw new Error(
-        `[BatchEmbed] Embedding generation failing: ${errors}/${attempted} attempts failed ` +
-        `(only ${processed} written). Likely a provider outage or depleted API credits.`
+        `[BatchEmbed] Embedding provider FAILING: ${errors} hard errors, only ${processed} written ` +
+        `(${rateLimited} throttled). Likely depleted credits, a bad/blocked GEMINI_API_KEY, or a provider outage.`
       );
     }
 
-    return { processed, errors };
+    if (rateLimited > 0) {
+      console.warn(
+        `[BatchEmbed] ⚠️  ${rateLimited} jobs throttled by Gemini quota (free-tier daily cap); ` +
+        `provider healthy, ${processed} written this run. Remaining jobs backfill on later runs — ` +
+        `enable Gemini billing or switch to batchEmbedContents to clear the backlog faster.`
+      );
+    }
+
+    return { processed, errors, rateLimited };
   } catch (err) {
     console.error('[BatchEmbed] Fatal error:', err);
     throw err;
@@ -179,11 +205,15 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const candidateResult = await backfillCandidateEmbeddings(100);
     console.log('[BatchEmbed] Candidates done:', candidateResult);
 
-    // Loud failure: a candidate-side wipeout (tried some, wrote none) means the
-    // provider is down even if the job phase had nothing new to do. Exit red.
-    const candAttempted = candidateResult.processed + candidateResult.errors;
-    if (candAttempted > 0 && candidateResult.processed === 0) {
-      console.error('[BatchEmbed] FAILED: all candidate embeddings failed — provider down or out of credits.');
+    // Loud failure: a candidate-side wipeout from HARD errors (tried some, wrote
+    // none, and the failures weren't mere quota throttling) means the provider is
+    // down even if the job phase had nothing new to do. Exit red. A run that wrote
+    // nothing purely because of quota 429s stays green — provider is healthy.
+    if (candidateResult.errors > 0 && candidateResult.processed === 0) {
+      console.error(
+        `[BatchEmbed] FAILED: all candidate embeddings failed with hard errors ` +
+        `(${candidateResult.errors} errors, ${candidateResult.rateLimited} throttled) — provider down or out of credits.`
+      );
       process.exit(1);
     }
 

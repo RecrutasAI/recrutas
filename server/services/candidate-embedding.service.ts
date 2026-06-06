@@ -20,34 +20,44 @@ export async function updateCandidateEmbedding(
   previousJobTitles?: string[],
 ): Promise<void> {
   if (!skills || skills.length === 0) return;
-  if (!process.env.GEMINI_API_KEY) return;
-
-  try {
-    const embedding = await generateCandidateEmbedding(skills, experience, previousJobTitles);
-    if (!embedding || embedding.length === 0) return;
-
-    const vectorStr = `[${embedding.join(',')}]`;
-
-    // Dual-write: TEXT column (legacy) + native pgvector column
-    await client`
-      UPDATE candidate_users
-      SET vector_embedding = ${JSON.stringify(embedding)},
-          embedding = ${vectorStr}::vector,
-          embedding_updated_at = NOW()
-      WHERE user_id = ${userId}
-    `;
-
-    console.log(`[CandidateEmbedding] Stored ${embedding.length}-dim vector for ${userId}`);
-  } catch (err: any) {
-    console.warn(`[CandidateEmbedding] Failed for ${userId}:`, err?.message);
+  if (!process.env.GEMINI_API_KEY) {
+    throw Object.assign(new Error('GEMINI_API_KEY not set'), { embeddingFailure: 'auth' });
   }
+
+  const { embedding, failureReason } = await generateCandidateEmbedding(skills, experience, previousJobTitles);
+  if (!embedding || embedding.length === 0) {
+    // Loud failure: an empty vector means the provider returned nothing. Throw
+    // (carrying the failure class) instead of silently returning so the backfill
+    // counts it and a real outage surfaces — a silent return here is exactly what
+    // let processed++ overcount while nothing was written. The fire-and-forget
+    // resume-parse callers already swallow this with .catch().
+    throw Object.assign(
+      new Error(`Empty candidate embedding for ${userId} — provider returned no vector`),
+      { embeddingFailure: failureReason ?? 'outage' },
+    );
+  }
+
+  const vectorStr = `[${embedding.join(',')}]`;
+
+  // Dual-write: TEXT column (legacy) + native pgvector column
+  await client`
+    UPDATE candidate_users
+    SET vector_embedding = ${JSON.stringify(embedding)},
+        embedding = ${vectorStr}::vector,
+        embedding_updated_at = NOW()
+    WHERE user_id = ${userId}
+  `;
+
+  console.log(`[CandidateEmbedding] Stored ${embedding.length}-dim vector for ${userId}`);
 }
 
 /**
  * Backfill embeddings for all candidates with skills but no embedding.
  * Called from batch-embeddings cron.
  */
-export async function backfillCandidateEmbeddings(limit = 100): Promise<{ processed: number; errors: number }> {
+export async function backfillCandidateEmbeddings(
+  limit = 100,
+): Promise<{ processed: number; errors: number; rateLimited: number }> {
   const { sql } = await import('drizzle-orm/sql');
 
   const candidates = await db.select()
@@ -60,6 +70,7 @@ export async function backfillCandidateEmbeddings(limit = 100): Promise<{ proces
 
   let processed = 0;
   let errors = 0;
+  let rateLimited = 0;
 
   for (const c of candidates) {
     try {
@@ -73,13 +84,16 @@ export async function backfillCandidateEmbeddings(limit = 100): Promise<{ proces
         titles,
       );
       processed++;
-      // Small delay to avoid HF rate limits
+      // Small delay to ease provider rate limits
       await new Promise(r => setTimeout(r, 200));
-    } catch {
-      errors++;
+    } catch (err: any) {
+      // Routine quota throttling is not an outage; keep it separate so the cron
+      // only goes red on real failures (see batch-embedding.service.ts guard).
+      if (err?.embeddingFailure === 'rate_limit') rateLimited++;
+      else errors++;
     }
   }
 
-  console.log(`[CandidateEmbedding] Backfill: ${processed} computed, ${errors} errors`);
-  return { processed, errors };
+  console.log(`[CandidateEmbedding] Backfill: ${processed} computed, ${errors} errors, ${rateLimited} rate-limited`);
+  return { processed, errors, rateLimited };
 }
