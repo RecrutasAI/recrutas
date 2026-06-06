@@ -7,8 +7,9 @@
 
 import { storage } from '../server/storage.js';
 import { client } from '../server/db.js';
+import { runAsPipeline, type PipelineSummary } from '../server/services/pipeline-run.service.js';
 
-async function main() {
+async function main(): Promise<PipelineSummary> {
   console.log('[WarmMatches] Warming match cache for all candidates...');
 
   const allCandidates = await storage.getAllCandidateUsers();
@@ -28,8 +29,14 @@ async function main() {
   }
 
   console.log(`[WarmMatches] Warmed ${warmed}/${withSkills.length} candidates`);
+  return {
+    status: warmed < withSkills.length ? 'warning' : 'ok',
+    itemsProcessed: warmed,
+    itemsFailed: withSkills.length - warmed,
+    message: `warmed ${warmed}/${withSkills.length} candidates`,
+  };
 }
 
-main()
+runAsPipeline('warm-candidate-matches', main)
   .then(() => { client?.end(); process.exit(0); })
   .catch((err) => { console.error('[WarmMatches] Fatal:', err); client?.end(); process.exit(1); });

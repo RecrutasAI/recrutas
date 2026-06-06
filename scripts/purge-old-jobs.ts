@@ -7,6 +7,7 @@
 
 import { db, client } from '../server/db.js';
 import { sql } from 'drizzle-orm/sql';
+import { runAsPipeline, type PipelineSummary } from '../server/services/pipeline-run.service.js';
 
 function parseRetainDays(): number {
   for (const arg of process.argv.slice(2)) {
@@ -16,7 +17,7 @@ function parseRetainDays(): number {
   return 90;
 }
 
-async function main() {
+async function main(): Promise<PipelineSummary> {
   if (!db) { console.error('[Purge] Database not available'); process.exit(1); }
 
   const retainDays = parseRetainDays();
@@ -32,7 +33,7 @@ async function main() {
 
   if (candidateIds.length === 0) {
     console.log(`[Purge] No jobs to purge (retainDays=${retainDays})`);
-    return;
+    return { status: 'ok', itemsProcessed: 0, message: `no jobs older than ${retainDays} days` };
   }
 
   const idList = candidateIds.join(',');
@@ -48,8 +49,9 @@ async function main() {
   const result = await db.execute(sql.raw(`DELETE FROM job_postings WHERE id IN (${candidateIds.join(',')}) RETURNING id`));
   const deleted = ((result as any).rows ?? (result as any)).length;
   console.log(`[Purge] Deleted ${deleted} external jobs older than ${retainDays} days`);
+  return { status: 'ok', itemsProcessed: deleted, message: `deleted ${deleted} external jobs older than ${retainDays} days` };
 }
 
-main()
+runAsPipeline('purge-old-jobs', main)
   .then(() => { client?.end(); process.exit(0); })
   .catch((err) => { console.error('[Purge] Fatal:', err); client?.end(); process.exit(1); });

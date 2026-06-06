@@ -29,11 +29,17 @@ export interface PipelineSummary {
 // exceeds this, the pipeline is considered stale (likely failing to even start).
 // Keys are the canonical pipeline names passed to runAsPipeline/recordPipelineRun.
 export const PIPELINE_MAX_AGE_MIN: Record<string, number> = {
-  'batch-embeddings': 6 * 60 + 90,     // every 6h
-  'scrape-ats': 4 * 60 + 90,           // every 4h
-  'scrape-external': 24 * 60 + 180,    // daily
-  'scrape-tier': 12 * 60 + 180,        // twice daily
-  'discover-companies': 24 * 60 + 180, // daily
+  'batch-embeddings': 6 * 60 + 90,        // every 6h
+  'scrape-ats': 4 * 60 + 90,              // every 4h
+  'scrape-external': 24 * 60 + 180,       // daily
+  'scrape-tier': 12 * 60 + 180,           // twice daily
+  'discover-companies': 24 * 60 + 180,    // daily
+  'enforce-response-sla': 60 + 90,        // hourly — the 24h-response "one metric"
+  'auto-hide-ghost-jobs': 24 * 60 + 180,  // daily
+  'purge-old-jobs': 24 * 60 + 180,        // daily
+  'retry-failed-parses': 24 * 60 + 180,   // daily
+  'warm-candidate-matches': 24 * 60 + 180,// daily
+  'cleanup-errors': 7 * 24 * 60 + 24 * 60,// weekly (+1d slack)
 };
 
 export async function recordPipelineRun(input: {
