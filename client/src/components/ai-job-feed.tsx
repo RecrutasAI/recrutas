@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useLocation } from "wouter";
-import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -156,6 +156,9 @@ interface PaginatedResponse {
 }
 
 const JOBS_PER_PAGE = 20;
+// The matcher hard-caps recommendations at 100, so the entire feed fits in one
+// request — fetched up front so all filters operate on the complete set.
+const FEED_FETCH_LIMIT = 100;
 
 interface AIJobFeedProps {
   onUploadClick?: () => void;
@@ -179,37 +182,37 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
   const cachedProfile = queryClient.getQueryData<any>(['/api/candidate/profile']);
   const hasSkills = Array.isArray(cachedProfile?.skills) && cachedProfile.skills.length > 0;
 
-  // Server-side paginated infinite scroll
+  // Single fetch of the full (≤100) match set. All six filters below run
+  // client-side over this COMPLETE set — previously filtering only saw the pages
+  // an infinite scroll had loaded, which silently hid matching jobs on unfetched
+  // pages, left the filter dropdowns incomplete, and could show a false "no
+  // matches". Progressive rendering is done client-side via `visibleCount`.
   const {
     data,
     isLoading,
     isFetching,
-    isFetchingNextPage,
-    fetchNextPage,
-    hasNextPage,
     refetch,
-  } = useInfiniteQuery<PaginatedResponse>({
+  } = useQuery<PaginatedResponse>({
     queryKey: ['/api/ai-matches'],
-    queryFn: async ({ pageParam }) => {
-      const response = await apiRequest("GET", `/api/ai-matches?page=${pageParam}&limit=${JOBS_PER_PAGE}`);
+    queryFn: async () => {
+      const response = await apiRequest("GET", `/api/ai-matches?page=1&limit=${FEED_FETCH_LIMIT}`);
       return response.json();
     },
-    getNextPageParam: (lastPage) => lastPage.hasMore ? lastPage.page + 1 : undefined,
-    initialPageParam: 1,
     refetchInterval: 300000,
   });
 
-  const totalMatches = data?.pages?.[0]?.total ?? 0;
+  const totalMatches = data?.total ?? 0;
 
-  // Flatten all fetched pages into a single list. Defensively filter:
-  // a page with undefined/null `jobs` would otherwise produce `[undefined]`
-  // entries via flatMap, and any downstream `.job.X` access would crash.
+  // Defensively filter: a response with undefined/null `jobs` would otherwise
+  // let a downstream `.job.X` access crash.
   const allMatches = useMemo(() => {
-    if (!data?.pages) return undefined;
-    return data.pages
-      .flatMap(page => (page?.jobs ?? []))
-      .filter((m: any) => m && m.job);
+    if (!data) return undefined;
+    return (data.jobs ?? []).filter((m: any) => m && m.job);
   }, [data]);
+
+  // How many of the filtered results are currently rendered (client-side reveal).
+  const [visibleCount, setVisibleCount] = useState(JOBS_PER_PAGE);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   // Aggregator fallback — only fetched when the main feed has zero matches.
   // These are external aggregator listings (Adzuna et al.); URLs leave the platform.
@@ -239,22 +242,6 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
   });
   const fallbackJobs = fallbackData?.jobs ?? [];
 
-  // Intersection observer for infinite scroll
-  const sentinelRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!sentinelRef.current) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && hasNextPage && !isFetchingNextPage) {
-          fetchNextPage();
-        }
-      },
-      { rootMargin: '200px' },
-    );
-    observer.observe(sentinelRef.current);
-    return () => observer.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
-
   // Client-side filtering — instant, no network calls
   const filteredMatches = useMemo(() => {
     if (!allMatches) return undefined;
@@ -283,6 +270,37 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
       return true;
     });
   }, [allMatches, searchTerm, locationFilter, workTypeFilter, companyFilter, experienceLevelFilter, datePostedFilter]);
+
+  // The window of filtered results actually rendered. Slicing caps gracefully,
+  // so an over-incremented visibleCount is harmless.
+  const visibleMatches = useMemo(
+    () => filteredMatches?.slice(0, visibleCount),
+    [filteredMatches, visibleCount],
+  );
+  const hasMoreToShow = !!filteredMatches && visibleCount < filteredMatches.length;
+
+  // Reset the reveal window whenever the filter set changes so a new filter
+  // starts from the top instead of inheriting a deep scroll position.
+  useEffect(() => {
+    setVisibleCount(JOBS_PER_PAGE);
+  }, [searchTerm, locationFilter, workTypeFilter, companyFilter, experienceLevelFilter, datePostedFilter]);
+
+  // Reveal more on scroll (purely client-side — no network). Re-bound when the
+  // filtered set changes so the cap tracks the current result count.
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !filteredMatches) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setVisibleCount(c => Math.min(c + JOBS_PER_PAGE, filteredMatches.length));
+        }
+      },
+      { rootMargin: '200px' },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [filteredMatches]);
 
   const { data: userJobActions } = useQuery({
     queryKey: ['/api/candidate/job-actions'],
@@ -377,9 +395,11 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
     onMutate: async (jobId: number) => {
       await queryClient.cancelQueries({ queryKey: ['/api/ai-matches'] });
       const previousMatches = queryClient.getQueryData(['/api/ai-matches']);
-      queryClient.setQueryData(['/api/ai-matches'], (oldData: any) =>
-        Array.isArray(oldData) ? oldData.filter((match: AIJobMatch) => match.job.id !== jobId) : oldData
-      );
+      queryClient.setQueryData(['/api/ai-matches'], (oldData: any) => {
+        if (!oldData?.jobs) return oldData;
+        const jobs = oldData.jobs.filter((match: AIJobMatch) => match.job.id !== jobId);
+        return { ...oldData, jobs, total: Math.max(0, (oldData.total ?? jobs.length) - 1) };
+      });
       return { previousMatches };
     },
     onSuccess: () => {
@@ -578,8 +598,28 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
       </div>
 
       {/* Job Feed */}
-      {isLoading || (isFetching && !isFetchingNextPage && (!filteredMatches || filteredMatches.length === 0)) ? (
+      {isLoading || (isFetching && (!filteredMatches || filteredMatches.length === 0)) ? (
         <LoadingHype />
+      ) : allMatches && allMatches.length > 0 && filteredMatches && filteredMatches.length === 0 && hasAnyFilter ? (
+        /* The candidate HAS matches — the active filters just excluded them all.
+           Don't show the "no matches yet" hero (misleading); offer to clear. */
+        <div className="flex flex-col items-center justify-center gap-3 p-8 text-center rounded-xl border border-dashed border-gray-300 dark:border-gray-700">
+          <div className="h-10 w-10 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+            <Filter className="h-5 w-5 text-gray-500 dark:text-gray-400" />
+          </div>
+          <div>
+            <h3 className="text-sm sm:text-base font-semibold text-gray-900 dark:text-white">
+              No jobs match your filters
+            </h3>
+            <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-0.5">
+              None of your {totalMatches} matches fit the current filters. Try widening or clearing them.
+            </p>
+          </div>
+          <Button variant="outline" size="sm" onClick={clearFilters}>
+            <RotateCcw className="h-4 w-4 mr-1" />
+            Clear filters
+          </Button>
+        </div>
       ) : !filteredMatches || filteredMatches.length === 0 ? (
         <div className="space-y-4">
           {/* Encouraging hero strip — same width as cards, friendlier tone */}
@@ -662,7 +702,10 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
         <div className="space-y-4">
           {/* Job count summary with refresh */}
           <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
-            <span>Showing {filteredMatches.length} of {totalMatches} matches</span>
+            <span>
+              Showing {visibleMatches?.length ?? 0} of {filteredMatches.length}
+              {filteredMatches.length !== totalMatches ? ` (filtered from ${totalMatches})` : ''} matches
+            </span>
             <Button
               variant="outline"
               size="sm"
@@ -676,7 +719,7 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
           </div>
 
           <div className="space-y-4 max-h-[calc(100vh-350px)] overflow-y-auto">
-            {filteredMatches.map((match, idx) => {
+            {visibleMatches!.map((match, idx) => {
               const isSaved = savedJobIds.has(match.job.id);
               const isApplied = appliedJobIds.has(match.job.id);
               // Determine trust badges
@@ -840,11 +883,10 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
             })}
           </div>
 
-          {/* Infinite scroll sentinel */}
+          {/* Infinite scroll sentinel — reveals more of the filtered set client-side */}
           <div ref={sentinelRef} className="flex items-center justify-center h-10">
-            {isFetchingNextPage && <Loader2 className="h-5 w-5 animate-spin text-gray-400" />}
-            {!hasNextPage && filteredMatches.length > 0 && (
-              <span className="text-sm text-gray-400">You've seen all {totalMatches} matches</span>
+            {!hasMoreToShow && filteredMatches.length > 0 && (
+              <span className="text-sm text-gray-400">You've seen all {filteredMatches.length} matches</span>
             )}
           </div>
         </div>

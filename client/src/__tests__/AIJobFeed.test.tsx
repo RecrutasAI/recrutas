@@ -52,7 +52,8 @@ const AIJobFeed: React.FC = () => {
       try {
         const response = await fetch('/api/ai-matches?q=' + searchTerm);
         const data = await response.json();
-        setMatches(data);
+        // Mirror the real feed's contract: paginated { jobs, total, ... }.
+        setMatches(Array.isArray(data) ? data : (data.jobs ?? []));
       } catch (error) {
         console.error('Failed to fetch matches', error);
       } finally {
