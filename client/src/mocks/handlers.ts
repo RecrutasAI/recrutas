@@ -151,7 +151,8 @@ export const handlers = [
       );
     }
 
-    return HttpResponse.json(matches);
+    // Shape mirrors the real /api/ai-matches paginated response the feed reads.
+    return HttpResponse.json({ jobs: matches, total: matches.length, page: 1, hasMore: false });
   }),
 
   http.get('/api/candidate/job-actions', () => {

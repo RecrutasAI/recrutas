@@ -436,7 +436,10 @@ export async function registerRoutes(app: Express): Promise<Express> {
     try {
       const userId = req.user.id;
       const page = Math.max(1, parseInt(req.query.page as string) || 1);
-      const limit = Math.min(50, Math.max(1, parseInt(req.query.limit as string) || 20));
+      // Matcher hard-caps recommendations at 100 (fetchScoredJobs slice), so the
+      // client fetches the whole feed in one request and filters/paginates it
+      // client-side. Cap mirrors that ceiling.
+      const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
       console.log(`[ai-matches] user=${userId} page=${page} limit=${limit}`);
 
       const filters = {
