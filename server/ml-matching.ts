@@ -15,9 +15,25 @@ const GEMINI_EMBED_URL =
   `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_EMBED_MODEL}:embedContent`;
 const EMBED_DIM = 384;
 
+// How an embedding call failed, so batch callers can tell routine free-tier
+// quota throttling ('rate_limit' — expected, provider healthy) apart from a
+// real outage ('auth' = bad/blocked/missing key; 'outage' = depleted credits,
+// provider down/unreachable, or a malformed response) that must turn the cron
+// RED. Anything not clearly a rate-limit is treated as 'outage' so a genuine
+// break is never silently downgraded to "just throttled".
+export type EmbeddingFailureReason = 'rate_limit' | 'auth' | 'outage';
+
 interface EmbeddingResult {
   embedding: number[];
   tokens: number;
+  // Set only when `embedding` is empty. Undefined on success.
+  failureReason?: EmbeddingFailureReason;
+}
+
+function classifyHttpStatus(status: number): EmbeddingFailureReason {
+  if (status === 429) return 'rate_limit';            // quota / rate limit — expected on free tier
+  if (status === 401 || status === 403) return 'auth'; // bad or blocked API key
+  return 'outage';                                     // 402 credits, 4xx, 5xx, anything else
 }
 
 // Gemini returns non-normalized vectors when outputDimensionality < 3072.
@@ -33,13 +49,19 @@ function l2normalize(vec: number[]): number[] {
 
 // ── Gemini embeddings API call with retry ─────────────────────────────────────
 
-async function callGeminiAPI(text: string, attempt = 0): Promise<number[]> {
+async function callGeminiAPI(
+  text: string,
+  attempt = 0,
+): Promise<{ values: number[]; failureReason?: EmbeddingFailureReason }> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     console.warn('[ML Matching] GEMINI_API_KEY not set — returning empty embedding');
-    return [];
+    return { values: [], failureReason: 'auth' };
   }
 
+  // Default to 'outage' so a thrown network error (fetch rejects before we read a
+  // status) is classified as a real outage, not a soft throttle.
+  let failureReason: EmbeddingFailureReason = 'outage';
   try {
     const response = await fetch(`${GEMINI_EMBED_URL}?key=${apiKey}`, {
       method: 'POST',
@@ -54,17 +76,18 @@ async function callGeminiAPI(text: string, attempt = 0): Promise<number[]> {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => response.statusText);
+      failureReason = classifyHttpStatus(response.status);
       throw new Error(`Gemini API error ${response.status}: ${errorText}`);
     }
 
     const data = await response.json();
     const values = data?.embedding?.values;
     if (Array.isArray(values) && values.length > 0) {
-      return l2normalize(values.map(Number));
+      return { values: l2normalize(values.map(Number)) };
     }
 
     console.warn('[ML Matching] Unexpected Gemini API response shape:', typeof data);
-    return [];
+    return { values: [], failureReason: 'outage' };
   } catch (error) {
     if (attempt < 2) {
       const delay = (attempt + 1) * 1000;
@@ -72,8 +95,8 @@ async function callGeminiAPI(text: string, attempt = 0): Promise<number[]> {
       await new Promise(r => setTimeout(r, delay));
       return callGeminiAPI(text, attempt + 1);
     }
-    console.warn('[ML Matching] Gemini API failed after 3 attempts — returning empty embedding:', (error as Error).message);
-    return [];
+    console.warn(`[ML Matching] Gemini API failed after 3 attempts (${failureReason}) — returning empty embedding:`, (error as Error).message);
+    return { values: [], failureReason };
   }
 }
 
@@ -86,8 +109,8 @@ async function callGeminiAPI(text: string, attempt = 0): Promise<number[]> {
 export async function generateEmbedding(text: string): Promise<EmbeddingResult> {
   // Truncate to ~512 tokens (approx 2048 chars)
   const truncatedText = text.slice(0, 2048);
-  const embedding = await callGeminiAPI(truncatedText);
-  return { embedding, tokens: embedding.length };
+  const { values, failureReason } = await callGeminiAPI(truncatedText);
+  return { embedding: values, tokens: values.length, failureReason };
 }
 
 /**
@@ -139,7 +162,7 @@ export async function generateCandidateEmbedding(
   candidateSkills: string[],
   candidateExperience: string,
   previousJobTitles?: string[],
-): Promise<number[]> {
+): Promise<EmbeddingResult> {
   // Front-load job titles so the embedding strongly represents the candidate's role identity
   const titleBlock = previousJobTitles && previousJobTitles.length > 0
     ? previousJobTitles.join(', ') + '. '
@@ -149,8 +172,7 @@ export async function generateCandidateEmbedding(
     ...candidateSkills,
     candidateExperience || '',
   ].join(' ').trim();
-  const result = await generateEmbedding(candidateText);
-  return result.embedding;
+  return generateEmbedding(candidateText);
 }
 
 /**

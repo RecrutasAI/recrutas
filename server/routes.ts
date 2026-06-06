@@ -2893,6 +2893,13 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     }
   }));
 
+  // Pipeline (cron) health: last run status/age per scheduled ingestion + embedding job.
+  app.get('/api/admin/pipeline-health', asyncHandler(async (req, res) => {
+    if (!verifyAdminSecret(req, res)) return;
+    const { getPipelineHealth } = await import('./services/pipeline-run.service');
+    res.json(await getPipelineHealth());
+  }));
+
   // ── End Invite Code Endpoints ──────────────────────────────────────────────
 
   // ── Feedback Loop / Weight Tuning Endpoints ─────────────────────────────────

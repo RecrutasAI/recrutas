@@ -9,14 +9,15 @@
 import { storage } from '../server/storage.js';
 import { notificationService } from '../server/notification-service.js';
 import { client } from '../server/db.js';
+import { runAsPipeline, type PipelineSummary } from '../server/services/pipeline-run.service.js';
 
-async function main() {
+async function main(): Promise<PipelineSummary> {
   console.log('[SLA] Starting 24h response SLA enforcement...');
 
   const overdue = await storage.getOverdueExamApplications();
   if (overdue.length === 0) {
     console.log('[SLA] No overdue applications');
-    return;
+    return { status: 'ok', itemsProcessed: 0, message: 'no overdue applications' };
   }
 
   let closed = 0;
@@ -39,8 +40,14 @@ async function main() {
   }
 
   console.log(`[SLA] Closed ${closed}/${overdue.length} overdue applications`);
+  return {
+    status: closed < overdue.length ? 'warning' : 'ok',
+    itemsProcessed: closed,
+    itemsFailed: overdue.length - closed,
+    message: `closed ${closed}/${overdue.length} overdue applications`,
+  };
 }
 
-main()
+runAsPipeline('enforce-response-sla', main)
   .then(() => { client?.end(); process.exit(0); })
   .catch((err) => { console.error('[SLA] Fatal:', err); client?.end(); process.exit(1); });

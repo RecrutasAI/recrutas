@@ -11,6 +11,7 @@ import 'dotenv/config';
 import postgres from 'postgres';
 import { listAtsJobs, resolveAdzunaLink } from '../server/lib/adzuna-link-resolver';
 import { jobIngestionService } from '../server/services/job-ingestion.service';
+import { runAsPipeline, type PipelineSummary } from '../server/services/pipeline-run.service';
 
 const DRY_RUN   = process.argv.includes('--dry-run');
 const LIMIT_ARG  = process.argv.indexOf('--limit');
@@ -18,7 +19,7 @@ const MAX_ADZUNA = LIMIT_ARG !== -1 ? parseInt(process.argv[LIMIT_ARG + 1], 10) 
 const CONC      = 8;
 const ATS_TYPES = new Set(['greenhouse', 'lever', 'ashby', 'workable', 'recruitee']);
 
-async function main() {
+async function main(): Promise<PipelineSummary> {
   const sql = postgres(process.env.POSTGRES_URL_NON_POOLING || process.env.POSTGRES_URL || '', { max: 3, prepare: false });
 
   // --- PHASE 1: Resolve Adzuna redirect URLs ---
@@ -161,19 +162,29 @@ async function main() {
   }
   console.log(`\nPhase 3: ${jsonLdScraped} companies, ${jsonLdJobs} fresh jobs`);
 
+  let ingestStats: any = null;
   if (!DRY_RUN && allJobs.length > 0) {
     console.log('\nIngesting...');
-    const stats = await jobIngestionService.ingestExternalJobs(allJobs);
-    console.log('Stats:', stats);
+    ingestStats = await jobIngestionService.ingestExternalJobs(allJobs);
+    console.log('Stats:', ingestStats);
   }
 
+  const freshJobs = totalJobs + jsonLdJobs;
   console.log('\n=== DONE ===');
   console.log(`Adzuna URLs resolved: ${resolved}`);
   console.log(`ATS companies scraped: ${scraped}`);
   console.log(`JSON-LD companies scraped: ${jsonLdScraped}`);
-  console.log(`Fresh jobs found: ${totalJobs + jsonLdJobs}`);
+  console.log(`Fresh jobs found: ${freshJobs}`);
 
   await sql.end();
+
+  return {
+    status: (ingestStats?.errors || 0) > 0 ? 'warning' : 'ok',
+    itemsProcessed: ingestStats?.inserted ?? 0,
+    itemsFailed: ingestStats?.errors ?? 0,
+    message: `${resolved} URLs resolved, ${scraped + jsonLdScraped} companies, ${freshJobs} fresh jobs, ${ingestStats?.inserted ?? 0} inserted${DRY_RUN ? ' (dry-run)' : ''}`,
+    stats: { resolved, atsCompanies: scraped, jsonLdCompanies: jsonLdScraped, freshJobs, inserted: ingestStats?.inserted ?? 0, duplicates: ingestStats?.duplicates ?? 0, errors: ingestStats?.errors ?? 0, dryRun: DRY_RUN },
+  };
 }
 
 async function fetchJsonLdJobs(url: string, companyName: string): Promise<any[]> {
@@ -227,4 +238,6 @@ async function fetchJsonLdJobs(url: string, companyName: string): Promise<any[]>
   }
 }
 
-main().catch(err => { console.error(err); process.exit(1); });
+runAsPipeline('scrape-ats', main)
+  .then(() => process.exit(0))
+  .catch(err => { console.error(err); process.exit(1); });

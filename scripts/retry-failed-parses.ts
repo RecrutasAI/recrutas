@@ -7,14 +7,15 @@
 
 import { storage } from '../server/storage.js';
 import { client } from '../server/db.js';
+import { runAsPipeline, type PipelineSummary } from '../server/services/pipeline-run.service.js';
 
-async function main() {
+async function main(): Promise<PipelineSummary> {
   console.log('[RetryParse] Looking for failed parses to retry...');
 
   const candidates = await storage.getCandidatesForParseRetry(3);
   if (candidates.length === 0) {
     console.log('[RetryParse] No failed parses to retry');
-    return;
+    return { status: 'ok', itemsProcessed: 0, message: 'no failed parses to retry' };
   }
 
   const { ResumeService } = await import('../server/services/resume.service.js');
@@ -34,8 +35,14 @@ async function main() {
   }
 
   console.log(`[RetryParse] Retried ${candidates.length}, succeeded: ${succeeded}`);
+  return {
+    status: succeeded < candidates.length ? 'warning' : 'ok',
+    itemsProcessed: succeeded,
+    itemsFailed: candidates.length - succeeded,
+    message: `retried ${candidates.length}, succeeded ${succeeded}`,
+  };
 }
 
-main()
+runAsPipeline('retry-failed-parses', main)
   .then(() => { client?.end(); process.exit(0); })
   .catch((err) => { console.error('[RetryParse] Fatal:', err); client?.end(); process.exit(1); });
