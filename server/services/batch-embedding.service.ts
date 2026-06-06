@@ -195,31 +195,50 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const limit = parseInt(process.env.BATCH_LIMIT || '500');
   const force = process.argv.includes('--force');
 
+  const startedAt = new Date();
   (async () => {
-    // Job embeddings
-    const jobResult = await batchComputeEmbeddings(limit, force);
-    console.log('[BatchEmbed] Jobs done:', jobResult);
+    const { recordPipelineRun } = await import('./pipeline-run.service.js');
+    try {
+      // Job embeddings
+      const jobResult = await batchComputeEmbeddings(limit, force);
+      console.log('[BatchEmbed] Jobs done:', jobResult);
 
-    // Candidate embeddings backfill
-    const { backfillCandidateEmbeddings } = await import('./candidate-embedding.service.js');
-    const candidateResult = await backfillCandidateEmbeddings(100);
-    console.log('[BatchEmbed] Candidates done:', candidateResult);
+      // Candidate embeddings backfill
+      const { backfillCandidateEmbeddings } = await import('./candidate-embedding.service.js');
+      const candidateResult = await backfillCandidateEmbeddings(100);
+      console.log('[BatchEmbed] Candidates done:', candidateResult);
 
-    // Loud failure: a candidate-side wipeout from HARD errors (tried some, wrote
-    // none, and the failures weren't mere quota throttling) means the provider is
-    // down even if the job phase had nothing new to do. Exit red. A run that wrote
-    // nothing purely because of quota 429s stays green — provider is healthy.
-    if (candidateResult.errors > 0 && candidateResult.processed === 0) {
-      console.error(
-        `[BatchEmbed] FAILED: all candidate embeddings failed with hard errors ` +
-        `(${candidateResult.errors} errors, ${candidateResult.rateLimited} throttled) — provider down or out of credits.`
-      );
+      const processed = jobResult.processed + candidateResult.processed;
+      const failed = jobResult.errors + candidateResult.errors;
+      const throttled = jobResult.rateLimited + candidateResult.rateLimited;
+      const stats = { jobResult, candidateResult };
+
+      // Loud failure: a candidate-side wipeout from HARD errors (tried some, wrote
+      // none, and the failures weren't mere quota throttling) means the provider is
+      // down even if the job phase had nothing new to do. Exit red. A run that wrote
+      // nothing purely because of quota 429s stays green — provider is healthy.
+      if (candidateResult.errors > 0 && candidateResult.processed === 0) {
+        const message = `All candidate embeddings failed with hard errors ` +
+          `(${candidateResult.errors} errors, ${candidateResult.rateLimited} throttled) — provider down or out of credits.`;
+        console.error(`[BatchEmbed] FAILED: ${message}`);
+        await recordPipelineRun({ pipeline: 'batch-embeddings', status: 'failed', startedAt, itemsProcessed: processed, itemsFailed: failed, message, stats });
+        process.exit(1);
+      }
+
+      // 'warning' when the provider is healthy but throttled by quota (expected on
+      // the free tier); 'ok' otherwise. The job-phase hard-outage already threw above.
+      const status = throttled > 0 ? 'warning' : 'ok';
+      await recordPipelineRun({
+        pipeline: 'batch-embeddings', status, startedAt,
+        itemsProcessed: processed, itemsFailed: failed,
+        message: `${processed} written, ${throttled} throttled, ${failed} hard errors`,
+        stats,
+      });
+      process.exit(0);
+    } catch (err: any) {
+      console.error('[BatchEmbed] Failed:', err);
+      await recordPipelineRun({ pipeline: 'batch-embeddings', status: 'failed', startedAt, message: err?.message ?? String(err) });
       process.exit(1);
     }
-
-    process.exit(0);
-  })().catch((err) => {
-    console.error('[BatchEmbed] Failed:', err);
-    process.exit(1);
-  });
+  })();
 }

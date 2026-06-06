@@ -11,6 +11,7 @@
 
 import { SOTAScraperService } from '../server/services/sota-scraper.service.js';
 import { jobIngestionService } from '../server/services/job-ingestion.service.js';
+import { runAsPipeline, type PipelineSummary } from '../server/services/pipeline-run.service.js';
 
 function checkRequiredEnvVars(): void {
   const required = ['DATABASE_URL'];
@@ -49,10 +50,11 @@ function parseArgs(): { tier?: number; timeout?: number; cleanup?: boolean; days
   };
 }
 
-async function runCleanup(days: number) {
+async function runCleanup(days: number): Promise<number> {
   console.log(`[scrape-tier] Cleaning up stale jobs older than ${days} days...`);
   const expired = await jobIngestionService.expireStaleJobs(days);
   console.log(`[scrape-tier] Expired ${expired} stale jobs`);
+  return expired;
 }
 
 async function runTierScrape(tier: number, timeoutMs: number) {
@@ -80,23 +82,25 @@ async function runTierScrape(tier: number, timeoutMs: number) {
       console.warn(`[scrape-tier] Errors:`, result.errors.slice(0, 10));
     }
 
-    // Exit with error code if scrape completely failed
+    // Fail (throw, so the heartbeat records 'failed' and the process exits non-zero)
+    // if the scrape completely failed.
     if (!result.success && result.totalJobsFound === 0) {
-      process.exit(1);
+      throw new Error(`Tier ${tier} scrape failed: 0 jobs found, success=false`);
     }
+    return result;
   } finally {
     clearTimeout(timeout);
   }
 }
 
-async function main() {
+async function main(): Promise<PipelineSummary> {
   checkRequiredEnvVars();
-  
+
   const { tier, timeout, cleanup, days } = parseArgs();
 
   if (cleanup) {
-    await runCleanup(days ?? 15);
-    return;
+    const expired = await runCleanup(days ?? 15);
+    return { status: 'ok', itemsProcessed: expired, message: `Expired ${expired} stale jobs`, stats: { mode: 'cleanup', days: days ?? 15 } };
   }
 
   if (!tier || ![1, 2, 3].includes(tier)) {
@@ -105,10 +109,19 @@ async function main() {
     process.exit(1);
   }
 
-  await runTierScrape(tier, timeout ?? 600_000);
+  const result = await runTierScrape(tier, timeout ?? 600_000);
+  return {
+    status: result.errors.length > 0 ? 'warning' : 'ok',
+    itemsProcessed: result.jobsIngested,
+    itemsFailed: result.errors.length,
+    message: `tier ${tier}: ${result.jobsIngested} ingested / ${result.totalJobsFound} found, ${result.companiesScraped} companies, ${result.errors.length} errors`,
+    stats: { tier, companiesScraped: result.companiesScraped, totalJobsFound: result.totalJobsFound, jobsIngested: result.jobsIngested, errors: result.errors.length },
+  };
 }
 
-main().catch(error => {
-  console.error('[scrape-tier] Fatal error:', error);
-  process.exit(1);
-});
+runAsPipeline('scrape-tier', main)
+  .then(() => process.exit(0))
+  .catch(error => {
+    console.error('[scrape-tier] Fatal error:', error);
+    process.exit(1);
+  });

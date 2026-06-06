@@ -10,6 +10,7 @@
 import { jobAggregator } from '../server/job-aggregator.js';
 import { jobIngestionService } from '../server/services/job-ingestion.service.js';
 import { client as dbClient } from '../server/db.js';
+import { recordPipelineRun } from '../server/services/pipeline-run.service.js';
 
 function checkRequiredEnvVars(): void {
   const required = ['DATABASE_URL'];
@@ -95,6 +96,7 @@ async function main() {
 
   console.log(`[scrape-external] Starting scrape (timeout: ${timeout / 1000}s)...`);
   const startTime = Date.now();
+  const startedAt = new Date(startTime);
 
   // Heartbeat keeps the DB connection alive during the long pure-API scrape phase.
   // Without it the connection idle-closes (~30s) and the post-scrape ingestion
@@ -119,6 +121,9 @@ async function main() {
 
     if (!jobs || jobs.length === 0) {
       console.log('[scrape-external] No jobs found — exiting');
+      // Healthy run that legitimately found nothing — record so the heartbeat
+      // stays fresh (a real outage would have thrown instead).
+      await recordPipelineRun({ pipeline: 'scrape-external', status: 'ok', startedAt, itemsProcessed: 0, message: 'no jobs found this run', stats: { scraped: 0 } });
       process.exit(0);
     }
 
@@ -162,10 +167,20 @@ async function main() {
       console.log(`[scrape-external] Resolved ${resolveResult.resolved} job URLs`);
     }
 
+    await recordPipelineRun({
+      pipeline: 'scrape-external',
+      status: (ingestStats?.errors || 0) > 0 ? 'warning' : 'ok',
+      startedAt,
+      itemsProcessed: ingestStats?.inserted || 0,
+      itemsFailed: ingestStats?.errors || 0,
+      message: `${jobs.length} scraped, ${ingestStats?.inserted || 0} inserted, ${ingestStats?.duplicates || 0} dupes, ${ingestStats?.errors || 0} errors`,
+      stats: { scraped: jobs.length, inserted: ingestStats?.inserted || 0, duplicates: ingestStats?.duplicates || 0, errors: ingestStats?.errors || 0 },
+    });
     process.exit(0);
   } catch (error: any) {
     const elapsed = Date.now() - startTime;
     console.error(`[scrape-external] Failed after ${elapsed}ms:`, error?.message);
+    await recordPipelineRun({ pipeline: 'scrape-external', status: 'failed', startedAt, message: error?.message ?? String(error) });
     process.exit(1);
   } finally {
     clearInterval(heartbeat);

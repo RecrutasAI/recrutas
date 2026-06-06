@@ -933,6 +933,30 @@ export const requestMetrics = pgTable("request_metrics", {
   idxMetricsCreatedAt: index("idx_metrics_created_at").on(table.createdAt),
 }));
 
+// ── Observability: scheduled-pipeline (cron) heartbeats ───────────────────────
+// One row per cron/script run (GitHub Actions). Lets the admin page show whether
+// each ingestion/embedding pipeline last ran, when, and with what result —
+// instead of relying on GitHub's failure email that nobody watches. Capped via
+// the weekly cleanup cron (keep last 30 days).
+export const pipelineRuns = pgTable("pipeline_runs", {
+  id: serial("id").primaryKey(),
+  pipeline: varchar("pipeline", { length: 80 }).notNull(),  // e.g. "batch-embeddings", "scrape-ats"
+  status: varchar("status", { length: 16 }).notNull(),       // "ok" | "warning" | "failed"
+  startedAt: timestamp("started_at").notNull(),
+  finishedAt: timestamp("finished_at").defaultNow(),
+  durationMs: integer("duration_ms"),
+  itemsProcessed: integer("items_processed").default(0),
+  itemsFailed: integer("items_failed").default(0),
+  message: text("message"),                                  // human summary, e.g. "800 written, 4200 throttled"
+  stats: jsonb("stats"),                                     // arbitrary per-pipeline detail
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table: any) => ({
+  idxPipelineRunsLatest: index("idx_pipeline_runs_latest").on(table.pipeline, table.createdAt),
+  idxPipelineRunsCreatedAt: index("idx_pipeline_runs_created_at").on(table.createdAt),
+}));
+
+export type PipelineRun = typeof pipelineRuns.$inferSelect;
+
 export const discoveredCompanies = pgTable("discovered_companies", {
   id: serial("id").primaryKey(),
   name: varchar("name", { length: 255 }).notNull(),

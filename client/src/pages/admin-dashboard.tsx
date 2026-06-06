@@ -32,6 +32,35 @@ interface CompanyVerificationStats {
   lastRun?: string;
 }
 
+interface PipelineHealth {
+  pipeline: string;
+  status: 'ok' | 'warning' | 'failed' | 'stale' | 'never';
+  lastRunStatus: string | null;
+  lastRunAt: string | null;
+  ageMinutes: number | null;
+  stale: boolean;
+  expectedMaxAgeMinutes: number | null;
+  itemsProcessed: number | null;
+  itemsFailed: number | null;
+  durationMs: number | null;
+  message: string | null;
+}
+
+const PIPELINE_STATUS_STYLE: Record<PipelineHealth['status'], { dot: string; label: string; text: string }> = {
+  ok:      { dot: 'bg-green-500',  label: 'OK',       text: 'text-green-700 dark:text-green-400' },
+  warning: { dot: 'bg-yellow-500', label: 'Throttled', text: 'text-yellow-700 dark:text-yellow-400' },
+  failed:  { dot: 'bg-red-500',    label: 'Failed',   text: 'text-red-700 dark:text-red-400' },
+  stale:   { dot: 'bg-red-500',    label: 'Stale',    text: 'text-red-700 dark:text-red-400' },
+  never:   { dot: 'bg-gray-400',   label: 'No runs',  text: 'text-gray-500' },
+};
+
+function formatAge(min: number | null): string {
+  if (min == null) return '—';
+  if (min < 60) return `${min}m ago`;
+  if (min < 60 * 24) return `${Math.round(min / 60)}h ago`;
+  return `${Math.round(min / (60 * 24))}d ago`;
+}
+
 export default function AdminDashboard() {
   const { toast } = useToast();
   const [secret, setSecret] = useState(() => sessionStorage.getItem('admin_secret') || '');
@@ -48,6 +77,9 @@ export default function AdminDashboard() {
   const [verifyStats, setVerifyStats] = useState<CompanyVerificationStats | null>(null);
   const [verifyRunning, setVerifyRunning] = useState(false);
   const [verifyFetching, setVerifyFetching] = useState(false);
+
+  const [pipelineHealth, setPipelineHealth] = useState<PipelineHealth[] | null>(null);
+  const [pipelineFetching, setPipelineFetching] = useState(false);
 
   // Error monitoring state
   const [errors, setErrors] = useState<any[] | null>(null);
@@ -94,6 +126,7 @@ export default function AdminDashboard() {
       loadPlatformStats();
       loadGhostStats();
       loadVerifyStats();
+      loadPipelineHealth();
     } else if (activeTab === 'errors') {
       loadErrors();
     } else if (activeTab === 'invites') {
@@ -163,6 +196,18 @@ export default function AdminDashboard() {
       // ignore
     } finally {
       setVerifyFetching(false);
+    }
+  }
+
+  async function loadPipelineHealth() {
+    setPipelineFetching(true);
+    try {
+      const res = await fetch('/api/admin/pipeline-health', { headers: adminHeaders });
+      if (res.ok) setPipelineHealth(await res.json());
+    } catch {
+      // ignore
+    } finally {
+      setPipelineFetching(false);
     }
   }
 
@@ -329,6 +374,53 @@ export default function AdminDashboard() {
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
         {activeTab === 'overview' && (
           <div className="space-y-6">
+            {/* Pipeline (cron) Health */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <Clock className="h-5 w-5 text-blue-600" />
+                    Pipeline Health
+                  </span>
+                  <Button variant="outline" size="sm" onClick={loadPipelineHealth} disabled={pipelineFetching}>
+                    {pipelineFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Refresh'}
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {pipelineHealth ? (
+                  <div className="space-y-2">
+                    {pipelineHealth.map((p) => {
+                      const style = PIPELINE_STATUS_STYLE[p.status] ?? PIPELINE_STATUS_STYLE.never;
+                      return (
+                        <div key={p.pipeline} className="flex items-center gap-3 py-2 border-b border-gray-100 dark:border-gray-800 last:border-0">
+                          <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${style.dot}`} title={style.label} />
+                          <div className="w-44 shrink-0">
+                            <div className="font-mono text-sm font-medium">{p.pipeline}</div>
+                            <div className={`text-xs ${style.text}`}>{style.label}</div>
+                          </div>
+                          <div className="w-24 shrink-0 text-sm text-gray-500" title={p.lastRunAt ?? ''}>
+                            {formatAge(p.ageMinutes)}
+                          </div>
+                          <div className="flex-1 min-w-0 text-xs text-gray-600 dark:text-gray-400 truncate" title={p.message ?? ''}>
+                            {p.message ?? 'no runs recorded yet'}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center h-24">
+                    {pipelineFetching ? (
+                      <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+                    ) : (
+                      <Button onClick={loadPipelineHealth}>Load Pipeline Health</Button>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             {/* Platform Stats */}
             <Card>
               <CardHeader>

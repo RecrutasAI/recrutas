@@ -12,6 +12,7 @@
 
 import { db, client } from '../server/db.js';
 import { eq } from 'drizzle-orm';
+import { runAsPipeline, type PipelineSummary } from '../server/services/pipeline-run.service.js';
 
 function parseArgs(): { phase: string; limit: number } {
   let phase = 'discover';
@@ -25,7 +26,7 @@ function parseArgs(): { phase: string; limit: number } {
   return { phase, limit };
 }
 
-async function main() {
+async function main(): Promise<PipelineSummary> {
   if (!db) { console.error('[DiscoverCompanies] Database not available'); process.exit(1); }
 
   const { phase, limit } = parseArgs();
@@ -36,7 +37,7 @@ async function main() {
     await companyDiscoveryPipeline.runDiscovery();
     const stats = await companyDiscoveryPipeline.getStatistics();
     console.log('[DiscoverCompanies] Discovery complete:', JSON.stringify(stats, null, 2));
-    return;
+    return { status: 'ok', message: `discover phase complete`, stats: { phase, ...stats } };
   }
 
   if (phase === 'probe') {
@@ -66,20 +67,20 @@ async function main() {
       }
     }
     console.log(`[DiscoverCompanies] Probe done: ${approved} approved, ${rejected} rejected`);
-    return;
+    return { status: 'ok', itemsProcessed: approved + rejected, message: `probe: ${approved} approved, ${rejected} rejected`, stats: { phase, approved, rejected } };
   }
 
   if (phase === 'apollo') {
     const { runApolloDiscovery } = await import('../server/services/apollo-discovery.service.js');
     const apolloResult = await runApolloDiscovery(300);
     console.log('[DiscoverCompanies] Apollo done:', JSON.stringify(apolloResult, null, 2));
-    return;
+    return { status: 'ok', message: `apollo phase complete`, stats: { phase, ...apolloResult } };
   }
 
   console.error(`[DiscoverCompanies] Invalid phase: ${phase}. Use discover, probe, or apollo.`);
   process.exit(1);
 }
 
-main()
+runAsPipeline('discover-companies', main)
   .then(() => { client?.end(); process.exit(0); })
   .catch((err) => { console.error('[DiscoverCompanies] Fatal:', err); client?.end(); process.exit(1); });
