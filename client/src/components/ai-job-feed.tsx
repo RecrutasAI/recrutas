@@ -104,6 +104,17 @@ const DATE_FILTER_OPTIONS: { value: string; label: string; days: number }[] = [
   { value: '30d', label: 'Past month', days: 30 },
 ];
 
+// The ingested `workType` is unreliable (set by many loose heuristics) and the
+// true arrangement often only lives in the job description, so we don't treat
+// the filter as exact. "Remote" means "has a remote component" (remote OR
+// hybrid) so picking it never surfaces a pure-onsite role — which was the actual
+// complaint; the rest match their own type. Keys/values are lowercased.
+const WORK_TYPE_FILTER_ACCEPTS: Record<string, string[]> = {
+  remote: ['remote', 'hybrid'],
+  hybrid: ['hybrid'],
+  onsite: ['onsite'],
+};
+
 export interface AIJobMatch {
   id: number;
   job: {
@@ -251,7 +262,11 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
     return allMatches.filter(m => {
       if (term && !m.job.title.toLowerCase().includes(term) && !m.job.company.toLowerCase().includes(term) && !(m.job.description || '').toLowerCase().includes(term)) return false;
       if (locationFilter !== 'all' && m.job.location !== locationFilter) return false;
-      if (workTypeFilter !== 'all' && m.job.workType !== workTypeFilter) return false;
+      if (workTypeFilter !== 'all') {
+        const key = workTypeFilter.toLowerCase();
+        const accepts = WORK_TYPE_FILTER_ACCEPTS[key] ?? [key];
+        if (!accepts.includes((m.job.workType || '').toLowerCase())) return false;
+      }
       if (companyFilter !== 'all' && m.job.company !== companyFilter) return false;
       if (experienceLevelFilter !== 'all') {
         const level = inferJobLevel(m.job.title);
@@ -782,9 +797,12 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
                             <div className="flex items-center">
                               <MapPin className="h-3 w-3 sm:h-4 sm:w-4 mr-1 shrink-0" /> {match.job.location}
                             </div>
-                            <div className="flex items-center sm:hidden">
-                              <Briefcase className="h-3 w-3 mr-1 shrink-0" /> {match.job.workType}
-                            </div>
+                            {match.job.workType && (
+                              <div className="flex items-center">
+                                <Briefcase className="h-3 w-3 sm:h-4 sm:w-4 mr-1 shrink-0" />
+                                <span className="capitalize">{match.job.workType}</span>
+                              </div>
+                            )}
                           </div>
 
                           {/* PRD: "Why You're a Match" explanation */}
