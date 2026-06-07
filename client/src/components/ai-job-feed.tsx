@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { useState, useMemo } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
@@ -166,7 +166,6 @@ interface PaginatedResponse {
   hasMore: boolean;
 }
 
-const JOBS_PER_PAGE = 20;
 // The matcher hard-caps recommendations at 100, so the entire feed fits in one
 // request — fetched up front so all filters operate on the complete set.
 const FEED_FETCH_LIMIT = 100;
@@ -220,36 +219,6 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
     if (!data) return undefined;
     return (data.jobs ?? []).filter((m: any) => m && m.job);
   }, [data]);
-
-  // How many of the filtered results are currently rendered (client-side reveal).
-  const [visibleCount, setVisibleCount] = useState(JOBS_PER_PAGE);
-  const observerRef = useRef<IntersectionObserver | null>(null);
-  // Latest filtered count, read inside the (stable) sentinel callback ref below.
-  const filteredCountRef = useRef(0);
-
-  // Callback ref: attach the IntersectionObserver the instant the sentinel node
-  // mounts. This is deliberately NOT a useEffect keyed on filteredMatches — the
-  // sentinel mounts based on loading/fallback render conditions that can settle
-  // on a different render than the one where filteredMatches last changed, and
-  // an effect would then never re-run to observe the real node (reveal stalls
-  // at the initial count). A callback ref fires exactly on mount/unmount, and we
-  // root the observer on the sentinel's own parent (the overflow-y-auto scroll
-  // container), which is guaranteed present whenever the node is.
-  const sentinelRef = useCallback((node: HTMLDivElement | null) => {
-    observerRef.current?.disconnect();
-    observerRef.current = null;
-    if (!node) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting) {
-          setVisibleCount(c => Math.min(c + JOBS_PER_PAGE, filteredCountRef.current));
-        }
-      },
-      { root: node.parentElement, rootMargin: '200px' },
-    );
-    observer.observe(node);
-    observerRef.current = observer;
-  }, []);
 
   // Aggregator fallback — only fetched when the main feed has zero matches.
   // These are external aggregator listings (Adzuna et al.); URLs leave the platform.
@@ -312,22 +281,10 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
     });
   }, [allMatches, searchTerm, locationFilter, workTypeFilter, companyFilter, experienceLevelFilter, datePostedFilter]);
 
-  // The window of filtered results actually rendered. Slicing caps gracefully,
-  // so an over-incremented visibleCount is harmless.
-  const visibleMatches = useMemo(
-    () => filteredMatches?.slice(0, visibleCount),
-    [filteredMatches, visibleCount],
-  );
-  const hasMoreToShow = !!filteredMatches && visibleCount < filteredMatches.length;
-  // Keep the cap fresh for the stable sentinel callback ref (which can't close
-  // over filteredMatches without going stale).
-  filteredCountRef.current = filteredMatches?.length ?? 0;
-
-  // Reset the reveal window whenever the filter set changes so a new filter
-  // starts from the top instead of inheriting a deep scroll position.
-  useEffect(() => {
-    setVisibleCount(JOBS_PER_PAGE);
-  }, [searchTerm, locationFilter, workTypeFilter, companyFilter, experienceLevelFilter, datePostedFilter]);
+  // Render the full filtered set at once. All matches are already fetched in a
+  // single request, so there is no network cost to showing them; rendering them
+  // all avoids the scroll-reveal machinery (and its bugs) entirely.
+  const visibleMatches = filteredMatches;
 
   const { data: userJobActions } = useQuery({
     queryKey: ['/api/candidate/job-actions'],
@@ -730,8 +687,8 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
           {/* Job count summary with refresh */}
           <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
             <span>
-              Showing {visibleMatches?.length ?? 0} of {filteredMatches.length}
-              {filteredMatches.length !== totalMatches ? ` (filtered from ${totalMatches})` : ''} matches
+              {filteredMatches.length} {filteredMatches.length === 1 ? 'match' : 'matches'}
+              {filteredMatches.length !== totalMatches ? ` (filtered from ${totalMatches})` : ''}
             </span>
             <Button
               variant="outline"
@@ -912,13 +869,12 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
               );
             })}
 
-            {/* Infinite scroll sentinel — MUST live inside the scroll container so
-                the container-rooted observer can see it cross the reveal window. */}
-            <div ref={sentinelRef} className="flex items-center justify-center h-10">
-              {!hasMoreToShow && filteredMatches.length > 0 && (
+            {/* End-of-list marker (the full set is rendered at once). */}
+            {filteredMatches.length > 0 && (
+              <div className="flex items-center justify-center h-10">
                 <span className="text-sm text-gray-400">You've seen all {filteredMatches.length} matches</span>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </div>
       )}
