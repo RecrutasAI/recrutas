@@ -905,13 +905,14 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
                 </div>
               );
             })}
-          </div>
 
-          {/* Infinite scroll sentinel — reveals more of the filtered set client-side */}
-          <div ref={sentinelRef} className="flex items-center justify-center h-10">
-            {!hasMoreToShow && filteredMatches.length > 0 && (
-              <span className="text-sm text-gray-400">You've seen all {filteredMatches.length} matches</span>
-            )}
+            {/* Infinite scroll sentinel — MUST live inside the scroll container so
+                the container-rooted observer can see it cross the reveal window. */}
+            <div ref={sentinelRef} className="flex items-center justify-center h-10">
+              {!hasMoreToShow && filteredMatches.length > 0 && (
+                <span className="text-sm text-gray-400">You've seen all {filteredMatches.length} matches</span>
+              )}
+            </div>
           </div>
         </div>
       )}
