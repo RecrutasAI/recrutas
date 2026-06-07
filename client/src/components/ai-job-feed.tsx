@@ -224,6 +224,7 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
   // How many of the filtered results are currently rendered (client-side reveal).
   const [visibleCount, setVisibleCount] = useState(JOBS_PER_PAGE);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Aggregator fallback — only fetched when the main feed has zero matches.
   // These are external aggregator listings (Adzuna et al.); URLs leave the platform.
@@ -311,7 +312,12 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
           setVisibleCount(c => Math.min(c + JOBS_PER_PAGE, filteredMatches.length));
         }
       },
-      { rootMargin: '200px' },
+      // Root MUST be the scrolling list container, not the viewport: the list
+      // lives inside an `overflow-y-auto` div, so a viewport-rooted observer
+      // never sees the sentinel scroll into view — the reveal stalls at ~40 and
+      // only advances incidentally (on mount / refetch), which is the bug where
+      // the feed shows 40 and "Refresh" bumps it +20 toward 100.
+      { root: scrollContainerRef.current, rootMargin: '200px' },
     );
     observer.observe(el);
     return () => observer.disconnect();
@@ -733,7 +739,7 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
             </Button>
           </div>
 
-          <div className="space-y-4 max-h-[calc(100vh-350px)] overflow-y-auto">
+          <div ref={scrollContainerRef} className="space-y-4 max-h-[calc(100vh-350px)] overflow-y-auto">
             {visibleMatches!.map((match, idx) => {
               const isSaved = savedJobIds.has(match.job.id);
               const isApplied = appliedJobIds.has(match.job.id);
