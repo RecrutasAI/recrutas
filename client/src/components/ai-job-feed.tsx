@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
@@ -223,8 +223,33 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
 
   // How many of the filtered results are currently rendered (client-side reveal).
   const [visibleCount, setVisibleCount] = useState(JOBS_PER_PAGE);
-  const sentinelRef = useRef<HTMLDivElement>(null);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  // Latest filtered count, read inside the (stable) sentinel callback ref below.
+  const filteredCountRef = useRef(0);
+
+  // Callback ref: attach the IntersectionObserver the instant the sentinel node
+  // mounts. This is deliberately NOT a useEffect keyed on filteredMatches — the
+  // sentinel mounts based on loading/fallback render conditions that can settle
+  // on a different render than the one where filteredMatches last changed, and
+  // an effect would then never re-run to observe the real node (reveal stalls
+  // at the initial count). A callback ref fires exactly on mount/unmount, and we
+  // root the observer on the sentinel's own parent (the overflow-y-auto scroll
+  // container), which is guaranteed present whenever the node is.
+  const sentinelRef = useCallback((node: HTMLDivElement | null) => {
+    observerRef.current?.disconnect();
+    observerRef.current = null;
+    if (!node) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setVisibleCount(c => Math.min(c + JOBS_PER_PAGE, filteredCountRef.current));
+        }
+      },
+      { root: node.parentElement, rootMargin: '200px' },
+    );
+    observer.observe(node);
+    observerRef.current = observer;
+  }, []);
 
   // Aggregator fallback — only fetched when the main feed has zero matches.
   // These are external aggregator listings (Adzuna et al.); URLs leave the platform.
@@ -294,34 +319,15 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
     [filteredMatches, visibleCount],
   );
   const hasMoreToShow = !!filteredMatches && visibleCount < filteredMatches.length;
+  // Keep the cap fresh for the stable sentinel callback ref (which can't close
+  // over filteredMatches without going stale).
+  filteredCountRef.current = filteredMatches?.length ?? 0;
 
   // Reset the reveal window whenever the filter set changes so a new filter
   // starts from the top instead of inheriting a deep scroll position.
   useEffect(() => {
     setVisibleCount(JOBS_PER_PAGE);
   }, [searchTerm, locationFilter, workTypeFilter, companyFilter, experienceLevelFilter, datePostedFilter]);
-
-  // Reveal more on scroll (purely client-side — no network). Re-bound when the
-  // filtered set changes so the cap tracks the current result count.
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || !filteredMatches) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting) {
-          setVisibleCount(c => Math.min(c + JOBS_PER_PAGE, filteredMatches.length));
-        }
-      },
-      // Root MUST be the scrolling list container, not the viewport: the list
-      // lives inside an `overflow-y-auto` div, so a viewport-rooted observer
-      // never sees the sentinel scroll into view — the reveal stalls at ~40 and
-      // only advances incidentally (on mount / refetch), which is the bug where
-      // the feed shows 40 and "Refresh" bumps it +20 toward 100.
-      { root: scrollContainerRef.current, rootMargin: '200px' },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [filteredMatches]);
 
   const { data: userJobActions } = useQuery({
     queryKey: ['/api/candidate/job-actions'],
@@ -739,7 +745,7 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
             </Button>
           </div>
 
-          <div ref={scrollContainerRef} className="space-y-4 max-h-[calc(100vh-350px)] overflow-y-auto">
+          <div className="space-y-4 max-h-[calc(100vh-350px)] overflow-y-auto">
             {visibleMatches!.map((match, idx) => {
               const isSaved = savedJobIds.has(match.job.id);
               const isApplied = appliedJobIds.has(match.job.id);
