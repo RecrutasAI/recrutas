@@ -21,6 +21,18 @@ interface AtsJob {
   title: string;
   location?: string;
   url: string;
+  description?: string;
+}
+
+/** Minimal HTML→text for ATS descriptions returned as HTML (greenhouse, recruitee). */
+function stripHtml(html: string | undefined): string {
+  if (!html) return '';
+  return html
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 interface CompanyInfo {
@@ -248,27 +260,28 @@ async function fetchJson(url: string): Promise<unknown> {
 export async function listAtsJobs(atsType: AtsType, atsId: string): Promise<AtsJob[]> {
   try {
     if (atsType === 'greenhouse') {
-      const data = await fetchJson(`https://boards-api.greenhouse.io/v1/boards/${atsId}/jobs`) as
-        | { jobs?: Array<{ title: string; location?: { name?: string }; absolute_url?: string }> }
+      // ?content=true returns the full posting body in the same list call.
+      const data = await fetchJson(`https://boards-api.greenhouse.io/v1/boards/${atsId}/jobs?content=true`) as
+        | { jobs?: Array<{ title: string; location?: { name?: string }; absolute_url?: string; content?: string }> }
         | null;
       return (data?.jobs ?? [])
-        .map(j => ({ title: j.title, location: j.location?.name, url: j.absolute_url ?? '' }))
+        .map(j => ({ title: j.title, location: j.location?.name, url: j.absolute_url ?? '', description: stripHtml(j.content) }))
         .filter(j => j.title && j.url);
     }
     if (atsType === 'lever') {
       const data = await fetchJson(`https://api.lever.co/v0/postings/${atsId}?mode=json`) as
-        | Array<{ text: string; categories?: { location?: string }; hostedUrl?: string }>
+        | Array<{ text: string; categories?: { location?: string }; hostedUrl?: string; descriptionPlain?: string }>
         | null;
       return (Array.isArray(data) ? data : [])
-        .map(j => ({ title: j.text, location: j.categories?.location, url: j.hostedUrl ?? '' }))
+        .map(j => ({ title: j.text, location: j.categories?.location, url: j.hostedUrl ?? '', description: j.descriptionPlain ?? '' }))
         .filter(j => j.title && j.url);
     }
     if (atsType === 'ashby') {
       const data = await fetchJson(`https://api.ashbyhq.com/posting-api/job-board/${atsId}`) as
-        | { jobs?: Array<{ title: string; locationName?: string; jobUrl?: string }> }
+        | { jobs?: Array<{ title: string; locationName?: string; jobUrl?: string; descriptionPlain?: string }> }
         | null;
       return (data?.jobs ?? [])
-        .map(j => ({ title: j.title, location: j.locationName, url: j.jobUrl ?? '' }))
+        .map(j => ({ title: j.title, location: j.locationName, url: j.jobUrl ?? '', description: j.descriptionPlain ?? '' }))
         .filter(j => j.title && j.url);
     }
     if (atsType === 'workable') {
@@ -276,6 +289,9 @@ export async function listAtsJobs(atsType: AtsType, atsId: string): Promise<AtsJ
       // `jobs` array. The previously-used `/vacancies/` path 404s. The job
       // `url` field already points to apply.workable.com/j/<shortcode>; no
       // reconstruction needed.
+      // TODO: this list endpoint does not include the job description; jobs
+      // ingested from workable remain description-less (no skill extraction)
+      // until we add a per-posting detail fetch. ~4% of ATS supply.
       const data = await fetchJson(`https://apply.workable.com/api/v1/widget/accounts/${atsId}`) as
         | { jobs?: Array<{ title?: string; city?: string; state?: string; country?: string; url?: string }> }
         | null;
@@ -289,13 +305,14 @@ export async function listAtsJobs(atsType: AtsType, atsId: string): Promise<AtsJ
     }
     if (atsType === 'recruitee') {
       const data = await fetchJson(`https://${atsId}.recruitee.com/api/offers`) as
-        | { offers?: Array<{ title: string; city?: string; country?: string; slug?: string }> }
+        | { offers?: Array<{ title: string; city?: string; country?: string; slug?: string; description?: string }> }
         | null;
       return (data?.offers ?? [])
         .map(j => ({
           title: j.title,
           location: j.city ?? j.country,
           url: j.slug ? `https://${atsId}.recruitee.com/o/${j.slug}` : '',
+          description: stripHtml(j.description),
         }))
         .filter(j => j.title && j.url);
     }

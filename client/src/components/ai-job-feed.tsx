@@ -220,34 +220,6 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
     return (data.jobs ?? []).filter((m: any) => m && m.job);
   }, [data]);
 
-  // Aggregator fallback — only fetched when the main feed has zero matches.
-  // These are external aggregator listings (Adzuna et al.); URLs leave the platform.
-  // Matched to the candidate using the same signals as the main feed: profile
-  // skills, the active search/title intent, location, and work-type filter.
-  const hasZeroMatches = !isLoading && !isFetching && allMatches !== undefined && allMatches.length === 0;
-  const candidateSkills: string[] = useMemo(() => {
-    const skills = cachedProfile?.skills;
-    return Array.isArray(skills) ? skills.slice(0, 20) : [];
-  }, [cachedProfile?.skills]);
-  const fallbackLocation = locationFilter !== 'all' ? locationFilter : (cachedProfile?.location || '');
-  const fallbackWorkType = workTypeFilter !== 'all' ? workTypeFilter : '';
-  const fallbackJobTitle = searchTerm.trim();
-  const { data: fallbackData } = useQuery<{ jobs: any[] }>({
-    queryKey: ['/api/aggregator-fallback', candidateSkills.join(','), fallbackJobTitle, fallbackLocation, fallbackWorkType],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (candidateSkills.length > 0) params.set('skills', candidateSkills.join(','));
-      if (fallbackJobTitle) params.set('jobTitle', fallbackJobTitle);
-      if (fallbackLocation) params.set('location', fallbackLocation);
-      if (fallbackWorkType) params.set('workType', fallbackWorkType);
-      const response = await apiRequest("GET", `/api/aggregator-fallback?${params.toString()}`);
-      return response.json();
-    },
-    enabled: hasZeroMatches,
-    staleTime: 5 * 60 * 1000,
-  });
-  const fallbackJobs = fallbackData?.jobs ?? [];
-
   // Client-side filtering — instant, no network calls
   const filteredMatches = useMemo(() => {
     if (!allMatches) return undefined;
@@ -285,6 +257,35 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
   // single request, so there is no network cost to showing them; rendering them
   // all avoids the scroll-reveal machinery (and its bugs) entirely.
   const visibleMatches = filteredMatches;
+
+  // Aggregator fallback — fetched whenever NO matches are visible: either the
+  // feed is genuinely empty (zero on-platform matches), or a manual search/filter
+  // excluded everything. These are external aggregator listings (Adzuna et al.);
+  // URLs leave the platform. Matched using the same signals as the main feed:
+  // profile skills, the active search/title intent, location, and work-type filter.
+  const noVisibleMatches = !isLoading && !isFetching && Array.isArray(filteredMatches) && filteredMatches.length === 0;
+  const candidateSkills: string[] = useMemo(() => {
+    const skills = cachedProfile?.skills;
+    return Array.isArray(skills) ? skills.slice(0, 20) : [];
+  }, [cachedProfile?.skills]);
+  const fallbackLocation = locationFilter !== 'all' ? locationFilter : (cachedProfile?.location || '');
+  const fallbackWorkType = workTypeFilter !== 'all' ? workTypeFilter : '';
+  const fallbackJobTitle = searchTerm.trim();
+  const { data: fallbackData } = useQuery<{ jobs: any[] }>({
+    queryKey: ['/api/aggregator-fallback', candidateSkills.join(','), fallbackJobTitle, fallbackLocation, fallbackWorkType],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (candidateSkills.length > 0) params.set('skills', candidateSkills.join(','));
+      if (fallbackJobTitle) params.set('jobTitle', fallbackJobTitle);
+      if (fallbackLocation) params.set('location', fallbackLocation);
+      if (fallbackWorkType) params.set('workType', fallbackWorkType);
+      const response = await apiRequest("GET", `/api/aggregator-fallback?${params.toString()}`);
+      return response.json();
+    },
+    enabled: noVisibleMatches,
+    staleTime: 5 * 60 * 1000,
+  });
+  const fallbackJobs = fallbackData?.jobs ?? [];
 
   const { data: userJobActions } = useQuery({
     queryKey: ['/api/candidate/job-actions'],
@@ -465,6 +466,10 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
     (experienceLevelFilter !== 'all' ? 1 : 0) +
     (datePostedFilter !== 'all' ? 1 : 0);
   const hasAnyFilter = activeFilterCount > 0 || searchTerm.length > 0;
+  // The candidate HAS matches but the active filters/search excluded them all.
+  // Distinct from a genuinely empty feed: we still offer "Clear filters", but we
+  // also surface aggregator results for their search intent.
+  const overFiltered = !!allMatches && allMatches.length > 0 && (!filteredMatches || filteredMatches.length === 0) && hasAnyFilter;
 
   return (
     <div className="space-y-4">
@@ -584,26 +589,6 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
       {/* Job Feed */}
       {isLoading || (isFetching && (!filteredMatches || filteredMatches.length === 0)) ? (
         <LoadingHype />
-      ) : allMatches && allMatches.length > 0 && filteredMatches && filteredMatches.length === 0 && hasAnyFilter ? (
-        /* The candidate HAS matches — the active filters just excluded them all.
-           Don't show the "no matches yet" hero (misleading); offer to clear. */
-        <div className="flex flex-col items-center justify-center gap-3 p-8 text-center rounded-xl border border-dashed border-gray-300 dark:border-gray-700">
-          <div className="h-10 w-10 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
-            <Filter className="h-5 w-5 text-gray-500 dark:text-gray-400" />
-          </div>
-          <div>
-            <h3 className="text-sm sm:text-base font-semibold text-gray-900 dark:text-white">
-              No jobs match your filters
-            </h3>
-            <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-0.5">
-              None of your {totalMatches} matches fit the current filters. Try widening or clearing them.
-            </p>
-          </div>
-          <Button variant="outline" size="sm" onClick={clearFilters}>
-            <RotateCcw className="h-4 w-4 mr-1" />
-            Clear filters
-          </Button>
-        </div>
       ) : !filteredMatches || filteredMatches.length === 0 ? (
         <div className="space-y-4">
           {/* Encouraging hero strip — same width as cards, friendlier tone */}
@@ -613,24 +598,39 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
             </div>
             <div className="min-w-0 flex-1">
               <h3 className="text-sm sm:text-base font-semibold text-gray-900 dark:text-white">
-                {fallbackJobs.length > 0
-                  ? "We're sharpening your matches"
-                  : "Hang tight — new matches arrive daily"}
+                {overFiltered
+                  ? "No on-platform jobs match your filters"
+                  : fallbackJobs.length > 0
+                    ? "We're sharpening your matches"
+                    : "Hang tight — new matches arrive daily"}
               </h3>
               <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-0.5">
-                {fallbackJobs.length > 0
-                  ? "While our top-tier matches catch up, here are roles aligned to your profile from across the web."
-                  : "Polish your profile to surface more matches, or check back soon — fresh opportunities are added every hour."}
+                {overFiltered
+                  ? (fallbackJobs.length > 0
+                      ? `None of your ${totalMatches} matches fit these filters — here are roles from across the web that do. Or clear your filters.`
+                      : `None of your ${totalMatches} matches fit the current filters. Try widening or clearing them.`)
+                  : fallbackJobs.length > 0
+                    ? "While our top-tier matches catch up, here are roles aligned to your profile from across the web."
+                    : "Polish your profile to surface more matches, or check back soon — fresh opportunities are added every hour."}
               </p>
             </div>
             <div className="flex flex-col sm:flex-row gap-2 shrink-0">
-              <Button variant="outline" size="sm" onClick={() => onUploadClick?.()} className="text-xs">
-                <Upload className="h-3.5 w-3.5 sm:mr-1" />
-                <span className="hidden sm:inline">Profile</span>
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => refetch()} className="text-xs" title="Refresh matches">
-                <RotateCcw className={`h-3.5 w-3.5 ${isFetching ? 'animate-spin' : ''}`} />
-              </Button>
+              {overFiltered ? (
+                <Button variant="outline" size="sm" onClick={clearFilters} className="text-xs">
+                  <RotateCcw className="h-3.5 w-3.5 sm:mr-1" />
+                  <span className="hidden sm:inline">Clear filters</span>
+                </Button>
+              ) : (
+                <>
+                  <Button variant="outline" size="sm" onClick={() => onUploadClick?.()} className="text-xs">
+                    <Upload className="h-3.5 w-3.5 sm:mr-1" />
+                    <span className="hidden sm:inline">Profile</span>
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => refetch()} className="text-xs" title="Refresh matches">
+                    <RotateCcw className={`h-3.5 w-3.5 ${isFetching ? 'animate-spin' : ''}`} />
+                  </Button>
+                </>
+              )}
             </div>
           </div>
 
