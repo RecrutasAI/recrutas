@@ -20,7 +20,7 @@
     "postbuild": "ls -R dist",
     "start": "NODE_ENV=production node dist/index.js",
     "lint": "eslint .",
-    "test": "RAPIDAPI_KEY=5706440c2cmsh6fbbaa0ddac2a64p116bd6jsn30a4d4fc5261 NODE_ENV=test node run-tests.js",
+    "test": "NODE_ENV=test node run-tests.js",
     "test:unit:backend": "NODE_ENV=test node --experimental-vm-modules node_modules/jest/bin/jest --testMatch='**/test/*-unit.test.js' --forceExit",
     "test:integration:backend": "NODE_ENV=test node --experimental-vm-modules node_modules/jest/bin/jest --testMatch='**/test/*-integration.test.js'",
     "test:backend": "node --experimental-vm-modules node_modules/jest/bin/jest",
