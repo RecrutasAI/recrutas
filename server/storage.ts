@@ -977,7 +977,7 @@ export class DatabaseStorage implements IStorage {
   private async getDiscoveryFeed(
     excludeIds: number[],
     explanation: string,
-    relevance?: { skills?: string[]; roleKeywords?: string[] },
+    relevance?: { skills?: string[]; roleKeywords?: string[]; relevantOnly?: boolean },
   ): Promise<any[]> {
     const ninetyDaysAgo = new Date();
     ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
@@ -1065,7 +1065,12 @@ export class DatabaseStorage implements IStorage {
         relevanceOrder,
       );
     }
-    if (discoveryJobs.length === 0) {
+    // When relevantOnly, do NOT fall through to generic recent roles. Returning
+    // empty lets /api/ai-matches report zero, which restores the original
+    // zero-result → client aggregator-fallback behaviour (the generic feed had
+    // been shadowing it). Non-relevance callers (no profile, timeout safety net)
+    // still get the generic fill so their screen is never empty.
+    if (discoveryJobs.length === 0 && !relevance?.relevantOnly) {
       discoveryJobs = await runQuery([]);
     }
 
@@ -1597,8 +1602,8 @@ export class DatabaseStorage implements IStorage {
     // feed instead so a logged-in candidate never sees aggregators while we have
     // real platform/ATS supply to show.
     if (finalJobs.length === 0) {
-      console.log(`[fetchScoredJobs] 0 jobs cleared the 30% floor — falling back to discovery feed`);
-      return this.getDiscoveryFeed(excludeIds, 'Here are recent roles to explore while we tune your matches', { skills: candidateSkills, roleKeywords: roleTitleKeywords });
+      console.log(`[fetchScoredJobs] 0 jobs cleared the 30% floor — falling back to relevant discovery (else empty → aggregator)`);
+      return this.getDiscoveryFeed(excludeIds, 'Here are recent roles to explore while we tune your matches', { skills: candidateSkills, roleKeywords: roleTitleKeywords, relevantOnly: true });
     }
 
     return finalJobs.map(({ prefBoost: _p, compositeScore: _c, ...job }) => job);

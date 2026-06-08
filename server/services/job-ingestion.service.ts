@@ -176,6 +176,34 @@ export class JobIngestionService {
           ).join(', ')})
         `));
         stats.duplicates += toUpdate.length;
+
+        // Self-heal: backfill description/skills for existing rows that were
+        // ingested as stubs (empty description/skills) before the lister carried
+        // descriptions. Only fills when stored is empty and the incoming row now
+        // has a description — never overwrites real data. One re-run heals the
+        // historical ATS:* stub backlog without a separate script.
+        const toBackfill = toUpdate
+          .map(j => ({
+            eid: j.effectiveExternalId,
+            src: j.source ?? 'unknown',
+            desc: (j.description ?? '').trim(),
+            skills: normalizeSkills(j.skills?.length > 0 ? j.skills : extractSkillsFromText(j.description)),
+          }))
+          .filter(r => r.desc.length > 0);
+
+        if (toBackfill.length > 0) {
+          const values = toBackfill.map(r =>
+            `('${r.eid.replace(/'/g, "''")}', '${r.src.replace(/'/g, "''")}', '${r.desc.replace(/'/g, "''")}', '${JSON.stringify(r.skills).replace(/'/g, "''")}')`
+          ).join(', ');
+          await db.execute(sql.raw(`
+            UPDATE job_postings AS jp SET
+              description = CASE WHEN jp.description IS NULL OR jp.description = '' THEN v.description ELSE jp.description END,
+              skills = CASE WHEN jp.skills IS NULL OR jsonb_array_length(jp.skills) = 0 THEN v.skills::jsonb ELSE jp.skills END,
+              updated_at = NOW()
+            FROM (VALUES ${values}) AS v(external_id, source, description, skills)
+            WHERE jp.external_id = v.external_id AND jp.source = v.source
+          `));
+        }
       }
 
       // Bulk insert new jobs using ON CONFLICT DO NOTHING as safety net

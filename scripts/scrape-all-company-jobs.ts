@@ -112,7 +112,7 @@ async function main(): Promise<PipelineSummary> {
             title: j.title,
             company: r.value.company,
             location: j.location || '',
-            description: '',
+            description: j.description || '',
             requirements: [],
             skills: [],
             workType: 'hybrid',
