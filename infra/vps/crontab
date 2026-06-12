@@ -1,0 +1,39 @@
+# Recrutas cron schedule — 1:1 port of .github/workflows/*.yml schedules.
+# All times UTC (setup.sh sets the server timezone to UTC).
+# Install with: crontab infra/vps/crontab
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+RUN=/opt/recrutas/app/infra/vps/run-cron.sh
+
+# Enforce 24h Response SLA — hourly
+0 * * * * $RUN enforce-response-sla 5 npx tsx scripts/enforce-response-sla.ts
+
+# Scrape ATS Jobs — every 4 hours
+0 */4 * * * $RUN scrape-ats-jobs 60 npx tsx scripts/scrape-all-company-jobs.ts
+
+# Batch Embeddings — 4x/day
+0 0,6,12,18 * * * $RUN batch-embeddings 30 env BATCH_LIMIT=5000 npx tsx server/services/batch-embedding.service.ts
+
+# Discover Companies — daily 02:00 (phases continue on error, like GHA)
+0 2 * * * $RUN discover-companies 90 bash -c 'npx tsx scripts/discover-companies.ts --phase=discover; npx tsx scripts/discover-companies.ts --phase=apollo; npx tsx scripts/discover-companies.ts --phase=probe --limit=1500'
+
+# Retry Failed Parses — daily 03:00
+0 3 * * * $RUN retry-failed-parses 10 npx tsx scripts/retry-failed-parses.ts
+
+# Auto-hide Ghost Jobs — daily 04:00
+0 4 * * * $RUN auto-hide-ghost-jobs 5 npx tsx scripts/auto-hide-ghost-jobs.ts --staleDays=30
+
+# Warm Candidate Matches — daily 04:30 (after ghost-job hiding)
+30 4 * * * $RUN warm-candidate-matches 10 npx tsx scripts/warm-candidate-matches.ts
+
+# Purge Old Jobs — daily 05:00
+0 5 * * * $RUN purge-old-jobs 5 npx tsx scripts/purge-old-jobs.ts --retainDays=90
+
+# Scrape External Jobs (aggregators) — daily 06:30
+30 6 * * * $RUN scrape-external-jobs 12 npx tsx scripts/scrape-external-jobs.ts --timeout=540000
+
+# Scrape Tech Companies — 06:00 and 18:00 (tiers continue on error, like GHA)
+0 6,18 * * * $RUN scrape-tech-companies 60 bash -c 'npx tsx scripts/scrape-tier.ts --tier=1 --timeout=900000; npx tsx scripts/scrape-tier.ts --tier=2 --timeout=600000; npx tsx scripts/scrape-tier.ts --tier=3 --timeout=300000; npx tsx scripts/scrape-tier.ts --cleanup --days=15'
+
+# Cleanup Errors — weekly, Sunday 06:00
+0 6 * * 0 $RUN cleanup-errors 5 npx tsx scripts/cleanup-errors.ts
