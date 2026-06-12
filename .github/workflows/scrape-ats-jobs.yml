@@ -1,9 +1,8 @@
 name: Scrape ATS Jobs
 
 on:
-  schedule:
-    # Every 4 hours: scrape 445 ATS companies for ~26K fresh jobs
-    - cron: '0 */4 * * *'
+  # schedule: moved to the Hetzner VPS crontab (infra/vps/crontab) on 2026-06-12.
+  # Do NOT re-add a schedule here without removing it there first (double-runs).
   workflow_dispatch:
     inputs:
       dry_run:

@@ -1,9 +1,8 @@
 name: Purge Old External Jobs
 
 on:
-  schedule:
-    # Run daily at 5 AM UTC (after auto-hide-ghost-jobs at 4 AM)
-    - cron: '0 5 * * *'
+  # schedule: moved to the Hetzner VPS crontab (infra/vps/crontab) on 2026-06-12.
+  # Do NOT re-add a schedule here without removing it there first (double-runs).
   workflow_dispatch:
     inputs:
       retain_days:

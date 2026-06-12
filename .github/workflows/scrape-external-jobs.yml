@@ -1,9 +1,8 @@
 name: Scrape External Job Boards
 
 on:
-  schedule:
-    # Run 1x/day — Adzuna is now minimized, focus on direct ATS
-    - cron: '30 6 * * *'
+  # schedule: moved to the Hetzner VPS crontab (infra/vps/crontab) on 2026-06-12.
+  # Do NOT re-add a schedule here without removing it there first (double-runs).
   workflow_dispatch:
 
 concurrency:

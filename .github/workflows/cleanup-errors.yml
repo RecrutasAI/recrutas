@@ -1,9 +1,8 @@
 name: Cleanup Old Error Events
 
 on:
-  schedule:
-    # Run weekly on Sundays at 6 AM UTC
-    - cron: '0 6 * * 0'
+  # schedule: moved to the Hetzner VPS crontab (infra/vps/crontab) on 2026-06-12.
+  # Do NOT re-add a schedule here without removing it there first (double-runs).
   workflow_dispatch:
 
 concurrency:

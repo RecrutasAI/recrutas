@@ -1,8 +1,8 @@
 name: Retry Failed Resume Parses
 
 on:
-  schedule:
-    - cron: '0 3 * * *'  # 3 AM UTC daily
+  # schedule: moved to the Hetzner VPS crontab (infra/vps/crontab) on 2026-06-12.
+  # Do NOT re-add a schedule here without removing it there first (double-runs).
   workflow_dispatch:
 
 concurrency:

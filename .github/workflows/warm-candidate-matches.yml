@@ -1,8 +1,8 @@
 name: Warm Candidate Match Cache
 
 on:
-  schedule:
-    - cron: '30 4 * * *'  # 4:30 AM UTC daily (after auto-hide-ghost-jobs at 4 AM)
+  # schedule: moved to the Hetzner VPS crontab (infra/vps/crontab) on 2026-06-12.
+  # Do NOT re-add a schedule here without removing it there first (double-runs).
   workflow_dispatch:
 
 concurrency:

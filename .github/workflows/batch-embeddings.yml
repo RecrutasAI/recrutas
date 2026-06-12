@@ -1,9 +1,8 @@
 name: Batch Embeddings
 
 on:
-  schedule:
-    # Run 4x/day to keep embeddings fresh and backfill new jobs
-    - cron: '0 0,6,12,18 * * *'
+  # schedule: moved to the Hetzner VPS crontab (infra/vps/crontab) on 2026-06-12.
+  # Do NOT re-add a schedule here without removing it there first (double-runs).
   workflow_dispatch:
     inputs:
       limit:

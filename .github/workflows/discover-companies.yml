@@ -1,9 +1,8 @@
 name: Discover and Probe Companies
 
 on:
-  schedule:
-    # Run daily at 2 AM UTC — before scrape-tech-companies (if it exists)
-    - cron: '0 2 * * *'
+  # schedule: moved to the Hetzner VPS crontab (infra/vps/crontab) on 2026-06-12.
+  # Do NOT re-add a schedule here without removing it there first (double-runs).
   workflow_dispatch:
     inputs:
       limit:
