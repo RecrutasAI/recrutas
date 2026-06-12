@@ -112,8 +112,12 @@ export async function configureApp() {
       if (origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://')) {
         return callback(null, true);
       }
-      // Allow any *.vercel.app deployment (preview + production)
-      if (/\.vercel\.app$/.test(new URL(origin).hostname)) {return callback(null, true);}
+      // Allow this project's Vercel deployments only (recrutas.vercel.app + recrutas-*-<team>.vercel.app previews),
+      // not arbitrary *.vercel.app origins
+      const hostname = new URL(origin).hostname;
+      if (hostname === 'recrutas.vercel.app' || (hostname.startsWith('recrutas-') && hostname.endsWith('.vercel.app'))) {
+        return callback(null, true);
+      }
       callback(new Error('Not allowed by CORS'));
     },
     credentials: true

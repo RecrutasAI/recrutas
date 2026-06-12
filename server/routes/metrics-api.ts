@@ -10,21 +10,13 @@ import { sql } from 'drizzle-orm/sql';
 import { getLimiterStats } from '../lib/groq-limiter.js';
 import { redisEnabled } from '../lib/redis.js';
 import { getModelInfo } from '../ml-matching.js';
-
-function adminAuth(req: any, res: any): boolean {
-  const secret = req.headers['x-admin-secret'];
-  if (!process.env.ADMIN_SECRET || secret !== process.env.ADMIN_SECRET) {
-    res.status(401).json({ message: 'Unauthorized' });
-    return false;
-  }
-  return true;
-}
+import { verifyAdminSecret } from '../middleware/security.js';
 
 export function registerMetricsRoutes(app: Express) {
   // ── Latency percentiles per endpoint (last N hours) ──────────────────────
 
   app.get('/api/admin/metrics/latency', async (req: any, res) => {
-    if (!adminAuth(req, res)) return;
+    if (!verifyAdminSecret(req, res)) return;
     if (!db) return res.status(503).json({ message: 'Database not available' });
 
     const hours = parseInt((req.query.hours as string) || '24', 10);
@@ -57,7 +49,7 @@ export function registerMetricsRoutes(app: Express) {
   // ── Error rate time series (last 24h by hour) ─────────────────────────────
 
   app.get('/api/admin/metrics/errors', async (req: any, res) => {
-    if (!adminAuth(req, res)) return;
+    if (!verifyAdminSecret(req, res)) return;
     if (!db) return res.status(503).json({ message: 'Database not available' });
 
     const hours = parseInt((req.query.hours as string) || '24', 10);
@@ -88,7 +80,7 @@ export function registerMetricsRoutes(app: Express) {
   // ── Match quality distribution ────────────────────────────────────────────
 
   app.get('/api/admin/metrics/match-quality', async (req: any, res) => {
-    if (!adminAuth(req, res)) return;
+    if (!verifyAdminSecret(req, res)) return;
     if (!db) return res.status(503).json({ message: 'Database not available' });
 
     try {
@@ -129,7 +121,7 @@ export function registerMetricsRoutes(app: Express) {
   // ── Platform growth time series ───────────────────────────────────────────
 
   app.get('/api/admin/metrics/growth', async (req: any, res) => {
-    if (!adminAuth(req, res)) return;
+    if (!verifyAdminSecret(req, res)) return;
     if (!db) return res.status(503).json({ message: 'Database not available' });
 
     const days = parseInt((req.query.days as string) || '30', 10);
@@ -170,7 +162,7 @@ export function registerMetricsRoutes(app: Express) {
   // ── HF API cache hit rate (embedding reuse) ───────────────────────────────
 
   app.get('/api/admin/metrics/embedding-cache', async (req: any, res) => {
-    if (!adminAuth(req, res)) return;
+    if (!verifyAdminSecret(req, res)) return;
     if (!db) return res.status(503).json({ message: 'Database not available' });
 
     try {
@@ -197,7 +189,7 @@ export function registerMetricsRoutes(app: Express) {
   // ── Job feed health ───────────────────────────────────────────────────────
 
   app.get('/api/admin/metrics/job-feed', async (req: any, res) => {
-    if (!adminAuth(req, res)) return;
+    if (!verifyAdminSecret(req, res)) return;
     if (!db) return res.status(503).json({ message: 'Database not available' });
 
     try {
@@ -231,7 +223,7 @@ export function registerMetricsRoutes(app: Express) {
   // ── Pitch / Investor overview ─────────────────────────────────────────────
 
   app.get('/api/admin/metrics/pitch', async (req: any, res) => {
-    if (!adminAuth(req, res)) return;
+    if (!verifyAdminSecret(req, res)) return;
     if (!db) return res.status(503).json({ message: 'Database not available' });
 
     try {
@@ -385,7 +377,7 @@ export function registerMetricsRoutes(app: Express) {
   // ── System health snapshot ────────────────────────────────────────────────
 
   app.get('/api/admin/metrics/system', async (req: any, res) => {
-    if (!adminAuth(req, res)) return;
+    if (!verifyAdminSecret(req, res)) return;
 
     res.json({
       groqLimiter: getLimiterStats(),
@@ -409,7 +401,7 @@ export function registerMetricsRoutes(app: Express) {
   // + conversion rates. Used by the weekly numbers ritual.
 
   app.get('/api/admin/metrics/posthog-funnel', async (req: any, res) => {
-    if (!adminAuth(req, res)) return;
+    if (!verifyAdminSecret(req, res)) return;
 
     const token = process.env.POSTHOG_PERSONAL_API_KEY;
     const projectId = process.env.POSTHOG_PROJECT_ID;
@@ -477,7 +469,7 @@ export function registerMetricsRoutes(app: Express) {
   // Powers the admin dashboard "Weekly" tab. Same shape as scripts/weekly-numbers.ts.
 
   app.get('/api/admin/metrics/weekly-numbers', async (req: any, res) => {
-    if (!adminAuth(req, res)) return;
+    if (!verifyAdminSecret(req, res)) return;
     if (!db) return res.status(503).json({ message: 'Database not available' });
 
     const now = new Date();
