@@ -22,8 +22,13 @@ fi
 
 echo "==> Clone/update repo"
 mkdir -p /opt/recrutas/logs
+# While the GitHub org is T&S-flagged, anonymous access fails even though the
+# repo is public — code arrives via git bundle (see README) and pull is best-effort.
 if [ -d "$APP_DIR/.git" ]; then
-  git -C "$APP_DIR" pull --ff-only
+  git -C "$APP_DIR" pull --ff-only || echo "WARN: git pull failed (org still flagged?); continuing with current checkout"
+elif [ -f /tmp/recrutas.bundle ]; then
+  git clone -b main /tmp/recrutas.bundle "$APP_DIR"
+  git -C "$APP_DIR" remote set-url origin "$REPO"
 else
   git clone "$REPO" "$APP_DIR"
 fi
