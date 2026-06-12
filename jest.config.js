@@ -15,9 +15,6 @@ export default {
       },
     ],
   },
-  transformIgnorePatterns: [
-    'node_modules/(?!(@xenova)/)',
-  ],
   // Point to your backend tests
   testMatch: [
     '**/server/**/*.test.ts',
