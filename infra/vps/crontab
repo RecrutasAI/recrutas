@@ -37,3 +37,6 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 
 # Cleanup Errors — weekly, Sunday 06:00
 0 6 * * 0 $RUN cleanup-errors 5 npx tsx scripts/cleanup-errors.ts
+
+# Supabase DB backup — daily 09:00 (independent logical dump → /opt/recrutas/backups/db)
+0 9 * * * $RUN db-backup 30 bash infra/vps/backup-supabase.sh
