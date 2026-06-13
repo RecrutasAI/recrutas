@@ -15,7 +15,7 @@
 import 'dotenv/config';
 import postgres, { Sql } from 'postgres';
 
-export type AtsType = 'greenhouse' | 'lever' | 'ashby' | 'workable' | 'recruitee';
+export type AtsType = 'greenhouse' | 'lever' | 'ashby' | 'workable' | 'recruitee' | 'smartrecruiters' | 'breezy';
 
 interface AtsJob {
   title: string;
@@ -313,6 +313,37 @@ export async function listAtsJobs(atsType: AtsType, atsId: string): Promise<AtsJ
           location: j.city ?? j.country,
           url: j.slug ? `https://${atsId}.recruitee.com/o/${j.slug}` : '',
           description: stripHtml(j.description),
+        }))
+        .filter(j => j.title && j.url);
+    }
+    if (atsType === 'smartrecruiters') {
+      // Public postings list. The list omits the body, so jobs are
+      // description-less (same as workable) until a per-posting detail fetch is
+      // added. Public job URL: jobs.smartrecruiters.com/<identifier>/<postingId>.
+      const data = await fetchJson(`https://api.smartrecruiters.com/v1/companies/${atsId}/postings?limit=100`) as
+        | { content?: Array<{ id: string; name: string; location?: { city?: string; region?: string; country?: string; fullLocation?: string } }> }
+        | null;
+      return (data?.content ?? [])
+        .map(j => ({
+          title: j.name,
+          location: j.location?.fullLocation
+            || [j.location?.city, j.location?.region, j.location?.country].filter(Boolean).join(', ')
+            || undefined,
+          url: j.id ? `https://jobs.smartrecruiters.com/${atsId}/${j.id}` : '',
+        }))
+        .filter(j => j.title && j.url);
+    }
+    if (atsType === 'breezy') {
+      // Public board JSON; each item carries a direct `url`. Description requires
+      // a per-posting detail call, so list jobs are description-less.
+      const data = await fetchJson(`https://${atsId}.breezy.hr/json`) as
+        | Array<{ name: string; url?: string; location?: { city?: string; country?: { name?: string } } }>
+        | null;
+      return (Array.isArray(data) ? data : [])
+        .map(j => ({
+          title: j.name,
+          location: [j.location?.city, j.location?.country?.name].filter(Boolean).join(', ') || undefined,
+          url: j.url ?? '',
         }))
         .filter(j => j.title && j.url);
     }

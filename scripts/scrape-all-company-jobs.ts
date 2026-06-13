@@ -17,7 +17,7 @@ const DRY_RUN   = process.argv.includes('--dry-run');
 const LIMIT_ARG  = process.argv.indexOf('--limit');
 const MAX_ADZUNA = LIMIT_ARG !== -1 ? parseInt(process.argv[LIMIT_ARG + 1], 10) : 500;
 const CONC      = 8;
-const ATS_TYPES = new Set(['greenhouse', 'lever', 'ashby', 'workable', 'recruitee']);
+const ATS_TYPES = new Set(['greenhouse', 'lever', 'ashby', 'workable', 'recruitee', 'smartrecruiters', 'breezy']);
 
 async function main(): Promise<PipelineSummary> {
   const sql = postgres(process.env.POSTGRES_URL_NON_POOLING || process.env.POSTGRES_URL || '', { max: 3, prepare: false });
@@ -85,7 +85,7 @@ async function main(): Promise<PipelineSummary> {
     SELECT "normalizedName", "detectedAts", "atsId"
     FROM discovered_companies
     WHERE status = 'approved'
-      AND "detectedAts" IN ('greenhouse', 'lever', 'ashby', 'workable', 'recruitee')
+      AND "detectedAts" IN ('greenhouse', 'lever', 'ashby', 'workable', 'recruitee', 'smartrecruiters', 'breezy')
   `;
   console.log(`Found ${atsCompanies.length} companies with ATS APIs`);
 

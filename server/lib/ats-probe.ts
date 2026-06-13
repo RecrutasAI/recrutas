@@ -32,7 +32,7 @@ const REDIS_CIRCUIT_KEY = 'ats-probe:circuit-pause-until';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type AtsType = 'greenhouse' | 'lever' | 'ashby' | 'workable' | 'recruitee' | 'json_ld';
+export type AtsType = 'greenhouse' | 'lever' | 'ashby' | 'workable' | 'recruitee' | 'smartrecruiters' | 'breezy' | 'json_ld';
 
 export interface ProbeResult {
   normalizedName: string;
@@ -205,6 +205,56 @@ async function probeRecruitee(slug: string): Promise<boolean> {
   }
 }
 
+async function probeSmartRecruiters(slug: string): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), JSON_PROBE_TIMEOUT_MS);
+    const res = await fetch(`https://api.smartrecruiters.com/v1/companies/${slug}/postings?limit=1`, {
+      headers: { 'User-Agent': 'RecrutasJobAggregator/1.0' },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (res.status === 429) { await record429(); return false; }
+    if (res.ok) {
+      const json = await res.json().catch(() => null) as { content?: unknown[] } | null;
+      // SmartRecruiters returns 200 { content: [] } even for unknown slugs, so a
+      // valid board requires at least one live posting (identifiers are case-insensitive).
+      if (json && Array.isArray(json.content) && json.content.length > 0) {
+        await recordSuccess();
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+async function probeBreezy(slug: string): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), JSON_PROBE_TIMEOUT_MS);
+    const res = await fetch(`https://${slug}.breezy.hr/json`, {
+      headers: { 'User-Agent': 'RecrutasJobAggregator/1.0' },
+      signal: controller.signal,
+      redirect: 'manual', // unknown slugs 302 → breezy.hr; don't follow into HTML
+    });
+    clearTimeout(timer);
+    if (res.status === 429) { await record429(); return false; }
+    if (res.ok) {
+      const json = await res.json().catch(() => null);
+      // Valid boards return a JSON array of postings.
+      if (Array.isArray(json) && json.length > 0) {
+        await recordSuccess();
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 // ── JSON-LD / embed probe (fallback when slug probes miss) ───────────────────
 //
 // Resolves the company homepage (Clearbit + domain-guess), fetches /careers,
@@ -253,6 +303,8 @@ function atsCareerUrl(atsType: AtsType, atsId: string): string {
     case 'ashby':      return `https://jobs.ashbyhq.com/${atsId}`;
     case 'workable':   return `https://apply.workable.com/${atsId}`;
     case 'recruitee':  return `https://${atsId}.recruitee.com`;
+    case 'smartrecruiters': return `https://jobs.smartrecruiters.com/${atsId}`;
+    case 'breezy':     return `https://${atsId}.breezy.hr`;
     default:           return '';
   }
 }
@@ -320,6 +372,22 @@ export async function probeCompany(normalizedName: string): Promise<ProbeResult>
           atsType: 'recruitee',
           atsId: slug,
           careerPageUrl: `https://${slug}.recruitee.com`,
+        };
+      }
+      if (await probeSmartRecruiters(slug)) {
+        return {
+          normalizedName,
+          atsType: 'smartrecruiters',
+          atsId: slug,
+          careerPageUrl: `https://jobs.smartrecruiters.com/${slug}`,
+        };
+      }
+      if (await probeBreezy(slug)) {
+        return {
+          normalizedName,
+          atsType: 'breezy',
+          atsId: slug,
+          careerPageUrl: `https://${slug}.breezy.hr`,
         };
       }
     }
