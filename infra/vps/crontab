@@ -11,8 +11,12 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # Scrape ATS Jobs — every 4 hours
 0 */4 * * * $RUN scrape-ats-jobs 60 npx tsx scripts/scrape-all-company-jobs.ts
 
-# Batch Embeddings — 4x/day
-0 0,6,12,18 * * * $RUN batch-embeddings 30 env BATCH_LIMIT=5000 npx tsx server/services/batch-embedding.service.ts
+# Batch Embeddings — daily 00:00 (quiet slot; finishes before discover-companies at 02:00).
+# Was 4x/day to chase Gemini's daily free-tier quota windows; the local provider
+# (EMBED_PROVIDER=local, bge-small) has no quota, so one nightly pass suffices.
+# BATCH_LIMIT=20000 lets a single run clear the full active backlog; on Gemini it
+# simply early-bails once the daily cap is hit, so the value is safe for either provider.
+0 0 * * * $RUN batch-embeddings 90 env BATCH_LIMIT=20000 npx tsx server/services/batch-embedding.service.ts
 
 # Discover Companies — daily 02:00 (phases continue on error, like GHA)
 0 2 * * * $RUN discover-companies 90 bash -c 'npx tsx scripts/discover-companies.ts --phase=discover; npx tsx scripts/discover-companies.ts --phase=apollo; npx tsx scripts/discover-companies.ts --phase=probe --limit=1500'
