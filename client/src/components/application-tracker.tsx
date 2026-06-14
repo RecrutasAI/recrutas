@@ -6,7 +6,18 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { Calendar, Clock, Eye, MessageSquare, ExternalLink, ChevronRight, FileText, Loader2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Calendar, Clock, Eye, MessageSquare, ExternalLink, ChevronRight, FileText, Loader2, Trash2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { formatDistanceToNow } from "date-fns";
 import { apiRequest } from "@/lib/queryClient";
@@ -64,6 +75,24 @@ export default function ApplicationTracker() {
       const apps = query.state.data;
       const hasPending = apps?.some(app => app.status === 'submitting' || app.status === 'queued');
       return hasPending ? 5000 : false;
+    },
+  });
+
+  const clearClosedMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest('DELETE', '/api/candidate/applications/closed');
+      if (!res.ok) {throw new Error('Failed to clear past applications');}
+      return res.json();
+    },
+    onSuccess: (data: { deletedCount?: number }) => {
+      toast({
+        title: "Past Applications Cleared",
+        description: `Removed ${data?.deletedCount ?? 0} past application${data?.deletedCount === 1 ? '' : 's'}.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/candidate/applications"] });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to clear past applications.", variant: "destructive" });
     },
   });
 
@@ -350,9 +379,42 @@ export default function ApplicationTracker() {
       {closedApplications.length > 0 && (
         <div>
           <Separator />
-          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 mt-6">
-            Past Applications ({closedApplications.length})
-          </h3>
+          <div className="flex items-center justify-between mb-4 mt-6">
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              Past Applications ({closedApplications.length})
+            </h3>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="ghost" size="sm" className="text-gray-500 hover:text-red-600">
+                  <Trash2 className="h-4 w-4 mr-1" />
+                  Clear
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Clear past applications?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This permanently removes your {closedApplications.length} past
+                    (not selected / withdrawn) application{closedApplications.length === 1 ? '' : 's'}.
+                    Active applications are not affected. This can't be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => clearClosedMutation.mutate()}
+                    disabled={clearClosedMutation.isPending}
+                    className="bg-red-600 hover:bg-red-700"
+                  >
+                    {clearClosedMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                    ) : null}
+                    Clear
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
           <div className="space-y-3">
             {closedApplications.map((application) => (
               <Card key={application.id} className="opacity-75">

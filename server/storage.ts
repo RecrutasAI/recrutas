@@ -139,6 +139,7 @@ export interface IStorage {
   getApplicantsForJob(jobId: number, talentOwnerId: string): Promise<any[]>;
   updateApplicationStatus(applicationId: number, status: string, talentOwnerId: string): Promise<any>;
   updateApplicationStatusByCandidate(applicationId: number, status: string): Promise<any>;
+  deleteClosedApplicationsByCandidate(candidateId: string): Promise<number>;
   getApplicationByJobAndCandidate(jobId: number, candidateId: string): Promise<any>;
   createJobApplication(application: any): Promise<any>;
   getApplicationById(applicationId: number): Promise<any>;
@@ -2423,6 +2424,22 @@ export class DatabaseStorage implements IStorage {
       return updatedApplication;
     } catch (error) {
       console.error('Error updating application status by candidate:', error);
+      throw error;
+    }
+  }
+
+  async deleteClosedApplicationsByCandidate(candidateId: string): Promise<number> {
+    try {
+      const deleted = await db
+        .delete(jobApplications)
+        .where(and(
+          eq(jobApplications.candidateId, candidateId),
+          inArray(jobApplications.status, ['rejected', 'withdrawn'] as any)
+        ))
+        .returning({ id: jobApplications.id });
+      return deleted.length;
+    } catch (error) {
+      console.error('Error deleting closed applications by candidate:', error);
       throw error;
     }
   }
