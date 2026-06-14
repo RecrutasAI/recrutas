@@ -1419,6 +1419,17 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     }
   }));
 
+  // Clear (delete) the candidate's past/closed applications (rejected + withdrawn)
+  app.delete('/api/candidate/applications/closed', isAuthenticated, asyncHandler(async (req: any, res) => {
+    try {
+      const deletedCount = await storage.deleteClosedApplicationsByCandidate(req.user.id);
+      res.json({ deletedCount });
+    } catch (error) {
+      console.error("Error clearing past applications:", error);
+      res.status(500).json({ message: "Failed to clear past applications" });
+    }
+  }));
+
   // Job application
   app.post('/api/candidate/apply/:jobId', isAuthenticated, asyncHandler(async (req: any, res) => {
     try {
