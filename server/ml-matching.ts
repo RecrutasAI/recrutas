@@ -49,11 +49,19 @@ const LOCAL_BATCH_SIZE = parseInt(process.env.LOCAL_BATCH_SIZE || '32');
 
 // Lazy singleton: the ONNX pipeline (and onnxruntime-node/sharp) load only when the
 // local provider is actually used, so a gemini-only server never pulls them in.
+//
+// The specifier is held in a variable rather than a string literal so static
+// dependency tracers (@vercel/nft, via esbuild --packages=external) cannot follow
+// it. Otherwise the ~800MB onnxruntime-node/transformers tree gets bundled into the
+// Vercel serverless function and blows past the 250MB limit, even though prod runs
+// EMBED_PROVIDER=gemini and only the VPS crons ever use the local model. Runtime
+// resolution in local mode is unaffected — Node resolves the variable normally.
+const LOCAL_EMBED_PKG = '@huggingface/transformers';
 let localExtractorPromise: Promise<any> | null = null;
 function getLocalExtractor(): Promise<any> {
   if (!localExtractorPromise) {
     localExtractorPromise = (async () => {
-      const { pipeline } = await import('@huggingface/transformers');
+      const { pipeline } = await import(/* @vite-ignore */ LOCAL_EMBED_PKG);
       console.log(`[ML Matching] Loading local embedding model ${LOCAL_EMBED_MODEL}…`);
       return pipeline('feature-extraction', LOCAL_EMBED_MODEL);
     })();
