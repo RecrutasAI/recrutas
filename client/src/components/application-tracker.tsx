@@ -81,7 +81,10 @@ export default function ApplicationTracker() {
   const clearClosedMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest('DELETE', '/api/candidate/applications/closed');
-      if (!res.ok) {throw new Error('Failed to clear past applications');}
+      if (!res.ok) {
+        const serverMessage = await res.json().then((b) => b?.message).catch(() => null);
+        throw new Error(serverMessage || 'Failed to clear past applications');
+      }
       return res.json();
     },
     onSuccess: (data: { deletedCount?: number }) => {
@@ -91,8 +94,12 @@ export default function ApplicationTracker() {
       });
       queryClient.invalidateQueries({ queryKey: ["/api/candidate/applications"] });
     },
-    onError: () => {
-      toast({ title: "Error", description: "Failed to clear past applications.", variant: "destructive" });
+    onError: (error: Error) => {
+      toast({
+        title: "Couldn't clear past applications",
+        description: error?.message || "Something went wrong. Please try again.",
+        variant: "destructive",
+      });
     },
   });
 
