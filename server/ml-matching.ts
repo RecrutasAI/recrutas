@@ -13,7 +13,14 @@
 const GEMINI_EMBED_MODEL = 'gemini-embedding-001';
 const GEMINI_EMBED_URL =
   `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_EMBED_MODEL}:embedContent`;
+const GEMINI_BATCH_EMBED_URL =
+  `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_EMBED_MODEL}:batchEmbedContents`;
 const EMBED_DIM = 384;
+
+// Max texts per batchEmbedContents request. One HTTP request embeds the whole
+// chunk, so this is the ~100x request-count reduction vs. per-item embedContent
+// that keeps the backfill inside the free-tier daily request cap (RPD).
+const EMBED_BATCH_SIZE = 100;
 
 // How an embedding call failed, so batch callers can tell routine free-tier
 // quota throttling ('rate_limit' — expected, provider healthy) apart from a
@@ -100,6 +107,70 @@ async function callGeminiAPI(
   }
 }
 
+// ── Gemini BATCH embeddings call with retry ───────────────────────────────────
+// Embeds up to EMBED_BATCH_SIZE texts in a single HTTP request via
+// batchEmbedContents. Returns one entry per input text, in order. On a failed
+// request the whole chunk gets an empty `values` plus the classified
+// failureReason so callers can count quota throttles apart from real outages —
+// same contract as the single-item path, just amortized over the chunk.
+async function callGeminiBatchAPI(
+  texts: string[],
+  attempt = 0,
+): Promise<Array<{ values: number[]; failureReason?: EmbeddingFailureReason }>> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    console.warn('[ML Matching] GEMINI_API_KEY not set — returning empty embeddings');
+    return texts.map(() => ({ values: [], failureReason: 'auth' as EmbeddingFailureReason }));
+  }
+
+  let failureReason: EmbeddingFailureReason = 'outage';
+  try {
+    const response = await fetch(`${GEMINI_BATCH_EMBED_URL}?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requests: texts.map(text => ({
+          model: `models/${GEMINI_EMBED_MODEL}`,
+          content: { parts: [{ text }] },
+          taskType: 'SEMANTIC_SIMILARITY',
+          outputDimensionality: EMBED_DIM,
+        })),
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => response.statusText);
+      failureReason = classifyHttpStatus(response.status);
+      throw new Error(`Gemini batch API error ${response.status}: ${errorText}`);
+    }
+
+    const data = await response.json();
+    const embeddings = data?.embeddings;
+    if (Array.isArray(embeddings) && embeddings.length === texts.length) {
+      return embeddings.map((e: any) => {
+        const values = e?.values;
+        return Array.isArray(values) && values.length > 0
+          ? { values: l2normalize(values.map(Number)) }
+          : { values: [], failureReason: 'outage' as EmbeddingFailureReason };
+      });
+    }
+
+    console.warn(
+      `[ML Matching] Unexpected Gemini batch response: expected ${texts.length} embeddings, got ${Array.isArray(embeddings) ? embeddings.length : typeof embeddings}`,
+    );
+    return texts.map(() => ({ values: [], failureReason: 'outage' as EmbeddingFailureReason }));
+  } catch (error) {
+    if (attempt < 2) {
+      const delay = (attempt + 1) * 1000;
+      console.warn(`[ML Matching] Gemini batch attempt ${attempt + 1} failed, retrying in ${delay}ms:`, (error as Error).message);
+      await new Promise(r => setTimeout(r, delay));
+      return callGeminiBatchAPI(texts, attempt + 1);
+    }
+    console.warn(`[ML Matching] Gemini batch failed after 3 attempts (${failureReason}) — returning empty embeddings:`, (error as Error).message);
+    return texts.map(() => ({ values: [], failureReason }));
+  }
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
@@ -114,12 +185,44 @@ export async function generateEmbedding(text: string): Promise<EmbeddingResult> 
 }
 
 /**
- * Generate embeddings for multiple texts sequentially.
+ * Generate embeddings for multiple texts using the Gemini batch endpoint.
+ * Chunks into EMBED_BATCH_SIZE-sized requests (one HTTP call each) and returns
+ * one EmbeddingResult per input text, in the same order. Failed chunks yield
+ * empty embeddings carrying the failureReason so batch callers can distinguish
+ * quota throttling from a real outage.
  */
-export async function generateBatchEmbeddings(texts: string[]): Promise<EmbeddingResult[]> {
+export async function generateBatchEmbeddings(
+  texts: string[],
+  opts?: { delayMsBetweenChunks?: number },
+): Promise<EmbeddingResult[]> {
+  // Gemini's free tier caps embedded *contents* (not HTTP requests) at 100/min,
+  // so a 100-text batch consumes the whole minute's budget. Pace chunks apart so
+  // a multi-chunk run writes everything instead of throttling to zero after the
+  // first chunk. Caller passes 0 (default) when the work fits one chunk.
+  const delay = opts?.delayMsBetweenChunks ?? 0;
   const results: EmbeddingResult[] = [];
-  for (const text of texts) {
-    results.push(await generateEmbedding(text));
+  for (let i = 0; i < texts.length; i += EMBED_BATCH_SIZE) {
+    if (i > 0 && delay > 0) await new Promise(r => setTimeout(r, delay));
+    const chunk = texts.slice(i, i + EMBED_BATCH_SIZE).map(t => t.slice(0, 2048));
+    const chunkResults = await callGeminiBatchAPI(chunk);
+    for (const { values, failureReason } of chunkResults) {
+      results.push({ embedding: values, tokens: values.length, failureReason });
+    }
+
+    // Once a whole chunk comes back rate-limited, the daily free-tier quota is
+    // spent — every remaining chunk would just 429 after 3 retries and a 62s
+    // pace wait (≈52 min of no-op grinding for a 5000-job cron run). Stop here
+    // and mark the rest rate_limited so callers count them as throttled (green),
+    // not as work that succeeded.
+    const chunkRateLimited =
+      chunkResults.length > 0 &&
+      chunkResults.every(r => r.values.length === 0 && r.failureReason === 'rate_limit');
+    if (chunkRateLimited) {
+      for (let j = i + EMBED_BATCH_SIZE; j < texts.length; j++) {
+        results.push({ embedding: [], tokens: 0, failureReason: 'rate_limit' });
+      }
+      break;
+    }
   }
   return results;
 }

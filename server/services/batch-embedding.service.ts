@@ -10,34 +10,52 @@
  */
 
 import { storage } from '../storage.js';
-import { generateEmbedding, type EmbeddingFailureReason } from '../ml-matching.js';
+import { generateEmbedding, generateBatchEmbeddings, type EmbeddingFailureReason } from '../ml-matching.js';
 import { db, client } from '../db.js';
 import { jobPostings } from '../../shared/schema.js';
 import { eq } from 'drizzle-orm';
+import { sql } from 'drizzle-orm/sql';
 
-// Concurrency per batch. Kept low because Node's fetch (undici) starts dropping
-// simultaneous TLS connections to the Gemini endpoint past ~10 concurrent
-// (UND_ERR_CONNECT_TIMEOUT). 10 tested 100% clean; 50 failed ~60% of calls.
-const BATCH_SIZE = 10;
-
-async function computeJobEmbedding(job: {
+interface JobForEmbedding {
   id: number;
   title: string;
   company: string;
-  description?: string;
-  skills?: string[];
-  requirements?: string[];
-}): Promise<{ embedding: number[]; failureReason?: EmbeddingFailureReason }> {
-  const text = [
+  description?: string | null;
+  skills?: string[] | null;
+  requirements?: string[] | null;
+}
+
+// Build the text we embed for a job — title/company first (weighted most by the
+// model), then skills, requirements, and a description snippet. Shared by the
+// single-job (on-demand) and batch paths so both stay in the same vector space.
+function buildJobEmbeddingText(job: JobForEmbedding): string {
+  return [
     job.title,
     job.company,
     ...(job.skills || []),
     ...(job.requirements || []),
     job.description?.slice(0, 1000) || '',
   ].join(' ');
+}
 
-  const result = await generateEmbedding(text);
+async function computeJobEmbedding(
+  job: JobForEmbedding,
+): Promise<{ embedding: number[]; failureReason?: EmbeddingFailureReason }> {
+  const result = await generateEmbedding(buildJobEmbeddingText(job));
   return { embedding: result.embedding, failureReason: result.failureReason };
+}
+
+// Persist a job's embedding to both the legacy TEXT column and the native
+// pgvector column. Shared by the single-job and batch write paths.
+async function persistJobEmbedding(jobId: number, embedding: number[]): Promise<void> {
+  const vectorStr = `[${embedding.join(',')}]`;
+  await client`
+    UPDATE job_postings
+    SET vector_embedding = ${JSON.stringify(embedding)},
+        embedding = ${vectorStr}::vector,
+        embedding_updated_at = NOW()
+    WHERE id = ${jobId}
+  `;
 }
 
 export async function updateJobEmbedding(jobId: number): Promise<void> {
@@ -60,16 +78,9 @@ export async function updateJobEmbedding(jobId: number): Promise<void> {
       { embeddingFailure: failureReason ?? 'outage' },
     );
   }
-  const vectorStr = `[${embedding.join(',')}]`;
 
   // Dual-write: TEXT column (legacy) + native pgvector column
-  await client`
-    UPDATE job_postings
-    SET vector_embedding = ${JSON.stringify(embedding)},
-        embedding = ${vectorStr}::vector,
-        embedding_updated_at = NOW()
-    WHERE id = ${jobId}
-  `;
+  await persistJobEmbedding(jobId, embedding);
 
   console.log(`[BatchEmbed] Updated embedding for job ${jobId}: ${job.title}`);
 }
@@ -87,47 +98,57 @@ export async function batchComputeEmbeddings(
 
   try {
     if (!db) throw new Error('Database not available');
-    // Fetch all active jobs directly — storage.getJobPostings requires a talentOwnerId
-    const allJobs = await db
+    // Target the backlog: select active jobs that actually NEED an embedding —
+    // those missing one entirely, or (when forceRefresh) all of them. Newest
+    // first so fresh supply becomes searchable soonest. This replaces the old
+    // "first N active jobs, then skip the ones already embedded" scan, which
+    // wasted the run's budget re-examining already-embedded rows.
+    const activeJobs = await db
       .select()
       .from(jobPostings)
-      .where(eq(jobPostings.status, 'active'))
+      .where(
+        forceRefresh
+          ? eq(jobPostings.status, 'active')
+          : sql`${jobPostings.status} = 'active' AND ${jobPostings.vectorEmbedding} IS NULL`,
+      )
+      .orderBy(sql`${jobPostings.createdAt} DESC`)
       .limit(limit);
-    const activeJobs = allJobs;
 
-    console.log(`[BatchEmbed] Processing ${activeJobs.length} active jobs`);
+    console.log(`[BatchEmbed] ${activeJobs.length} jobs need embeddings (limit ${limit}, force=${forceRefresh})`);
 
-    for (let i = 0; i < activeJobs.length; i += BATCH_SIZE) {
-      const batch = activeJobs.slice(i, i + BATCH_SIZE);
-      
-      await Promise.all(
-        batch.map(async (job) => {
-          try {
-            const needsUpdate = forceRefresh || !job.vectorEmbedding;
-            
-            if (!needsUpdate) {
-              const lastUpdate = job.embeddingUpdatedAt ? new Date(job.embeddingUpdatedAt).getTime() : 0;
-              const daysSinceUpdate = (Date.now() - lastUpdate) / (1000 * 60 * 60 * 24);
-              if (daysSinceUpdate < 7) {return;}
-            }
+    // One batchEmbedContents request embeds a whole chunk, so process the jobs
+    // in EMBED_BATCH_SIZE-sized chunks (handled inside generateBatchEmbeddings)
+    // rather than one HTTP call per job. ~100x fewer requests → fits the
+    // free-tier daily request cap.
+    // Free tier allows 100 embedded contents/minute; pace chunks ~62s apart
+    // (just over the rolling window) so a multi-chunk run writes its full
+    // BATCH_LIMIT instead of throttling to zero. Override via EMBED_PACE_MS
+    // (set to 0 once Gemini billing is enabled to run flat-out).
+    const paceMs = parseInt(process.env.EMBED_PACE_MS || '62000');
+    const texts = activeJobs.map(job => buildJobEmbeddingText(job as JobForEmbedding));
+    const embeddings = await generateBatchEmbeddings(texts, { delayMsBetweenChunks: paceMs });
 
-            await updateJobEmbedding(job.id);
-            processed++;
-          } catch (err: any) {
-            if (err?.embeddingFailure === 'rate_limit') {
-              // Quota throttle — provider is healthy, just out of free-tier
-              // budget for now. Don't count it as an error (would make the cron
-              // flap red every run once the daily cap is hit).
-              rateLimited++;
-            } else {
-              console.error(`[BatchEmbed] Error processing job ${job.id}:`, err);
-              errors++;
-            }
-          }
-        })
-      );
-
-      console.log(`[BatchEmbed] Processed ${Math.min(i + BATCH_SIZE, activeJobs.length)}/${activeJobs.length}`);
+    for (let i = 0; i < activeJobs.length; i++) {
+      const job = activeJobs[i];
+      const { embedding, failureReason } = embeddings[i];
+      if (!embedding || embedding.length === 0) {
+        if (failureReason === 'rate_limit') {
+          // Quota throttle — provider healthy, just out of free-tier budget.
+          // Not an error (would flap the cron red once the daily cap is hit).
+          rateLimited++;
+        } else {
+          console.error(`[BatchEmbed] Error embedding job ${job.id} (${failureReason ?? 'unknown'})`);
+          errors++;
+        }
+        continue;
+      }
+      try {
+        await persistJobEmbedding(job.id, embedding);
+        processed++;
+      } catch (err) {
+        console.error(`[BatchEmbed] DB write failed for job ${job.id}:`, err);
+        errors++;
+      }
     }
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -153,7 +174,7 @@ export async function batchComputeEmbeddings(
       console.warn(
         `[BatchEmbed] ⚠️  ${rateLimited} jobs throttled by Gemini quota (free-tier daily cap); ` +
         `provider healthy, ${processed} written this run. Remaining jobs backfill on later runs — ` +
-        `enable Gemini billing or switch to batchEmbedContents to clear the backlog faster.`
+        `raise BATCH_LIMIT or enable Gemini billing to clear the backlog faster.`
       );
     }
 
