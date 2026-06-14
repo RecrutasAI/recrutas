@@ -1,13 +1,20 @@
 /**
- * ML-Based Job Matching Service
- * Uses Google Gemini embeddings (gemini-embedding-001) for semantic embeddings.
- * Output dimensionality is pinned to 384 (via Matryoshka truncation) to match the
- * existing pgvector(384) column and HNSW index — no schema migration needed when
- * switching providers. Both job and candidate embeddings share this single path,
- * so they stay in the same vector space.
+ * ML-Based Job Matching Service — semantic embeddings, 384-dim.
  *
- * Previously used the HuggingFace Inference API; switched after HF free-tier
- * credits were depleted (HTTP 402), which silently zeroed out all new embeddings.
+ * Provider is selected by EMBED_PROVIDER:
+ *   - gemini (default): Google `gemini-embedding-001`, output pinned to 384 via
+ *     Matryoshka truncation. Metered — free tier caps embedded contents/day.
+ *   - local: `bge-small-en-v1.5` run in-process via Transformers.js (ONNX). No
+ *     API, key, or quota; natively 384-dim. Self-hosted on the VPS.
+ *
+ * Both emit 384-dim L2-normalized vectors, so the pgvector(384) column + HNSW
+ * index are unchanged across providers. They are DIFFERENT vector spaces though:
+ * switching requires a one-time full re-embed of all jobs + candidates (vectors
+ * from different providers can't be mixed in one ANN index). Job and candidate
+ * embeddings share this path so they always match the active provider's space.
+ *
+ * History: HuggingFace Inference API → Gemini (HF 402, depleted credits, silent
+ * zeroing) → local bge-small added to drop the metered dependency entirely.
  */
 
 const GEMINI_EMBED_MODEL = 'gemini-embedding-001';
@@ -21,6 +28,65 @@ const EMBED_DIM = 384;
 // chunk, so this is the ~100x request-count reduction vs. per-item embedContent
 // that keeps the backfill inside the free-tier daily request cap (RPD).
 const EMBED_BATCH_SIZE = 100;
+
+// ── Provider selection ────────────────────────────────────────────────────────
+// EMBED_PROVIDER=gemini (default) uses the metered Gemini API; EMBED_PROVIDER=local
+// runs bge-small-en-v1.5 in-process via Transformers.js (ONNX) — no API, no quota,
+// no key. Both emit 384-dim L2-normalized vectors, so they're swappable WITHOUT a
+// schema/index change. They are DIFFERENT vector spaces, though: switching providers
+// requires a one-time full re-embed of every job + candidate (they can't be mixed in
+// one ANN index). Read at call time (not module load) so env is set by then.
+function embedProvider(): 'gemini' | 'local' {
+  return (process.env.EMBED_PROVIDER || 'gemini').toLowerCase() === 'local' ? 'local' : 'gemini';
+}
+
+// Local model: 384-dim, same as the pinned Gemini output, so the pgvector(384)
+// column + HNSW index are unchanged. Override with LOCAL_EMBED_MODEL.
+const LOCAL_EMBED_MODEL = process.env.LOCAL_EMBED_MODEL || 'Xenova/bge-small-en-v1.5';
+// Texts per forward pass when batching locally. Bounds peak memory; there is no
+// rate limit, so this is purely a throughput/memory knob (unlike EMBED_BATCH_SIZE).
+const LOCAL_BATCH_SIZE = parseInt(process.env.LOCAL_BATCH_SIZE || '32');
+
+// Lazy singleton: the ONNX pipeline (and onnxruntime-node/sharp) load only when the
+// local provider is actually used, so a gemini-only server never pulls them in.
+let localExtractorPromise: Promise<any> | null = null;
+function getLocalExtractor(): Promise<any> {
+  if (!localExtractorPromise) {
+    localExtractorPromise = (async () => {
+      const { pipeline } = await import('@huggingface/transformers');
+      console.log(`[ML Matching] Loading local embedding model ${LOCAL_EMBED_MODEL}…`);
+      return pipeline('feature-extraction', LOCAL_EMBED_MODEL);
+    })();
+  }
+  return localExtractorPromise;
+}
+
+// Embed a chunk of texts locally in one forward pass. bge-small with
+// pooling:'mean' + normalize:true returns 384-dim unit vectors (no l2normalize
+// needed). No quota, so any failure is a real 'outage' — never 'rate_limit'.
+async function callLocalBatchAPI(
+  texts: string[],
+): Promise<Array<{ values: number[]; failureReason?: EmbeddingFailureReason }>> {
+  try {
+    const extractor = await getLocalExtractor();
+    const out = await extractor(texts, { pooling: 'mean', normalize: true });
+    const dim = out.dims[out.dims.length - 1];
+    const flat = out.data as Float32Array; // shape [texts.length, dim], row-major
+    return texts.map((_, i) => ({
+      values: Array.from(flat.slice(i * dim, (i + 1) * dim)),
+    }));
+  } catch (error) {
+    console.warn(`[ML Matching] Local embedding failed (${LOCAL_EMBED_MODEL}):`, (error as Error).message);
+    return texts.map(() => ({ values: [], failureReason: 'outage' as EmbeddingFailureReason }));
+  }
+}
+
+async function callLocalAPI(
+  text: string,
+): Promise<{ values: number[]; failureReason?: EmbeddingFailureReason }> {
+  const [result] = await callLocalBatchAPI([text]);
+  return result;
+}
 
 // How an embedding call failed, so batch callers can tell routine free-tier
 // quota throttling ('rate_limit' — expected, provider healthy) apart from a
@@ -174,13 +240,16 @@ async function callGeminiBatchAPI(
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
- * Generate embedding vector for text using HuggingFace Inference API.
- * Returns { embedding, tokens } to keep callers (vector-search, batch-embedding) working.
+ * Generate a 384-dim embedding for text via the configured provider
+ * (EMBED_PROVIDER=gemini|local). Returns { embedding, tokens, failureReason }
+ * to keep callers (vector-search, batch-embedding) working.
  */
 export async function generateEmbedding(text: string): Promise<EmbeddingResult> {
   // Truncate to ~512 tokens (approx 2048 chars)
   const truncatedText = text.slice(0, 2048);
-  const { values, failureReason } = await callGeminiAPI(truncatedText);
+  const { values, failureReason } = embedProvider() === 'local'
+    ? await callLocalAPI(truncatedText)
+    : await callGeminiAPI(truncatedText);
   return { embedding: values, tokens: values.length, failureReason };
 }
 
@@ -195,6 +264,20 @@ export async function generateBatchEmbeddings(
   texts: string[],
   opts?: { delayMsBetweenChunks?: number },
 ): Promise<EmbeddingResult[]> {
+  // Local provider: in-process, no quota → no pacing, no rate-limit bail. Just
+  // run forward passes of LOCAL_BATCH_SIZE to bound memory.
+  if (embedProvider() === 'local') {
+    const results: EmbeddingResult[] = [];
+    for (let i = 0; i < texts.length; i += LOCAL_BATCH_SIZE) {
+      const chunk = texts.slice(i, i + LOCAL_BATCH_SIZE).map(t => t.slice(0, 2048));
+      const chunkResults = await callLocalBatchAPI(chunk);
+      for (const { values, failureReason } of chunkResults) {
+        results.push({ embedding: values, tokens: values.length, failureReason });
+      }
+    }
+    return results;
+  }
+
   // Gemini's free tier caps embedded *contents* (not HTTP requests) at 100/min,
   // so a 100-text batch consumes the whole minute's budget. Pace chunks apart so
   // a multi-chunk run writes everything instead of throttling to zero after the
