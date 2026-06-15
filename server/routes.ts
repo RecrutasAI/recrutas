@@ -908,11 +908,16 @@ Analyze the form and return the actions JSON to fill every field you can.`;
         actions = buildFallbackActions(fields, profileData);
       }
 
-      // Include resume URL for upload_resume actions
+      // Include resume URL for upload_resume actions (best-effort: a signed-URL
+      // failure must not discard the form-fill actions we already computed)
       let resumeUrl: string | null = null;
       if (profile.resumeUrl) {
-        const signedUrl = await storage.getResumeSignedUrl(profile.resumeUrl);
-        resumeUrl = signedUrl || null;
+        try {
+          const signedUrl = await storage.getResumeSignedUrl(profile.resumeUrl);
+          resumeUrl = signedUrl || null;
+        } catch (urlErr) {
+          console.warn('[Extension] Resume signed-URL failed, returning actions without it:', (urlErr as Error).message);
+        }
       }
 
       res.json({ actions, resumeUrl });
