@@ -28,7 +28,7 @@ import {
   waitlistEntries,
 } from "@shared/schema";
 import { generateScreeningQuestions } from "./ai-service";
-import { callAI, callGeminiWithImage, isAIAvailable } from "./lib/ai-client";
+import { callAI, callAIWithImage, isAIAvailable } from "./lib/ai-client";
 import { db, testDbConnection } from "./db";
 import { seedDatabase } from "./seed.js";
 import { ResumeService, ResumeProcessingError } from './services/resume.service';
@@ -868,11 +868,11 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       try {
         let aiResponse: string;
 
-        if (screenshot && process.env.GEMINI_API_KEY) {
-          // Vision path: send screenshot + DOM fields to Gemini
+        if (screenshot && isAIAvailable('image')) {
+          // Vision path: send screenshot + DOM fields to a vision-capable provider
           console.log('[Extension] Using vision-powered fill with screenshot');
           aiResponse = await Promise.race([
-            callGeminiWithImage(systemPrompt, userPrompt, screenshot, 'image/jpeg', {
+            callAIWithImage(systemPrompt, userPrompt, screenshot, 'image/jpeg', {
               temperature: 0.2,
               maxOutputTokens: 4000,
             }),
