@@ -3,7 +3,7 @@ import { extractText, getDocumentProxy, renderPageAsImage } from 'unpdf';
 import Tesseract from 'tesseract.js';
 import Groq from 'groq-sdk';
 import { parseResumeWithIntelligence } from './skill-intelligence';
-import { callGeminiWithPDF } from './lib/ai-client';
+import { callAIWithPDF, isAIAvailable } from './lib/ai-client';
 import { throttledGroqRequest, type GroqPriority } from './lib/groq-limiter';
 
 // Lazy-initialize Groq client to ensure env vars are loaded (ESM imports hoist before dotenv.config)
@@ -126,10 +126,10 @@ export class AIResumeParser {
 
       // Path 1: PDF — try Gemini multimodal FIRST (reads raw bytes, handles all PDF types)
       if (typeof fileContent !== 'string' || fileContent !== 'text-input') {
-        if (mimeType === 'application/pdf' && process.env.GEMINI_API_KEY) {
+        if (mimeType === 'application/pdf' && isAIAvailable('pdf')) {
           try {
-            console.log('[AIResumeParser] PDF detected — trying Gemini multimodal (primary)');
-            const jsonStr = await callGeminiWithPDF(
+            console.log('[AIResumeParser] PDF detected — trying multimodal AI (primary)');
+            const jsonStr = await callAIWithPDF(
               'You are an expert resume parser. Extract structured data and return ONLY valid JSON.',
               RESUME_EXTRACTION_PROMPT,
               fileContent as Buffer,
