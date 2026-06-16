@@ -288,6 +288,7 @@ Requirements: ${(requirements || []).join('; ') || 'Not specified'}`;
 }
 
 import { registerMetricsRoutes } from './routes/metrics-api.js';
+import { isResumeFileField } from './extension-fill-helpers.js';
 
 export async function registerRoutes(app: Express): Promise<Express> {
   console.log('registerRoutes called!');
@@ -847,7 +848,7 @@ Rules:
 - For screening questions: write a professional, specific answer using the candidate's real experience. Keep under 200 words.
 - For select/dropdown with native <select> type: use action "select" with value matching EXACTLY one of the provided options
 - For custom dropdowns (React Select, Combobox, etc. — type is usually "text" but looks like a dropdown in screenshot): use "click_then_type"
-- For file upload fields: use action "upload_resume"
+- For résumé/CV file upload fields: use action "upload_resume". For OTHER file uploads (cover letter, transcript, writing sample, portfolio, photo): use action "skip" — only the résumé is available, do NOT attach it to those.
 - For fields you cannot fill (CAPTCHA, signature pads): use action "skip"
 - For checkboxes that ask about consent/agreement: use action "check"
 - Do NOT fill fields that already have values unless they look incorrect
@@ -908,6 +909,14 @@ Analyze the form and return the actions JSON to fill every field you can.`;
         actions = buildFallbackActions(fields, profileData);
       }
 
+      // Guard (both AI + fallback paths): the résumé must only attach to actual
+      // résumé/CV file fields, never to cover-letter/transcript/other document
+      // uploads — otherwise the résumé gets submitted as the candidate's cover letter.
+      const fieldsById = new Map(fields.map((f: any) => [f.id, f]));
+      actions = actions.filter(a =>
+        a.action !== 'upload_resume' || isResumeFileField(fieldsById.get(a.fieldId))
+      );
+
       // Include resume URL for upload_resume actions (best-effort: a signed-URL
       // failure must not discard the form-fill actions we already computed)
       let resumeUrl: string | null = null;
@@ -954,7 +963,9 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       const searchText = `${field.label || ''} ${field.name || ''} ${field.id || ''}`.toLowerCase();
 
       if (field.type === 'file') {
-        actions.push({ fieldId: field.id, action: 'upload_resume' });
+        if (isResumeFileField(field)) {
+          actions.push({ fieldId: field.id, action: 'upload_resume' });
+        }
         continue;
       }
 
