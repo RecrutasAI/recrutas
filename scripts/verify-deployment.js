@@ -38,7 +38,7 @@ async function verifyDeployment(baseUrl) {
   
   const endpoints = [
     { path: '/', name: 'Landing Page' },
-    { path: '/api/session', name: 'API Health' },
+    { path: '/api/health', name: 'API Health' },
     { path: '/api/platform/stats', name: 'Platform Stats' }
   ];
   

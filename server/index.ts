@@ -223,6 +223,15 @@ export async function configureApp() {
   await registerRoutes(app);
   registerChatRoutes(app);
 
+  // 404 for unmatched API routes. Without this, no route matches → Express
+  // calls the final next() with no error and the serverless wrapper never
+  // ends the response, so the request hangs until the 50s safety timeout.
+  app.use('/api', (req, res) => {
+    res.status(404).json({
+      error: { message: `Not found: ${req.method} ${req.path}`, statusCode: 404 },
+    });
+  });
+
   // Only start background services if not in a test environment AND not on Vercel
   // Vercel is serverless - background services must use Vercel Cron instead
   const isVercel = process.env.VERCEL === '1' || process.env.VERCEL_ENV !== undefined;
