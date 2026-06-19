@@ -772,11 +772,35 @@ export async function registerRoutes(app: Express): Promise<Express> {
         return res.status(400).json({ message: 'Too many fields (max 50)' });
       }
 
-      // Load candidate data
-      const [profile, user] = await Promise.all([
-        storage.getCandidateUser(req.user.id),
-        storage.getUser(req.user.id),
+      // Load candidate data. This DB read is the one unguarded step that can throw
+      // on a cold serverless→Postgres connection; race it against a timeout and
+      // retry once so a transient cold-connection blip returns a retryable 503
+      // (which the extension surfaces) instead of a generic 500.
+      const loadCandidate = () => Promise.race([
+        Promise.all([
+          storage.getCandidateUser(req.user.id),
+          storage.getUser(req.user.id),
+        ]),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Profile load timeout')), 12000)
+        ),
       ]);
+      let profile: any, user: any;
+      try {
+        [profile, user] = await loadCandidate();
+      } catch (firstErr) {
+        console.warn('[Extension] fill-form profile load failed, retrying:', (firstErr as Error).message);
+        try {
+          [profile, user] = await loadCandidate();
+        } catch (secondErr) {
+          console.error('[Extension] fill-form profile load failed twice:', (secondErr as Error).message);
+          return res.status(503).json({
+            error: 'service_temporarily_unavailable',
+            message: 'Profile data temporarily unavailable, please retry',
+            retryAfter: 3,
+          });
+        }
+      }
       if (!profile) {
         return res.status(404).json({ message: 'No candidate profile found. Complete your profile first.' });
       }
