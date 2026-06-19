@@ -577,7 +577,10 @@ export async function registerRoutes(app: Express): Promise<Express> {
       const cacheKey = JSON.stringify({ skills: skills.sort(), jobTitle, location, workType });
       const cached = externalJobsCache.get(cacheKey);
       if (cached && Date.now() - cached.ts < EXTERNAL_JOBS_TTL_MS) {
-        res.set('Cache-Control', 'public, max-age=180, stale-while-revalidate=300');
+        // s-maxage drives Vercel's shared edge cache (the in-memory Map above is
+        // per-lambda and almost never hits on serverless); stale-while-revalidate
+        // is stripped by the edge unless s-maxage is present.
+        res.set('Cache-Control', 'public, max-age=60, s-maxage=180, stale-while-revalidate=600');
         return res.json({ jobs: cached.jobs, cached: true, message: 'External jobs from cache' });
       }
 
@@ -593,7 +596,7 @@ export async function registerRoutes(app: Express): Promise<Express> {
           .catch(err => console.error('Background scrape trigger failed:', err?.message));
       }
 
-      res.set('Cache-Control', 'public, max-age=180, stale-while-revalidate=300');
+      res.set('Cache-Control', 'public, max-age=60, s-maxage=180, stale-while-revalidate=600');
       res.json({
         jobs: externalJobs || [],
         cached: false,
@@ -635,7 +638,7 @@ export async function registerRoutes(app: Express): Promise<Express> {
     if (!db) return res.status(503).json({ message: 'Database not available' });
     try {
       const timeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Stats query timeout')), 8000)
+        setTimeout(() => reject(new Error('Stats query timeout')), 15000)
       );
       const [userCount, jobCount, matchCount] = await Promise.race([
         Promise.all([
@@ -650,7 +653,10 @@ export async function registerRoutes(app: Express): Promise<Express> {
         totalJobs: jobCount[0].count || 0,
         totalMatches: matchCount[0].count || 0,
       };
-      res.set('Cache-Control', 'public, max-age=300');
+      // s-maxage caches the good response at Vercel's shared edge so cold lambdas
+      // don't re-run the COUNT(*) queries; stale-if-error keeps serving the last
+      // good numbers when the origin hits the cold-connection timeout (503).
+      res.set('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=600, stale-if-error=86400');
       res.json(stats);
     } catch (error) {
       console.error('Error fetching platform stats:', error);
