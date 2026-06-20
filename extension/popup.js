@@ -18,17 +18,33 @@ function showView(name) {
   else if (name === 'profile') viewProfile.classList.remove('hidden');
 }
 
+// Promise-based extension API. Firefox's chrome.* namespace is callback-style
+// and does NOT return promises (so `await chrome.runtime.sendMessage(...)`
+// resolves to undefined and the popup hangs on its spinner) — only browser.*
+// does. The loaded browser-polyfill also exposes a promise-based `browser` on
+// Chrome, so prefer it on both; fall back to chrome.* only if it's missing.
+const api = (typeof browser !== 'undefined' && browser.runtime) ? browser : chrome;
+
 async function send(message) {
-  return chrome.runtime.sendMessage(message);
+  return api.runtime.sendMessage(message);
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 
 async function init() {
   showView('loading');
-  const status = await send({ type: 'GET_STATUS' });
 
-  if (status.authenticated) {
+  // Never let the popup get stuck on the spinner: if GET_STATUS rejects or
+  // returns nothing (cold service worker, messaging error), fall back to the
+  // login view instead of throwing out of init().
+  let status;
+  try {
+    status = await send({ type: 'GET_STATUS' });
+  } catch {
+    status = null;
+  }
+
+  if (status && status.authenticated) {
     document.getElementById('user-name').textContent = status.userName || 'Candidate';
     document.getElementById('user-email').textContent = status.userEmail || '';
 
@@ -45,7 +61,7 @@ async function init() {
     // Fetch profile in background to show readiness
     loadProfileStatus();
   } else {
-    const { recruitasUrl } = await chrome.storage.local.get('recruitasUrl');
+    const { recruitasUrl } = await api.storage.local.get('recruitasUrl');
     if (recruitasUrl) {
       document.getElementById('recrutas-url').value = recruitasUrl;
     }
