@@ -226,14 +226,32 @@ async function fillFormAI(fields, jobContext) {
   const screenshot = await captureScreenshot();
 
   const baseUrl = await getRecruitasUrl();
-  const res = await fetch(`${baseUrl}/api/extension/fill-form`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({ fields, jobContext, screenshot }),
-  });
+
+  // The server caps its own AI work at ~50s worst case (profile load + retry +
+  // AI timeout). Abort a hair past that so a stalled connection surfaces a clear
+  // error instead of leaving the in-page "AI filling…" spinner running forever.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60000);
+
+  let res;
+  try {
+    res = await fetch(`${baseUrl}/api/extension/fill-form`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ fields, jobContext, screenshot }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error('Form fill timed out — please try again.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (res.status === 401) {
     await logout();

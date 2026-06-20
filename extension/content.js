@@ -476,11 +476,19 @@
 
       if (btn) btn.textContent = 'AI filling…';
 
-      const response = await sendMessage({
-        type: 'FILL_FORM_AI',
-        fields,
-        jobContext: jobContext.text,
-      });
+      // Guard against a lost response (e.g. the MV3 service worker being
+      // terminated mid-request): without this the button stays on "AI filling…"
+      // forever. Slightly longer than the background fetch's own 60s abort so
+      // that, when it's the network stalling, the background's clearer error wins.
+      const response = await withTimeout(
+        sendMessage({
+          type: 'FILL_FORM_AI',
+          fields,
+          jobContext: jobContext.text,
+        }),
+        65000,
+        'Form fill timed out — please try again.'
+      );
 
       if (!response.success) {
         throw new Error(response.error || 'AI fill failed');
