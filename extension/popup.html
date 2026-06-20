@@ -22,39 +22,15 @@
 
     <!-- Signed-out state -->
     <div id="view-login" class="view hidden">
-      <p class="subtitle">Sign in to auto-fill job applications</p>
+      <p class="subtitle">Sign in on the Recrutas website and the extension connects automatically.</p>
 
-      <form id="login-form" autocomplete="on">
-        <div class="field">
-          <label for="email">Email</label>
-          <input
-            id="email"
-            type="email"
-            name="email"
-            placeholder="you@example.com"
-            autocomplete="email"
-            required
-          />
-        </div>
+      <button id="open-web-btn" class="btn btn-primary">
+        Sign in at recrutas.ai
+      </button>
 
-        <div class="field">
-          <label for="password">Password</label>
-          <input
-            id="password"
-            type="password"
-            name="password"
-            placeholder="••••••••"
-            autocomplete="current-password"
-            required
-          />
-        </div>
-
-        <div id="login-error" class="error-msg hidden"></div>
-
-        <button type="submit" id="login-btn" class="btn btn-primary">
-          Sign in
-        </button>
-      </form>
+      <p class="hint">
+        Already signed in on recrutas.ai? <a href="#" id="recheck-link">Refresh</a>
+      </p>
 
       <div class="signup-link">
         Don't have an account? <a href="https://recrutas.ai/early-access" target="_blank">Get early access</a>

@@ -136,34 +136,19 @@ function showProfileItem(name, ok, text) {
   document.getElementById(`${name}-text`).textContent = text;
 }
 
-// ── Login form ────────────────────────────────────────────────────────────────
+// ── Connect via website ───────────────────────────────────────────────────────
+// SSO: the extension authenticates by mirroring the recrutas.ai web session
+// (see recrutas-bridge.js). There is no in-popup credential entry.
 
-document.getElementById('login-form').addEventListener('submit', async (e) => {
+document.getElementById('open-web-btn').addEventListener('click', async () => {
+  const { recruitasUrl } = await api.storage.local.get('recruitasUrl');
+  const base = recruitasUrl || 'https://www.recrutas.ai';
+  window.open(`${base}/auth`, '_blank');
+});
+
+document.getElementById('recheck-link').addEventListener('click', (e) => {
   e.preventDefault();
-
-  const email    = document.getElementById('email').value.trim();
-  const password = document.getElementById('password').value;
-  const errorEl  = document.getElementById('login-error');
-  const btn      = document.getElementById('login-btn');
-
-  errorEl.classList.add('hidden');
-  errorEl.textContent = '';
-  btn.disabled = true;
-  btn.textContent = 'Signing in…';
-
-  const response = await send({ type: 'LOGIN', email, password });
-
-  if (response.success) {
-    document.getElementById('user-name').textContent = response.userName || email;
-    document.getElementById('user-email').textContent = email;
-    showView('profile');
-    loadProfileStatus();
-  } else {
-    errorEl.textContent = response.error || 'Sign-in failed. Check your credentials.';
-    errorEl.classList.remove('hidden');
-    btn.disabled = false;
-    btn.textContent = 'Sign in';
-  }
+  init();
 });
 
 // ── Fill this page ───────────────────────────────────────────────────────────

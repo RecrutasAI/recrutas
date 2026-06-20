@@ -11,6 +11,7 @@ mkdir -p "$DIST"
 SHARED_FILES=(
   background.js
   content.js
+  recrutas-bridge.js
   content.css
   popup.html
   popup.js

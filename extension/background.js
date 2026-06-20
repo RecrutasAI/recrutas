@@ -114,33 +114,23 @@ async function getValidToken() {
   throw new Error('Not authenticated');
 }
 
-// ── Login ────────────────────────────────────────────────────────────────────
+// ── Web-session sync ───────────────────────────────────────────────────────
+// The recrutas.ai bridge content script mirrors the logged-in web session here,
+// so the extension authenticates automatically (no separate sign-in).
 
-async function login(email, password) {
+async function syncSession(auth) {
+  if (!auth?.accessToken || !auth?.refreshToken) return;
   const baseUrl = await getRecruitasUrl();
-  const res = await fetch(`${baseUrl}/api/auth/extension-login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
-
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.message || `Login failed (${res.status})`);
-  }
-
-  const { accessToken, refreshToken, expiresAt, user } = await res.json();
-
   await chrome.storage.local.set({
-    accessToken,
-    refreshToken,
-    expiresAt,
+    accessToken: auth.accessToken,
+    refreshToken: auth.refreshToken,
+    expiresAt: auth.expiresAt,
     recruitasUrl: baseUrl,
-    userName: user?.name || user?.email || email,
-    userEmail: user?.email || email,
+    userName: auth.userName || auth.userEmail || 'Candidate',
+    userEmail: auth.userEmail || null,
   });
-
-  return { accessToken, userName: user?.name || user?.email || email };
+  // A new session invalidates any cached profile from a previous account.
+  await chrome.storage.local.remove(['profileCache', 'profileCacheTime']);
 }
 
 // ── Logout ───────────────────────────────────────────────────────────────────
@@ -387,10 +377,16 @@ chrome.commands.onCommand.addListener(async (command) => {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   const handle = async () => {
     switch (message.type) {
-      case 'LOGIN': {
-        const { email, password } = message;
-        const result = await login(email, password);
-        return { success: true, ...result };
+      case 'SYNC_SESSION': {
+        // From the recrutas.ai bridge: mirror the web session into the extension.
+        await syncSession(message.auth);
+        return { success: true };
+      }
+
+      case 'CLEAR_SESSION': {
+        // Web app logged out → drop the mirrored session.
+        await logout();
+        return { success: true };
       }
 
       case 'LOGOUT': {
