@@ -55,23 +55,30 @@
     };
   }
 
-  let lastToken = null;
+  // `undefined` = nothing reported yet, so the first run always reports the
+  // current state (token string, or null = logged out). This makes logout
+  // propagate even across a page reload, where in-memory state resets but the
+  // page genuinely has no session — otherwise a stale session lingers in the
+  // extension after the user signs out and the page reloads.
+  let lastReported;
   function sync() {
     const s = readSession();
-    if (s) {
-      if (s.access_token === lastToken) return; // unchanged — skip
-      lastToken = s.access_token;
+    const token = s ? s.access_token : null;
+    if (token === lastReported) return; // no change since last report
+    lastReported = token;
+    if (token) {
       api.runtime.sendMessage({ type: 'SYNC_SESSION', auth: toAuth(s) }).catch(() => {});
-    } else if (lastToken !== null) {
-      lastToken = null;
+    } else {
       api.runtime.sendMessage({ type: 'CLEAR_SESSION' }).catch(() => {});
     }
   }
 
-  // Initial sync, then react to auth changes. The `storage` event only fires
-  // for changes made in OTHER tabs, so also re-check on focus/visibility (covers
-  // same-tab login) and poll lightly to catch periodic token refreshes.
-  sync();
+  // Initial sync (slightly delayed so the web app finishes hydrating its
+  // session into localStorage before we read), then react to auth changes. The
+  // `storage` event only fires for changes made in OTHER tabs, so also re-check
+  // on focus/visibility (covers same-tab login) and poll lightly to catch
+  // periodic token refreshes. A transient missed read self-heals on the next tick.
+  setTimeout(sync, 400);
   window.addEventListener('storage', (e) => { if (!e.key || /auth-token/.test(e.key)) sync(); });
   window.addEventListener('focus', sync);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) sync(); });
