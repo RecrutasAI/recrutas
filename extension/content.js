@@ -573,6 +573,14 @@
   // ── SPA-aware injection ────────────────────────────────────────────────────
 
   function maybeInject() {
+    // With all_frames the script runs in every matching frame. In a sub-frame,
+    // only float the button if the frame is big enough to host a real
+    // application form — keeps a stray fixed button out of tiny tracking /
+    // reCAPTCHA iframes that happen to contain an input. (Manual fill via the
+    // popup/shortcut still works in any frame; this only gates the button.)
+    if (window !== window.top && (window.innerWidth < 320 || window.innerHeight < 320)) {
+      return;
+    }
     const hasForm = document.querySelector('input:not([type="hidden"]), textarea, select');
     if (hasForm) {
       injectButton();

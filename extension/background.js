@@ -337,15 +337,19 @@ async function getTelemetry() {
 // ── Inject content script into active tab ────────────────────────────────────
 
 async function injectAndFill(tabId) {
+  // allFrames so the manual "Fill this page" action reaches forms inside
+  // embedded ATS iframes (e.g. a Greenhouse embed on a company careers page),
+  // not just the top frame. content.js self-guards against double-injection
+  // per frame and only renders its button in frames that actually have a form.
   if (chrome.scripting) {
     // Chrome MV3 / Firefox MV3
-    await chrome.scripting.insertCSS({ target: { tabId }, files: ['content.css'] });
-    await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+    await chrome.scripting.insertCSS({ target: { tabId, allFrames: true }, files: ['content.css'] });
+    await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ['content.js'] });
   } else {
     // Firefox MV2 fallback
-    await chrome.tabs.insertCSS(tabId, { file: 'content.css' });
-    await chrome.tabs.executeScript(tabId, { file: 'browser-polyfill.js' });
-    await chrome.tabs.executeScript(tabId, { file: 'content.js' });
+    await chrome.tabs.insertCSS(tabId, { file: 'content.css', allFrames: true });
+    await chrome.tabs.executeScript(tabId, { file: 'browser-polyfill.js', allFrames: true });
+    await chrome.tabs.executeScript(tabId, { file: 'content.js', allFrames: true });
   }
 }
 
