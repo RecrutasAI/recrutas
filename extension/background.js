@@ -460,9 +460,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
   };
 
-  handle()
-    .then(sendResponse)
-    .catch((err) => sendResponse({ success: false, error: err.message }));
+  const responder = handle().catch((err) => ({ success: false, error: err.message }));
 
-  return true; // keep the message channel open
+  // Response delivery differs by browser:
+  // - Firefox (MV2 build): runtime.onMessage forwards a RETURNED Promise as the
+  //   response. Its support for the sendResponse()+`return true` channel is
+  //   unreliable, so the caller would otherwise receive `undefined` (which made
+  //   content.js's triggerFill throw "undefined has no properties"). Return the
+  //   promise instead.
+  // - Chrome (MV3 build): ignores a returned promise; it needs sendResponse()
+  //   plus `return true` to keep the message channel open.
+  if (chrome.runtime.getManifest().manifest_version === 2) {
+    return responder;
+  }
+  responder.then(sendResponse);
+  return true; // keep the message channel open (Chrome)
 });

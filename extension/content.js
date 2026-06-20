@@ -490,6 +490,12 @@
         'Form fill timed out — please try again.'
       );
 
+      if (!response) {
+        // Defensive: a dropped/undefined background reply must not surface as a
+        // cryptic "undefined has no properties" — give an actionable message.
+        throw new Error('No response from the extension. Please reload the page and try again.');
+      }
+
       if (!response.success) {
         throw new Error(response.error || 'AI fill failed');
       }

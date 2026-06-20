@@ -2,7 +2,7 @@
 
 #recrutas-fill-btn.recrutas-fill-btn {
   position: fixed;
-  bottom: 24px;
+  top: 24px;
   right: 24px;
   z-index: 2147483647; /* max z-index */
   display: inline-flex;
@@ -43,7 +43,7 @@
 /* Toast banner */
 #recrutas-banner.recrutas-banner {
   position: fixed;
-  bottom: 80px;
+  top: 80px;
   right: 24px;
   z-index: 2147483647;
   max-width: 340px;
