@@ -921,9 +921,16 @@ export class JobAggregator {
         arr.findIndex(j => j.title === job.title && j.company === job.company) === index
       );
 
-      // Resolve aggregator URLs to direct ATS / company URLs where possible.
-      // Runs after dedup so we don't waste work on duplicate title+company pairs.
-      await this.resolveAggregatorJobs(uniqueJobs);
+      // Aggregator URL resolution is OFF by default: Adzuna and the other
+      // third-party aggregators are kept as-is and mixed together in the feed's
+      // aggregator fallback using their native redirect/apply URLs (which click
+      // through to the real post). The resolver was low-yield (~22% reached a
+      // real deep link) and its homepage fallbacks degraded link quality.
+      // Set RESOLVE_AGGREGATOR_URLS=true to re-enable laundering into ATS URLs.
+      if (process.env.RESOLVE_AGGREGATOR_URLS === 'true') {
+        // Runs after dedup so we don't waste work on duplicate title+company pairs.
+        await this.resolveAggregatorJobs(uniqueJobs);
+      }
 
       // Log profession breakdown
       const professionCounts = uniqueJobs.reduce((acc, job) => {

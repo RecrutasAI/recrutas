@@ -846,6 +846,12 @@ export class DatabaseStorage implements IStorage {
           [...AGGREGATOR_SOURCES].map(s => sql`${s}`), sql`, `
         )})`,
         sql`${jobPostings.externalUrl} IS NOT NULL`,
+        // Aggregators are served with their native redirect/apply URLs (no
+        // resolution). Native aggregator redirects click through to the real
+        // post, but bare-domain homepage roots (e.g. https://christushealth.org)
+        // — left behind by the now-retired Adzuna URL resolver — are dead links.
+        // Drop them so the mixed-aggregator fallback only serves working URLs.
+        sql`NOT (${jobPostings.externalUrl} ~ '^https?://[^/]+/?$')`,
         or(
           sql`${jobPostings.expiresAt} IS NULL`,
           sql`${jobPostings.expiresAt} > NOW()`
