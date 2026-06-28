@@ -457,7 +457,15 @@
 
   // ── Main fill trigger ──────────────────────────────────────────────────────
 
+  // Re-entry guard: the button is wired via BOTH a direct listener and a
+  // document-level delegated listener (see injectButton / the capture-phase
+  // handler below), so a single click can reach triggerFill twice. This flag
+  // collapses that to one run.
+  let isFilling = false;
+
   async function triggerFill() {
+    if (isFilling) return;
+    isFilling = true;
     const btn = document.getElementById('recrutas-fill-btn');
     if (btn) {
       btn.disabled = true;
@@ -545,6 +553,7 @@
         showBanner(err.message || 'Extension error — try reloading', 'error');
       }
     } finally {
+      isFilling = false;
       if (btn) {
         btn.disabled = false;
         btn.innerHTML = `
@@ -572,9 +581,24 @@
       Fill with Recrutas
     `;
 
+    // Direct listener (fast path). A document-level capture-phase delegate
+    // (set up once, below) is the reliable fallback: on Firefox the direct
+    // node listener intermittently fails to fire for a programmatic/synthetic
+    // click, leaving the button dead. Delegation on `document` does not.
     btn.addEventListener('click', triggerFill);
     document.body.appendChild(btn);
   }
+
+  // Robust click wiring: a single capture-phase listener on `document` catches
+  // clicks on the injected button even when the per-node listener doesn't fire.
+  // Attached once per frame; the isFilling guard prevents a double-run when both
+  // this and the direct listener fire.
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    if (t && typeof t.closest === 'function' && t.closest('#recrutas-fill-btn')) {
+      triggerFill();
+    }
+  }, true);
 
   // ── SPA-aware injection ────────────────────────────────────────────────────
 
