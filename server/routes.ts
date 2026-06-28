@@ -872,15 +872,23 @@ Return ONLY a valid JSON object with this structure:
   ]
 }
 
+GOAL: MAXIMUM COVERAGE. Return an action for EVERY field you can reasonably fill — do not stop at the obvious name/email fields. A field should be left out ONLY if it is genuinely impossible (CAPTCHA, signature pad, or data that cannot be inferred at all). Most real application forms should end up almost entirely filled.
+
 Rules:
 - fieldId MUST match an id from the DOM elements list exactly
-- For standard text fields (name, email, phone, linkedin): use the candidate's actual data
+- For standard text fields (name, email, phone, linkedin, github, portfolio): use the candidate's actual data. ALWAYS fill phone when a phone field exists and a phone number is available.
+- Location-derived fields: derive Country / State / City / Address from the candidate's LOCATION. If a Country field exists and the location implies one, fill it.
+- Education fields (school, university, degree, field of study, graduation/end year): fill from the candidate's education data.
+- Compensation ("desired salary", "salary expectation", "expected compensation"): if the candidate has no explicit number, answer "Negotiable".
+- "How did you hear about us" / referral source: answer "Company website" unless a better source is evident.
 - For screening questions: write a professional, specific answer using the candidate's real experience. Keep under 200 words.
-- For select/dropdown with native <select> type: use action "select" with value matching EXACTLY one of the provided options
-- For custom dropdowns (React Select, Combobox, etc. — type is usually "text" but looks like a dropdown in screenshot): use "click_then_type"
+- VOLUNTARY self-identification / EEO / demographic fields (Gender, Race, Ethnicity, Hispanic/Latino, Veteran Status, Disability Status): these are almost always dropdowns with a decline choice. Return action "click_then_type" with value "Decline to self-identify" EVEN IF no options are listed (the options are often hidden until the dropdown opens). If options ARE listed with a different decline phrasing ("I don't wish to answer", "Prefer not to answer", "I do not wish to disclose"), use that exact option text instead. Do NOT skip EEO fields.
+- Eligibility yes/no (work authorization, sponsorship, citizenship, willing to relocate): answer ONLY when the candidate data clearly supports it; if you cannot infer the answer, skip rather than guess wrong (a wrong eligibility answer is worse than a blank one).
+- For select/dropdown with native <select> type: use action "select" with value matching EXACTLY one of the provided options. Always pick the best-matching option rather than leaving it blank.
+- For custom dropdowns (React Select, Combobox, etc. — type is usually "text"/"custom_select" but behaves like a dropdown; options may be provided): use "click_then_type" with the best-matching option text.
 - For résumé/CV file upload fields: use action "upload_resume". For OTHER file uploads (cover letter, transcript, writing sample, portfolio, photo): use action "skip" — only the résumé is available, do NOT attach it to those.
-- For fields you cannot fill (CAPTCHA, signature pads): use action "skip"
-- For checkboxes that ask about consent/agreement: use action "check"
+- For fields you genuinely cannot fill (CAPTCHA, signature pads): use action "skip"
+- For checkboxes that ask about consent/agreement to terms: use action "check"
 - Do NOT fill fields that already have values unless they look incorrect
 - If a field is not visible in the screenshot, still try to fill it based on its label/name`;
 
@@ -927,7 +935,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
           ]);
         }
 
-        const parsed = JSON.parse(aiResponse);
+        const parsed = JSON.parse(extractJsonObject(aiResponse));
         actions = parsed.actions || [];
 
         // Validate actions reference real field IDs
@@ -965,6 +973,21 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       res.status(500).json({ message: 'Failed to generate form values' });
     }
   }));
+
+  // Open-weights models often wrap the JSON in ```json fences or add prose
+  // around it. A raw JSON.parse then throws and we needlessly drop a perfectly
+  // good AI response to the regex fallback. Strip fences and extract the
+  // outermost {...} object so the AI path actually survives.
+  function extractJsonObject(s: string): string {
+    if (!s) return '{}';
+    let t = String(s).trim();
+    const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fence) t = fence[1].trim();
+    const start = t.indexOf('{');
+    const end = t.lastIndexOf('}');
+    if (start !== -1 && end !== -1 && end > start) t = t.slice(start, end + 1);
+    return t;
+  }
 
   // Fallback: regex-based pattern matching when AI is unavailable
   function buildFallbackActions(
@@ -1016,6 +1039,27 @@ Analyze the form and return the actions JSON to fill every field you can.`;
           actions.push({ fieldId: field.id, action: 'type', value: profileData.email });
         } else if (field.type === 'tel' && profileData.phone) {
           actions.push({ fieldId: field.id, action: 'type', value: profileData.phone });
+        }
+      }
+
+      // Higher-coverage fallbacks — mirror the AI prompt's safe defaults so the
+      // regex path (used whenever the AI call fails) isn't stuck at name/email.
+      if (!actions.find(a => a.fieldId === field.id) && field.type !== 'file') {
+        const opts = field.options || [];
+        const declineOpt = opts.find(o => /decline|prefer not|do(?: not|n'?t) wish|not wish to/i.test(o));
+        const customAction = field.type === 'select' ? 'select' : 'click_then_type';
+
+        if (/salary|compensation|expected pay|desired pay/i.test(searchText)) {
+          actions.push({ fieldId: field.id, action: field.type === 'select' ? 'select' : 'type', value: 'Negotiable' });
+        } else if (/gender|race|ethnic|hispanic|latino|veteran|disability/i.test(searchText)) {
+          // Voluntary EEO / self-identification: decline. Use a listed decline
+          // option if present, else the standard phrasing (the option list is
+          // usually hidden until the dropdown is opened).
+          actions.push({ fieldId: field.id, action: field.type === 'select' ? 'select' : 'click_then_type', value: declineOpt || 'Decline to self-identify' });
+        } else if (/\bcountry\b/i.test(searchText) && /\b(usa|u\.?s\.?a?|united states)\b/i.test(profileData.location || '')) {
+          actions.push({ fieldId: field.id, action: customAction, value: 'United States' });
+        } else if (/how did you hear|referral source|^source$/i.test(searchText)) {
+          actions.push({ fieldId: field.id, action: field.type === 'select' ? 'select' : 'type', value: 'Company website' });
         }
       }
     }

@@ -258,6 +258,44 @@ async function fillFormAI(fields, jobContext) {
 
 // ── Download resume ──────────────────────────────────────────────────────────
 
+// Name the uploaded résumé file "First_Last_resume.ext" (recruiters expect a
+// human-readable name, not the storage UUID). Falls back to the stored userName,
+// then to a bare "resume". Preserves the real extension (pdf/docx/etc).
+async function buildResumeFilename(originalName, mimeType) {
+  let ext = '';
+  const m = /\.([a-z0-9]{1,5})$/i.exec(originalName || '');
+  if (m) ext = m[1].toLowerCase();
+  if (!ext) {
+    ext = /word|officedocument|msword/i.test(mimeType || '') ? 'docx' : 'pdf';
+  }
+
+  let first = '';
+  let last = '';
+  try {
+    const { profileCache, userName } = await chrome.storage.local.get(['profileCache', 'userName']);
+    if (profileCache) {
+      first = profileCache.firstName || '';
+      last = profileCache.lastName || '';
+    }
+    if (!first && !last && userName) {
+      const parts = String(userName).trim().split(/\s+/);
+      first = parts[0] || '';
+      last = parts.slice(1).join(' ');
+    }
+  } catch (_) {
+    // storage unavailable — fall through to a bare "resume"
+  }
+
+  const sanitize = (s) =>
+    String(s || '')
+      .normalize('NFKD').replace(/[̀-ͯ]/g, '') // strip accents
+      .replace(/[^A-Za-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+
+  const base = [sanitize(first), sanitize(last), 'resume'].filter(Boolean).join('_');
+  return `${base || 'resume'}.${ext}`;
+}
+
 async function downloadResume(url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
@@ -277,8 +315,9 @@ async function downloadResume(url) {
     const base64 = btoa(binary);
 
     const urlPath = new URL(url).pathname;
-    const filename = urlPath.split('/').pop() || 'resume.pdf';
+    const originalName = urlPath.split('/').pop() || 'resume.pdf';
     const mimeType = blob.type || 'application/pdf';
+    const filename = await buildResumeFilename(originalName, mimeType);
 
     return { base64, filename, mimeType };
   } catch (err) {
