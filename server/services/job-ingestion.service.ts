@@ -10,6 +10,7 @@ import { eq, and, or } from 'drizzle-orm';
 import { gt } from 'drizzle-orm/sql/expressions';
 import { sql } from 'drizzle-orm/sql';
 import { normalizeSkills, SKILL_ALIASES } from '../skill-normalizer';
+import { classifyWorkType } from '../lib/work-type';
 
 /** Extract canonical skills from free-form text using the full alias taxonomy. */
 function extractSkillsFromText(text: string): string[] {
@@ -220,7 +221,14 @@ export class JobIngestionService {
               skills: normalizeSkills(
                 job.skills?.length > 0 ? job.skills : extractSkillsFromText(job.description)
               ),
-              workType: job.workType ?? null,
+              // The upstream aggregators' workType is unreliable (loose
+              // description scans, hardcoded 'hybrid' defaults). Re-derive it
+              // from the canonical location signal so the feed filter is exact.
+              workType: classifyWorkType({
+                location: job.location,
+                title: job.title,
+                description: job.description,
+              }),
               salaryMin: job.salaryMin ?? null,
               salaryMax: job.salaryMax ?? null,
               source: job.source ?? 'unknown',
