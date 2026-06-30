@@ -172,6 +172,9 @@ export const jobPostings = pgTable("job_postings", {
   idxJobGhostScore: index("idx_job_ghost_score").on(table.ghostJobScore),
   // Partial index for active external job feed (most frequent query)
   idxJobActiveFeed: index("idx_job_active_feed").on(table.status, table.source, table.createdAt),
+  // Supports the cross-source external_url dedup guard in job-ingestion.service
+  // (the same posting can arrive under different source labels / external_ids).
+  idxJobExternalUrl: index("idx_job_external_url").on(table.externalUrl),
 }));
 
 export const jobExams = pgTable("job_exams", {

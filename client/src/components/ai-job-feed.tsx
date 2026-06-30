@@ -104,16 +104,14 @@ const DATE_FILTER_OPTIONS: { value: string; label: string; days: number }[] = [
   { value: '30d', label: 'Past month', days: 30 },
 ];
 
-// The ingested `workType` is unreliable (set by many loose heuristics) and the
-// true arrangement often only lives in the job description, so we don't treat
-// the filter as exact. "Remote" means "has a remote component" (remote OR
-// hybrid) so picking it never surfaces a pure-onsite role — which was the actual
-// complaint; the rest match their own type. Keys/values are lowercased.
-const WORK_TYPE_FILTER_ACCEPTS: Record<string, string[]> = {
-  remote: ['remote', 'hybrid'],
-  hybrid: ['hybrid'],
-  onsite: ['onsite'],
-};
+// `workType` is now classified at ingest from the canonical location signal
+// (server/lib/work-type.ts), so the feed filter can be exact — Remote means
+// remote, Hybrid means hybrid, Onsite means onsite.
+const WORK_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'remote', label: 'Remote' },
+  { value: 'hybrid', label: 'Hybrid' },
+  { value: 'onsite', label: 'Onsite' },
+];
 
 export interface AIJobMatch {
   id: number;
@@ -228,12 +226,13 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
     const dateCutoff = dateOption ? Date.now() - dateOption.days * 24 * 60 * 60 * 1000 : null;
     return allMatches.filter(m => {
       if (term && !m.job.title.toLowerCase().includes(term) && !m.job.company.toLowerCase().includes(term) && !(m.job.description || '').toLowerCase().includes(term)) return false;
-      if (locationFilter !== 'all' && m.job.location !== locationFilter) return false;
-      if (workTypeFilter !== 'all') {
-        const key = workTypeFilter.toLowerCase();
-        const accepts = WORK_TYPE_FILTER_ACCEPTS[key] ?? [key];
-        if (!accepts.includes((m.job.workType || '').toLowerCase())) return false;
-      }
+      // City search: substring, case-insensitive — so "new york" matches
+      // "New York, NY", "New York, New York", etc. (exact-match made cities
+      // nearly impossible to find unless you picked an exact stored string).
+      if (locationFilter !== 'all' && !(m.job.location || '').toLowerCase().includes(locationFilter.toLowerCase().trim())) return false;
+      // Work type is exact now that `workType` is reliably classified at ingest
+      // (location-dominant) — Remote means remote, not remote-or-hybrid.
+      if (workTypeFilter !== 'all' && (m.job.workType || '').toLowerCase() !== workTypeFilter.toLowerCase()) return false;
       if (companyFilter !== 'all' && m.job.company !== companyFilter) return false;
       if (experienceLevelFilter !== 'all') {
         const level = inferJobLevel(m.job.title);
@@ -448,7 +447,6 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
 
   const locations = useMemo(() => [...new Set((allMatches || []).map(m => m.job.location).filter(Boolean))].sort(), [allMatches]);
   const companies = useMemo(() => [...new Set((allMatches || []).map(m => m.job.company).filter(Boolean))].sort(), [allMatches]);
-  const workTypes = useMemo(() => [...new Set((allMatches || []).map(m => m.job.workType).filter(Boolean))].sort(), [allMatches]);
 
   const clearFilters = () => {
     setSearchTerm("");
@@ -525,18 +523,25 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
             </SelectContent>
           </Select>
 
-          <Select value={locationFilter} onValueChange={setLocationFilter}>
-            <SelectTrigger className="w-full sm:w-[140px]">
-              <MapPin className="h-4 w-4 mr-2 shrink-0" />
-              <SelectValue placeholder="Location" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Locations</SelectItem>
+          {/* City search — free-text substring with suggestions, so any city is
+              findable by typing (the old exact-match dropdown hid all but the
+              exact stored strings). */}
+          <div className="relative w-full sm:w-[160px]">
+            <MapPin className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+            <Input
+              type="text"
+              list="job-feed-locations"
+              placeholder="City or location"
+              className="pl-9 h-10"
+              value={locationFilter === 'all' ? '' : locationFilter}
+              onChange={(e) => setLocationFilter(e.target.value === '' ? 'all' : e.target.value)}
+            />
+            <datalist id="job-feed-locations">
               {locations.map(loc => (
-                <SelectItem key={loc} value={loc}>{loc}</SelectItem>
+                <option key={loc} value={loc} />
               ))}
-            </SelectContent>
-          </Select>
+            </datalist>
+          </div>
 
           <Select value={workTypeFilter} onValueChange={setWorkTypeFilter}>
             <SelectTrigger className="w-full sm:w-[140px]">
@@ -545,8 +550,8 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Types</SelectItem>
-              {workTypes.map(type => (
-                <SelectItem key={type} value={type}>{type}</SelectItem>
+              {WORK_TYPE_OPTIONS.map(opt => (
+                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
               ))}
             </SelectContent>
           </Select>

@@ -826,6 +826,13 @@ export class DatabaseStorage implements IStorage {
     limit: number = 10
   ): Promise<JobPosting[]> {
     try {
+      // No skill or title signal → nothing to relevance-match against. Return
+      // empty rather than padding the empty state with recency-only noise (which
+      // is just random aggregator jobs the candidate has no demonstrated fit for).
+      if (skills.length === 0 && !filters.jobTitle?.trim()) {
+        return [];
+      }
+
       const ninetyDaysAgo = new Date();
       ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
       const cutoffDateStr = ninetyDaysAgo.toISOString();
@@ -1517,7 +1524,7 @@ export class DatabaseStorage implements IStorage {
 
       const LEVELS = ['entry', 'mid', 'senior', 'lead', 'executive'];
 
-      const finalJobs = recommendations
+      let finalJobs = recommendations
         .filter(job => job.matchScore >= 30) // 30% minimum — prevents irrelevant jobs
         .map(job => {
           let prefBoost = 0;
@@ -1590,6 +1597,29 @@ export class DatabaseStorage implements IStorage {
         })
         .slice(0, 100); // Hard cap: never return more than 100 jobs
     console.timeEnd('score-jobs');
+
+    // De-duplicate by external URL. The same real posting can be ingested as
+    // multiple rows (e.g. company name captured under different casing —
+    // "Carta" vs "carta"), which surfaces the identical job twice in the feed.
+    // finalJobs is already best-ranked first, so keeping the first occurrence
+    // per URL keeps the highest-scored copy. Dedup ONLY by URL: distinct
+    // postings that share a company+title but have different URLs (two real
+    // reqs) are legitimately separate and must not be collapsed. Platform jobs
+    // have no external_url and are never merged.
+    const seenJobUrls = new Set<string>();
+    const beforeDedup = finalJobs.length;
+    finalJobs = finalJobs.filter(job => {
+      const raw = job.externalUrl;
+      if (!raw) return true; // platform/no-URL rows are always kept
+      const key = raw.trim().toLowerCase().replace(/#.*$/, '').replace(/\/+$/, '');
+      if (!key) return true;
+      if (seenJobUrls.has(key)) return false;
+      seenJobUrls.add(key);
+      return true;
+    });
+    if (finalJobs.length !== beforeDedup) {
+      console.log(`[fetchScoredJobs] deduped ${beforeDedup - finalJobs.length} same-URL duplicate(s) → ${finalJobs.length} jobs`);
+    }
 
     // Score histogram so we can see whether the feed-floor filter is the cause
     // of empty results vs. retrieval pulling 0 candidates upstream.

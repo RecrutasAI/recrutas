@@ -10,6 +10,7 @@ import { eq, and, or } from 'drizzle-orm';
 import { gt } from 'drizzle-orm/sql/expressions';
 import { sql } from 'drizzle-orm/sql';
 import { normalizeSkills, SKILL_ALIASES } from '../skill-normalizer';
+import { classifyWorkType } from '../lib/work-type';
 
 /** Extract canonical skills from free-form text using the full alias taxonomy. */
 function extractSkillsFromText(text: string): string[] {
@@ -161,8 +162,45 @@ export class JobIngestionService {
         (existingRows as any[]).map((r: any) => `${r.external_id}::${r.source}`)
       );
 
-      const toInsert = chunk.filter(j => !existingSet.has(`${j.effectiveExternalId}::${j.source ?? 'unknown'}`));
-      const toUpdate = chunk.filter(j => existingSet.has(`${j.effectiveExternalId}::${j.source ?? 'unknown'}`));
+      // ── Cross-source URL dedup ──────────────────────────────────────────
+      // The same posting arrives under different source labels with different
+      // external_ids (sota-scraper emits bare `greenhouse`; scrape-all-company
+      // emits `ATS:greenhouse`), so the (external_id, source) constraint can't
+      // catch it and the feed shows the job twice. Skip inserting any job whose
+      // real-post external_url already exists under ANY source. Safe because
+      // every incoming URL passed isJobPostUrl (real post, not a homepage), so a
+      // shared URL means the same posting — aggregator homepage URLs (which many
+      // distinct jobs share) never reach here and can't be wrongly collapsed.
+      const candidateUrls = [...new Set(
+        chunk.map(j => j.externalUrl).filter((u): u is string => !!u)
+      )];
+      const existingUrlSet = new Set<string>();
+      if (candidateUrls.length > 0) {
+        const urlRows = await db.execute(sql.raw(`
+          SELECT DISTINCT external_url FROM job_postings
+          WHERE external_url IN (${candidateUrls.map(u => `'${u.replace(/'/g, "''")}'`).join(', ')})
+        `));
+        for (const r of (urlRows as any[])) existingUrlSet.add(r.external_url);
+      }
+
+      const existsByKey = (j: typeof chunk[number]) =>
+        existingSet.has(`${j.effectiveExternalId}::${j.source ?? 'unknown'}`);
+
+      const seenUrlsThisChunk = new Set<string>();
+      const toInsert = chunk.filter(j => {
+        if (existsByKey(j)) return false; // same (external_id, source) → handled as update
+        const url = j.externalUrl;
+        if (url) {
+          // Already in DB under another source, or an earlier row in this batch.
+          if (existingUrlSet.has(url) || seenUrlsThisChunk.has(url)) {
+            stats.duplicates++;
+            return false;
+          }
+          seenUrlsThisChunk.add(url);
+        }
+        return true;
+      });
+      const toUpdate = chunk.filter(existsByKey);
 
       // Bulk update liveness for existing jobs
       if (toUpdate.length > 0) {
@@ -220,7 +258,14 @@ export class JobIngestionService {
               skills: normalizeSkills(
                 job.skills?.length > 0 ? job.skills : extractSkillsFromText(job.description)
               ),
-              workType: job.workType ?? null,
+              // The upstream aggregators' workType is unreliable (loose
+              // description scans, hardcoded 'hybrid' defaults). Re-derive it
+              // from the canonical location signal so the feed filter is exact.
+              workType: classifyWorkType({
+                location: job.location,
+                title: job.title,
+                description: job.description,
+              }),
               salaryMin: job.salaryMin ?? null,
               salaryMax: job.salaryMax ?? null,
               source: job.source ?? 'unknown',
