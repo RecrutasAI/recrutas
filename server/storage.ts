@@ -826,6 +826,13 @@ export class DatabaseStorage implements IStorage {
     limit: number = 10
   ): Promise<JobPosting[]> {
     try {
+      // No skill or title signal → nothing to relevance-match against. Return
+      // empty rather than padding the empty state with recency-only noise (which
+      // is just random aggregator jobs the candidate has no demonstrated fit for).
+      if (skills.length === 0 && !filters.jobTitle?.trim()) {
+        return [];
+      }
+
       const ninetyDaysAgo = new Date();
       ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
       const cutoffDateStr = ninetyDaysAgo.toISOString();
