@@ -135,7 +135,7 @@ export default function ExamPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="prose prose-foreground max-w-none">
+                <div className="prose dark:prose-invert max-w-none">
                   <p>
                     Welcome to the assessment for the <strong>{jobTitle}</strong> position. 
                     This exam will help us evaluate your skills and experience for this role.

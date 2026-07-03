@@ -373,7 +373,7 @@ export function JobExam({ jobId, onComplete, onCancel }: JobExamProps) {
                 <span>Do not leave the exam until you submit</span>
               </li>
             </ul>
-            <div className="bg-yellow-50 dark:bg-yellow-900/20 p-4 rounded-lg border border-yellow-200">
+            <div className="bg-yellow-50 dark:bg-yellow-900/20 p-4 rounded-lg border border-yellow-200 dark:border-yellow-800">
               <p className="text-sm text-yellow-800 dark:text-yellow-200">
                 <strong>Note:</strong> The exam will run in fullscreen mode. Any attempt to exit fullscreen,
                 copy/paste, or use external resources will be recorded as a violation.
@@ -398,9 +398,9 @@ export function JobExam({ jobId, onComplete, onCancel }: JobExamProps) {
     <div ref={containerRef} className="max-w-4xl mx-auto space-y-6">
       {/* Mobile fullscreen warning */}
       {examStarted && !fullscreenSupported && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2">
-          <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
-          <p className="text-sm text-amber-800">
+        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 flex items-start gap-2">
+          <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+          <p className="text-sm text-amber-800 dark:text-amber-200">
             Fullscreen mode is not supported on this device. For the best experience, use a desktop browser. Tab-switching detection is still active.
           </p>
         </div>
@@ -564,7 +564,7 @@ export function JobExam({ jobId, onComplete, onCancel }: JobExamProps) {
                 size="sm"
                 className={`w-8 h-8 p-0 ${
                   answers[exam.questions[index].id]
-                    ? "bg-green-100 border-green-300 text-green-700"
+                    ? "bg-green-100 border-green-300 text-green-700 dark:bg-green-900/30 dark:border-green-700 dark:text-green-300"
                     : ""
                 }`}
                 onClick={() => setCurrentQuestionIndex(index)}
