@@ -836,7 +836,7 @@ export async function registerRoutes(app: Express): Promise<Express> {
 
       // Build the DOM field list for the LLM
       const fieldDescriptions = fields.map((f: any) =>
-        `- id="${f.id}" type="${f.type}" label="${f.label || ''}" name="${f.name || ''}"${f.options ? ` options=[${f.options.join(', ')}]` : ''}${f.required ? ' REQUIRED' : ''}`
+        `- id="${f.id}" type="${f.type}" label="${f.label || ''}" name="${f.name || ''}"${f.options ? ` options=[${f.options.join(', ')}]` : ''}${f.multiple ? ' MULTI-SELECT' : ''}${f.required ? ' REQUIRED' : ''}`
       ).join('\n');
 
       const candidateInfo = `NAME: ${profileData.fullName}
@@ -883,12 +883,17 @@ Rules:
 - "How did you hear about us" / referral source: answer "Company website" unless a better source is evident.
 - For screening questions: write a professional, specific answer using the candidate's real experience. Keep under 200 words.
 - VOLUNTARY self-identification / EEO / demographic fields (Gender, Race, Ethnicity, Hispanic/Latino, Veteran Status, Disability Status): these are almost always dropdowns with a decline choice. Return action "click_then_type" with value "Decline to self-identify" EVEN IF no options are listed (the options are often hidden until the dropdown opens). If options ARE listed with a different decline phrasing ("I don't wish to answer", "Prefer not to answer", "I do not wish to disclose"), use that exact option text instead. Do NOT skip EEO fields.
-- Eligibility yes/no (work authorization, sponsorship, citizenship, willing to relocate): answer ONLY when the candidate data clearly supports it; if you cannot infer the answer, skip rather than guess wrong (a wrong eligibility answer is worse than a blank one).
+- Work AUTHORIZATION ("Are you legally authorized / eligible / do you have the right to work in [country]?", "Can you work in X without restriction?"): if the candidate's LOCATION is in that same country — or the question says "the country where this job is based" and the candidate's location matches the job's country (infer the job country from JOB CONTEXT / the form's Country field) — answer the AFFIRMATIVE option ("Yes"). People apply to jobs in countries where they can work, so a location match is strong evidence; do not leave these (usually REQUIRED) fields blank on a clear match. Answer "No" or skip only if there is explicit evidence the candidate is NOT authorized.
+- Visa / SPONSORSHIP ("do you now or will you in the future require sponsorship?", "do you need a visa?"): this is genuinely ambiguous from location alone — answer only if the candidate data clearly supports it, otherwise skip rather than guess wrong.
+- Other eligibility yes/no (citizenship, security clearance, willing to relocate): answer ONLY when the candidate data clearly supports it; if you cannot infer, skip rather than guess wrong (a wrong eligibility answer is worse than a blank one).
+- MULTI-SELECT fields (marked "MULTI-SELECT" — the candidate may pick several options, e.g. "In what cities are you available to work?"): return a SINGLE action whose value is a PIPE-delimited list of every applicable option, e.g. value: "New York | Remote". Derive choices from the candidate's location and the job's location(s); include "Remote" when offered and appropriate. Use " | " ONLY to separate distinct options — never inside one option's text (e.g. keep "New York, NY" intact).
 - For select/dropdown with native <select> type: use action "select" with value matching EXACTLY one of the provided options. Always pick the best-matching option rather than leaving it blank.
 - For custom dropdowns (React Select, Combobox, etc. — type is usually "text"/"custom_select" but behaves like a dropdown; options may be provided): use "click_then_type" with the best-matching option text.
+- For radio groups (type "radio" — ONE field carrying the question as its label plus every choice in options): use action "select" with value set to the EXACT option text that best answers the question. Treat them like single-choice dropdowns. Yes/No eligibility and EEO self-identification frequently appear as radio groups — apply the same eligibility and "Decline to self-identify" rules above, choosing the matching option text.
 - For résumé/CV file upload fields: use action "upload_resume". For OTHER file uploads (cover letter, transcript, writing sample, portfolio, photo): use action "skip" — only the résumé is available, do NOT attach it to those.
 - For fields you genuinely cannot fill (CAPTCHA, signature pads): use action "skip"
 - For checkboxes that ask about consent/agreement to terms: use action "check"
+- Acknowledgment / certification / privacy-consent fields rendered as a DROPDOWN (e.g. "I certify that the information provided is true…", "I understand my application will be processed in accordance with the Privacy Policy", "I agree to…"): these are affirmations the candidate must accept to apply. Select the affirmative option — match whichever of "Yes" / "I agree" / "I acknowledge" / "I understand" / "I certify" / "I accept" the field offers. Do NOT skip them; they are typically required.
 - Do NOT fill fields that already have values unless they look incorrect
 - If a field is not visible in the screenshot, still try to fill it based on its label/name`;
 
@@ -947,6 +952,20 @@ Analyze the form and return the actions JSON to fill every field you can.`;
         actions = buildFallbackActions(fields, profileData);
       }
 
+      // Merge deterministic fallbacks for any fillable field the model OMITTED.
+      // Observed on real forms: even with a MAXIMUM-COVERAGE prompt the model
+      // nondeterministically drops obvious fields (phone, Country, Degree, an
+      // acknowledgment dropdown) from run to run, so coverage swings. The regex
+      // fallback backfills those without overriding anything the model did answer.
+      try {
+        const covered = new Set(actions.map(a => a.fieldId));
+        for (const fb of buildFallbackActions(fields, profileData)) {
+          if (!covered.has(fb.fieldId)) { actions.push(fb); covered.add(fb.fieldId); }
+        }
+      } catch (mergeErr) {
+        console.warn('[Extension] fallback merge failed:', (mergeErr as Error).message);
+      }
+
       // Guard (both AI + fallback paths): the résumé must only attach to actual
       // résumé/CV file fields, never to cover-letter/transcript/other document
       // uploads — otherwise the résumé gets submitted as the candidate's cover letter.
@@ -994,6 +1013,14 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     fields: Array<{ id: string; label?: string; name?: string; type?: string; options?: string[] }>,
     profileData: Record<string, string>
   ) {
+    // A candidate location is US if it says so explicitly OR ends in a US state
+    // (name or 2-letter code, e.g. "Seattle, WA") — most profiles store "City, ST",
+    // not "United States", so a bare "united states" check misses almost everyone.
+    const US_STATE_CODE = /,\s*(A[KLRZ]|C[AOT]|D[CE]|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|PA|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY])\b/;
+    const US_STATE_NAME = /\b(alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming)\b/i;
+    const isUSLocation = (loc: string) =>
+      /\b(usa|u\.?s\.?a?|united states|america)\b/i.test(loc) || US_STATE_CODE.test(loc) || US_STATE_NAME.test(loc);
+
     const PATTERNS: Record<string, RegExp[]> = {
       firstName: [/first[\s_-]?name/i, /fname/i, /given[\s_-]?name/i],
       lastName: [/last[\s_-]?name/i, /lname/i, /surname/i, /family[\s_-]?name/i],
@@ -1046,7 +1073,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       // regex path (used whenever the AI call fails) isn't stuck at name/email.
       if (!actions.find(a => a.fieldId === field.id) && field.type !== 'file') {
         const opts = field.options || [];
-        const declineOpt = opts.find(o => /decline|prefer not|do(?: not|n'?t) wish|not wish to/i.test(o));
+        const declineOpt = opts.find(o => /decline|prefer not|opt out|rather not|do(?:\s+not|n'?t)\s+(?:wish|want)|(?:wish|want)\s+not to/i.test(o));
         const customAction = field.type === 'select' ? 'select' : 'click_then_type';
 
         if (/salary|compensation|expected pay|desired pay/i.test(searchText)) {
@@ -1056,10 +1083,17 @@ Analyze the form and return the actions JSON to fill every field you can.`;
           // option if present, else the standard phrasing (the option list is
           // usually hidden until the dropdown is opened).
           actions.push({ fieldId: field.id, action: field.type === 'select' ? 'select' : 'click_then_type', value: declineOpt || 'Decline to self-identify' });
-        } else if (/\bcountry\b/i.test(searchText) && /\b(usa|u\.?s\.?a?|united states)\b/i.test(profileData.location || '')) {
+        } else if (/\bcountry\b/i.test(searchText) && isUSLocation(profileData.location || '')) {
           actions.push({ fieldId: field.id, action: customAction, value: 'United States' });
         } else if (/how did you hear|referral source|^source$/i.test(searchText)) {
           actions.push({ fieldId: field.id, action: field.type === 'select' ? 'select' : 'type', value: 'Company website' });
+        } else if ((field.type === 'custom_select' || field.type === 'select') && /\b(i )?(confirm|acknowledge|certify|consent|i agree|understand that|are aware|have read)\b/i.test(searchText)) {
+          // Acknowledgment / certification dropdowns ("Please confirm you are aware…")
+          // require an affirmative to apply. Pick a listed affirmative option if
+          // known, else "Yes" — the client maps yes/agree/confirm families and will
+          // take a lone option (e.g. "Confirmed") when that's all that's offered.
+          const affirmOpt = opts.find(o => /^(yes|i agree|agree|i acknowledge|acknowledge|i understand|understand|i certify|certify|i accept|accept|confirm(ed)?)\b/i.test(o));
+          actions.push({ fieldId: field.id, action: customAction, value: affirmOpt || 'Yes' });
         }
       }
     }

@@ -52,16 +52,33 @@
       const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
       if (label) return label.textContent?.trim() || '';
     }
+    // aria-labelledby → resolve the referenced element(s) and join their text.
+    const labelledby = el.getAttribute && el.getAttribute('aria-labelledby');
+    if (labelledby) {
+      const txt = labelledby.split(/\s+/)
+        .map(id => document.getElementById(id)?.textContent?.trim() || '')
+        .filter(Boolean)
+        .join(' ');
+      if (txt) return txt;
+    }
+    // Walk ancestors for a wrapping <label>; remember the nearest <fieldset>'s
+    // <legend> as a last resort (grouped controls — radios, split date selects —
+    // are labelled only by the legend).
     let node = el.parentElement;
+    let legend = '';
     while (node && node.tagName !== 'FORM') {
       if (node.tagName === 'LABEL') return node.textContent?.trim() || '';
+      if (node.tagName === 'FIELDSET' && !legend) {
+        const lg = node.querySelector(':scope > legend');
+        if (lg) legend = lg.textContent?.trim() || '';
+      }
       node = node.parentElement;
     }
     const prev = el.previousElementSibling;
     if (prev && (prev.tagName === 'LABEL' || prev.tagName === 'SPAN' || prev.tagName === 'P')) {
       return prev.textContent?.trim() || '';
     }
-    return '';
+    return legend || '';
   }
 
   // ── Scrape all form fields ─────────────────────────────────────────────────
@@ -78,11 +95,21 @@
 
       if (['hidden', 'submit', 'button', 'image', 'reset'].includes(type)) continue;
       if (el.readOnly || el.disabled) continue;
+      // Radios are collected as grouped fields (one per name) further down, so
+      // the model sees the question + all options instead of N disconnected inputs.
+      if (type === 'radio') continue;
 
       // Allow visually-hidden inputs (React Select, comboboxes use opacity:0 / position:absolute)
       const isFileInput = el.type === 'file';
       const isReactSelect = el.getAttribute('role') === 'combobox' ||
         el.closest('[class*="select"], [class*="Select"], [class*="combobox"]');
+      // Strong combobox signal (Greenhouse/Workday/react-select render their
+      // dropdowns as <input> elements — without this they'd be reported as plain
+      // text and the model would type into them, which react-select discards).
+      const looksLikeCombobox =
+        el.getAttribute('role') === 'combobox' ||
+        el.getAttribute('aria-haspopup') === 'listbox' ||
+        el.getAttribute('aria-autocomplete') === 'list';
       if (el.offsetParent === null && !isFileInput && !isReactSelect) continue;
 
       const fieldId = el.id || el.name || `recrutas_${fields.length}`;
@@ -104,11 +131,65 @@
         field.type = 'select';
       }
 
-      if (type === 'checkbox' || type === 'radio') {
+      if (type === 'checkbox') {
         field.type = type;
       }
 
+      // Mark <input>-based dropdowns so the model fills them via click_then_type
+      // (open menu → type → click option) rather than typing free text.
+      if (looksLikeCombobox && field.type !== 'select') {
+        field.type = 'custom_select';
+      }
+
+      // Flag multi-value pickers (native <select multiple>, react-select multi)
+      // so the model can return several answers as a pipe-delimited list.
+      const isMulti = el.multiple === true ||
+        el.getAttribute('aria-multiselectable') === 'true' ||
+        !!el.closest('[class*="is-multi"], [class*="multiselect"], [class*="multi-select"], [class*="MultiValue"]');
+      if (isMulti) field.multiple = true;
+
       fields.push(field);
+    }
+
+    // Radio groups — collect all radios sharing a name into ONE field carrying the
+    // group question (fieldset/legend) + every option label. Detecting them
+    // individually loses the question and, for name-only radios, collapses the
+    // whole group to a single option (the rest dedupe away on `name`).
+    const radioGroups = new Map();
+    for (const r of document.querySelectorAll('input[type="radio"]')) {
+      if (r.disabled) continue;
+      const name = r.getAttribute('name') || '';
+      const key = name || r.id;
+      if (!key) continue;
+      if (!radioGroups.has(key)) radioGroups.set(key, { name, radios: [] });
+      radioGroups.get(key).radios.push(r);
+    }
+    for (const [key, group] of radioGroups) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const options = group.radios
+        .map(r => getLabelText(r) || r.value || '')
+        .map(s => s.trim())
+        .filter(Boolean);
+      // Group question: the fieldset/legend (or aria-label) shared by the radios,
+      // not any single option's label.
+      const first = group.radios[0];
+      const fieldset = first.closest('fieldset');
+      const groupLabel =
+        (fieldset?.querySelector(':scope > legend')?.textContent?.trim()) ||
+        first.getAttribute('aria-label') ||
+        (first.getAttribute('aria-labelledby')
+          ? document.getElementById(first.getAttribute('aria-labelledby'))?.textContent?.trim() || ''
+          : '') ||
+        getLabelText(first);
+      fields.push({
+        id: key,
+        type: 'radio',
+        label: groupLabel || '',
+        name: group.name,
+        required: group.radios.some(r => r.required || r.getAttribute('aria-required') === 'true'),
+        options: options.length > 0 ? options : undefined,
+      });
     }
 
     // Custom dropdown elements (Workday, iCIMS, Taleo use div[role="listbox"] instead of <select>)
@@ -133,8 +214,7 @@
       fields.push({
         id: fieldId,
         type: 'custom_select',
-        label: getLabelText(el) || el.getAttribute('aria-label') || el.getAttribute('aria-labelledby')
-          ? document.getElementById(el.getAttribute('aria-labelledby'))?.textContent?.trim() || '' : '',
+        label: getLabelText(el) || el.getAttribute('aria-label') || '',
         name: '',
         required: el.getAttribute('aria-required') === 'true',
         options: options.length > 0 ? options : undefined,
@@ -253,75 +333,230 @@
     return true;
   }
 
-  // ACTION: click_then_type
+  // The container element that owns the dropdown (react-select control, listbox, etc.).
+  // CRUCIAL: a react-select's own <input> carries role="combobox", so a naive
+  // closest() that lists [role="combobox"] returns the INPUT itself — and the
+  // committed value chip (.select__single-value) lives in the parent
+  // `.select__control`, not the input, so success detection would always read
+  // false. Resolve to the control wrapper first; only fall back to a generic
+  // combobox/listbox ancestor for non-react-select widgets (Workday, etc.).
+  function dropdownContainer(el) {
+    const control = el.closest('.select__control, [class*="-control"]');
+    if (control && control !== el) return control;
+    return el.closest('[class*="select__"], [class*="combobox"], [class*="dropdown"], [role="combobox"], [role="listbox"]')
+      || el.parentElement
+      || el;
+  }
+
+  // Currently-rendered, selectable option nodes for THIS dropdown's menu. We
+  // deliberately exclude intl-tel-input's phone-country list (`iti__*`, always in
+  // the DOM) and any element nested in a phone widget, which otherwise hijacks the
+  // match. react-select renders its menu in a portal, so we search document-wide
+  // but only within real menu/listbox containers.
+  function visibleOptionNodes() {
+    const nodes = document.querySelectorAll(
+      '.select__menu .select__option, [class*="menu-list"] [class*="option"], [class*="select__menu"] [role="option"], [role="listbox"]:not([class*="iti__"]) [role="option"], [class*="MenuList"] [role="option"]'
+    );
+    return Array.from(nodes).filter(o =>
+      !o.className?.toString().includes('iti__') &&
+      !o.closest('[class*="iti__"], .iti, [class*="intl-tel"]') &&
+      (o.offsetParent !== null || o.getClientRects().length > 0)
+    );
+  }
+
+  // Full pointer+mouse press. react-select v5 opens/commits on POINTER events, not
+  // a bare `mousedown` — dispatching the whole pointerdown→mousedown→pointerup→
+  // mouseup→click sequence (with button/buttons/composed set) is what actually
+  // drives it. Verified on real Firefox: a lone mousedown never opens the menu;
+  // this sequence does. `composed:true` lets it cross the react-select shadow-ish
+  // event boundary; `view:window` makes React treat it as a genuine interaction.
+  function pointerPress(node) {
+    const seq = [['pointerdown', PointerEvent], ['mousedown', MouseEvent], ['pointerup', PointerEvent], ['mouseup', MouseEvent], ['click', MouseEvent]];
+    for (const [type, Ctor] of seq) {
+      try {
+        node.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, composed: true, button: 0, buttons: 1, isPrimary: true, view: window }));
+      } catch { node.dispatchEvent(new MouseEvent(type === 'pointerdown' ? 'mousedown' : type === 'pointerup' ? 'mouseup' : type, { bubbles: true, cancelable: true, button: 0, view: window })); }
+    }
+  }
+
+  function clickOption(opt) {
+    pointerPress(opt);
+  }
+
+  function sendKey(el, key, keyCode) {
+    el.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, keyCode, which: keyCode, bubbles: true }));
+    el.dispatchEvent(new KeyboardEvent('keyup', { key, code: key, keyCode, which: keyCode, bubbles: true }));
+  }
+
+  function committedValue(container, el) {
+    // Search from the react-select control wrapper (holds the value chip) as well
+    // as the passed container, so detection is robust no matter which element the
+    // caller resolved as the container.
+    const scope = el.closest('.select__control') || container;
+    const chip = scope.querySelector('.select__single-value, .select__multi-value, [class*="singleValue"], [class*="multiValue"]');
+    if (chip && chip.textContent.trim()) return true;
+    if (el.tagName === 'SELECT' && el.value) return true;
+    return false;
+  }
+
+  // Poll `pred` until it returns truthy or `maxMs` elapses. Replaces brittle fixed
+  // sleeps — headless react-select menus render at variable latency.
+  async function waitFor(pred, maxMs = 1500, step = 100) {
+    const start = Date.now();
+    for (;;) {
+      try { const v = pred(); if (v) return v; } catch { /* keep polling */ }
+      if (Date.now() - start >= maxMs) return null;
+      await sleep(step);
+    }
+  }
+
+  // Type into a react-select search box: native setter + 'input' ONLY (a 'change'
+  // event is read as a blur and closes the menu empty).
+  function typeFilter(input, value) {
+    if (!input || input.value === undefined) return;
+    const proto = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+    if (setter) setter.call(input, value); else input.value = value;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  const isDialCode = s => /^\+?\d[\d\s().-]*$/.test((s || '').trim());
+
+  // "Decline to answer" phrasings vary widely per site: "Decline to self-identify",
+  // "I don't wish to answer", "I do not want to answer", "Prefer not to say/disclose".
+  // Match wish AND want (a common miss), plus opt-out/rather-not.
+  const DECLINE_RE = /decline|prefer not|opt out|rather not|do(?:\s+not|n'?t)\s+(?:wish|want)|(?:wish|want)\s+not to/i;
+  // Affirmative acknowledgments: the model often returns "yes" while the option
+  // reads "Confirmed" / "I agree" / "I acknowledge" — treat them as equivalent.
+  const AFFIRM_RE = /^\s*(yes|yeah|i\s+agree|agree|i\s+acknowledge|acknowledge|i\s+understand|understand|i\s+certify|certify|i\s+accept|accept|confirm(?:ed)?|affirm(?:ative)?|true)\b/i;
+
+  // One attempt at opening the dropdown and committing the option for `wanted`.
+  async function attemptDropdown(el, container, searchInput, wanted, isDecline, isAffirm) {
+    const txt = o => (o.textContent || '').trim().toLowerCase();
+    // When the desired value is a word (e.g. "United States"), never accept a bare
+    // dial-code option ("+1") — that's the phone widget leaking in.
+    const wantNumeric = isDialCode(wanted);
+    const matchInMenu = () => {
+      const opts = visibleOptionNodes().filter(o => wantNumeric || !isDialCode(txt(o)));
+      return opts.find(o => txt(o) === wanted)
+        || opts.find(o => txt(o) && (txt(o).includes(wanted) || wanted.includes(txt(o))))
+        || (isDecline ? opts.find(o => DECLINE_RE.test(txt(o))) : null)
+        // Affirmative acknowledgment: match any yes/agree/confirm-family option;
+        // if the widget offers a single option (e.g. only "Confirmed"), take it —
+        // there is no wrong choice on a one-option acknowledgment.
+        || (isAffirm ? (opts.find(o => AFFIRM_RE.test(txt(o))) || (opts.length === 1 ? opts[0] : null)) : null);
+    };
+    const committed = () => committedValue(container, el);
+    const hasMenu = () => visibleOptionNodes().length > 0;
+
+    // Open: full pointer press on the control (react-select v5 opens on the pointer
+    // sequence — a bare mousedown does NOT, verified on real Firefox), then focus +
+    // ArrowDown as a belt-and-suspenders nudge for widgets that open on keyboard.
+    pointerPress(container);
+    searchInput.focus?.();
+    sendKey(searchInput, 'ArrowDown', 40);
+    // Poll for the menu. waitFor returns as soon as options appear, so a fast
+    // dropdown pays ~nothing here; the cap only bounds slow/dead widgets.
+    let opened = await waitFor(hasMenu, 1000, 100);
+    // Retry the open press a couple of times: in headless a react-select that
+    // hasn't finished hydrating can swallow the first pointer sequence, which was
+    // showing up as whole-run 0/N flakes. Costs nothing on the fast path.
+    for (let o = 0; !opened && o < 2; o++) {
+      pointerPress(container);
+      opened = await waitFor(hasMenu, 800, 100);
+    }
+
+    // EEO "decline" / affirmative acknowledgment: the AI's phrasing rarely matches
+    // the site's exact wording ("I do not want to answer", "Confirmed"), so scan the
+    // OPEN menu directly — typing the AI value would filter the real option away.
+    if ((isDecline || isAffirm) && opened) {
+      const opt = await waitFor(matchInMenu, 900, 120);
+      if (opt) { clickOption(opt); if (await waitFor(committed, 800, 100)) return true; }
+    }
+
+    // Type to filter. Some typed-filter widgets only render options AFTER input,
+    // so if the menu never opened on ArrowDown, typing gets one more short poll.
+    typeFilter(searchInput, wanted);
+    if (!opened) {
+      opened = await waitFor(hasMenu, 700, 100);
+      // FAST-BAIL: no menu on open AND none after typing → this widget isn't
+      // responding; don't burn the match/commit waits guessing at a dead field.
+      if (!opened) { sendKey(searchInput, 'Escape', 27); typeFilter(searchInput, ''); return false; }
+    }
+
+    // Click an exact menu match; else keyboard-commit the highlighted option.
+    // (react-select filtering is case-insensitive.)
+    let opt = await waitFor(matchInMenu, 1500, 120);
+    if (!opt) {
+      // Re-type once: on a cold/slow control the first input event can race the
+      // async filtered render, so the target option isn't in the DOM yet when the
+      // first poll expires. Clear + retype, then poll again before giving up. This
+      // was the main cause of typed-filter (Country/Degree) misses on slow runs.
+      typeFilter(searchInput, '');
+      await sleep(120);
+      typeFilter(searchInput, wanted);
+      opt = await waitFor(matchInMenu, 1200, 120);
+    }
+    if (opt) {
+      clickOption(opt);
+    } else {
+      sendKey(searchInput, 'ArrowDown', 40);
+      await sleep(100);
+      sendKey(searchInput, 'Enter', 13);
+    }
+    if (await waitFor(committed, 800, 100)) return true;
+
+    // Reset before the caller retries: close the menu and clear leftover text.
+    sendKey(searchInput, 'Escape', 27);
+    typeFilter(searchInput, '');
+    return false;
+  }
+
+  // Select ONE option in an open-on-click dropdown (react-select, combobox, etc.).
+  // react-select is keyboard-driven and renders at variable latency in headless, so
+  // we poll for the menu/commit and retry the whole sequence. Returns true only on a
+  // committed value chip (search text alone is NOT success — it clears on blur).
+  async function selectDropdownOption(el, value) {
+    const container = dropdownContainer(el);
+    const wanted = value.trim().toLowerCase();
+    const isDecline = DECLINE_RE.test(wanted);
+    const isAffirm = !isDecline && AFFIRM_RE.test(wanted);
+    const searchInput = container.querySelector('input[role="combobox"], input[type="text"], input:not([type])') || el;
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) await sleep(250);
+      if (committedValue(container, el)) return true;
+      if (await attemptDropdown(el, container, searchInput, wanted, isDecline, isAffirm)) return true;
+    }
+    return false;
+  }
+
+  // ACTION: click_then_type. A multi-select value is sent as a pipe-delimited list
+  // ("New York | Remote") so we can select each option without colliding with the
+  // commas inside "City, State" option labels.
   async function executeClickThenType(el, value) {
-    const timeoutMs = 5000;
-    
+    const parts = value.includes('|')
+      ? value.split('|').map(s => s.trim()).filter(Boolean)
+      : [value];
+
+    let anySuccess = false;
     try {
-      await withTimeout((async () => {
-        el.focus();
-        el.click();
-        el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-
-        await sleep(350);
-
-        const searchInput = el.closest('[class*="select"], [class*="dropdown"], [class*="combobox"], [role="combobox"], [role="listbox"]')
-          ?.querySelector('input[type="text"], input:not([type])')
-          || el;
-
-        if (searchInput) {
-          setNativeValue(searchInput, value);
-          searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-          searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: value, bubbles: true }));
-        }
-
-        await sleep(400);
-
-        const valueLower = value.toLowerCase();
-        const optionSelectors = [
-          '[role="option"]',
-          '[class*="option"]',
-          '[class*="menu-item"]',
-          '[class*="listbox"] li',
-          '[class*="dropdown"] li',
-          'li[data-value]',
-          '.select__option',
-          '.react-select__option',
-        ];
-
-        for (const selector of optionSelectors) {
-          const options = document.querySelectorAll(selector);
-          for (const opt of options) {
-            const text = opt.textContent?.trim().toLowerCase() || '';
-            if (text === valueLower || text.includes(valueLower) || valueLower.includes(text)) {
-              opt.click();
-              opt.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-              opt.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-              highlightFilled(el);
-              return true;
-            }
-          }
-        }
-
-        // Last resort: press Enter and hope the first suggestion was selected
-        searchInput?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
-        await sleep(200);
-
-        // Check if value actually changed — if not, this failed
-        const currentValue = (searchInput || el).value || el.textContent?.trim() || '';
-        if (currentValue && currentValue.toLowerCase().includes(valueLower.substring(0, 3))) {
-          highlightFilled(el);
-          return true;
-        }
-
-        highlightFailed(el);
-        return false;
-      })(), timeoutMs, 'Dropdown selection timed out');
+      for (const part of parts) {
+        const ok = await withTimeout(
+          selectDropdownOption(el, part),
+          7000,
+          'Dropdown selection timed out'
+        );
+        anySuccess = anySuccess || ok;
+        if (parts.length > 1) await sleep(250);
+      }
     } catch (err) {
       console.debug('[Recrutas] click_then_type failed:', err.message);
-      highlightFailed(el);
-      return false;
     }
+
+    if (anySuccess) highlightFilled(el);
+    else highlightFailed(el);
+    return anySuccess;
   }
 
   // ACTION: check
@@ -332,6 +567,36 @@
       el.dispatchEvent(new Event('change', { bubbles: true }));
     }
     highlightFilled(el);
+    return true;
+  }
+
+  // ACTION: radio — pick the option in the group whose label/value matches `value`.
+  // `el` is any radio in the group (findElement resolves the group's `name` to the
+  // first one); we search all radios sharing that name.
+  function executeRadio(el, value) {
+    const name = el.getAttribute('name');
+    const radios = name
+      ? Array.from(document.querySelectorAll(`input[type="radio"][name="${CSS.escape(name)}"]`))
+      : [el];
+    const wanted = value.trim().toLowerCase();
+    if (!wanted) return false;
+    const labelOf = r => (getLabelText(r) || r.value || '').trim().toLowerCase();
+
+    let match = radios.find(r => labelOf(r) === wanted);
+    if (!match) {
+      match = radios.find(r => {
+        const t = labelOf(r);
+        return t && (t.includes(wanted) || wanted.includes(t));
+      });
+    }
+    if (!match) return false;
+
+    if (!match.checked) {
+      match.click();
+      match.checked = true;
+      match.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    highlightFilled(match);
     return true;
   }
 
@@ -385,6 +650,11 @@
   async function executeActions(actions, resumeUrl) {
     let filled = 0;
     const failed = [];
+    // Wall-clock backstop for the slow (dropdown) actions. Each one owns its own
+    // retry/timeout, but serially they can still outrun the client/harness window
+    // and cut the banner off mid-fill. Once the budget is spent we fail remaining
+    // dropdowns instantly so the run finishes and reports an HONEST count.
+    const dropdownDeadline = Date.now() + 50000;
 
     for (const action of actions) {
       if (action.action === 'skip') continue;
@@ -397,10 +667,40 @@
       }
 
       let success = false;
+      // A react-select / combobox element must be driven as a dropdown no matter
+      // what action the model emitted. The model frequently returns `type` or
+      // `select` for these (they look like a text input / <select>), which types
+      // free text that react-select discards on blur → the field stays blank. This
+      // is the #1 cause of typed-dropdown (Country, Degree, …) misses.
+      const elIsCombobox =
+        el.getAttribute('role') === 'combobox' ||
+        el.getAttribute('aria-autocomplete') === 'list' ||
+        el.getAttribute('aria-haspopup') === 'listbox' ||
+        !!el.closest('.select__control, [class*="-control"], [class*="select__"]');
+      const isDropdown = action.action === 'click_then_type' || action.action === 'click_option' || elIsCombobox;
 
-      // Try up to 2 times
-      for (let attempt = 0; attempt < 2 && !success; attempt++) {
+      // Dropdown actions retry internally (selectDropdownOption), so the outer
+      // retry only multiplies their cost — run them once. Cheap actions (type /
+      // select / check) keep the 2× retry.
+      const maxAttempts = isDropdown ? 1 : 2;
+
+      for (let attempt = 0; attempt < maxAttempts && !success; attempt++) {
         if (attempt > 0) await sleep(300);
+
+        // Radio groups: whatever action the model emitted (select / radio /
+        // click_then_type), selecting the matching option is the only sane fill.
+        if (el.type === 'radio') {
+          success = executeRadio(el, action.value || '');
+          continue;
+        }
+
+        // Combobox/react-select: route to the dropdown driver regardless of the
+        // model's action, honouring the same time budget as click_then_type.
+        if (elIsCombobox) {
+          if (Date.now() > dropdownDeadline) { success = false; break; }
+          success = await executeClickThenType(el, action.value || '');
+          continue;
+        }
 
         switch (action.action) {
           case 'type':
@@ -410,17 +710,21 @@
             success = executeSelect(el, action.value || '');
             break;
           case 'click_then_type':
-            success = await executeClickThenType(el, action.value || '');
+          case 'click_option':
+            // Custom dropdowns (react-select / role="listbox"): open, then commit
+            // the matching option. Skip fast once the dropdown budget is spent.
+            if (Date.now() > dropdownDeadline) {
+              console.debug(`[Recrutas] Dropdown budget exhausted, skipping: ${action.fieldId}`);
+              success = false;
+            } else {
+              success = await executeClickThenType(el, action.value || '');
+            }
             break;
           case 'check':
             success = executeCheck(el);
             break;
           case 'upload_resume':
             success = await executeUploadResume(el, resumeUrl);
-            break;
-          case 'click_option':
-            // For custom dropdowns (role="listbox") — click the container, then click matching option
-            success = await executeClickThenType(el, action.value || '');
             break;
           default:
             console.debug(`[Recrutas] Unknown action: ${action.action}`);
