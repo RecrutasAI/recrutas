@@ -1013,6 +1013,14 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     fields: Array<{ id: string; label?: string; name?: string; type?: string; options?: string[] }>,
     profileData: Record<string, string>
   ) {
+    // A candidate location is US if it says so explicitly OR ends in a US state
+    // (name or 2-letter code, e.g. "Seattle, WA") — most profiles store "City, ST",
+    // not "United States", so a bare "united states" check misses almost everyone.
+    const US_STATE_CODE = /,\s*(A[KLRZ]|C[AOT]|D[CE]|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|PA|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY])\b/;
+    const US_STATE_NAME = /\b(alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming)\b/i;
+    const isUSLocation = (loc: string) =>
+      /\b(usa|u\.?s\.?a?|united states|america)\b/i.test(loc) || US_STATE_CODE.test(loc) || US_STATE_NAME.test(loc);
+
     const PATTERNS: Record<string, RegExp[]> = {
       firstName: [/first[\s_-]?name/i, /fname/i, /given[\s_-]?name/i],
       lastName: [/last[\s_-]?name/i, /lname/i, /surname/i, /family[\s_-]?name/i],
@@ -1075,7 +1083,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
           // option if present, else the standard phrasing (the option list is
           // usually hidden until the dropdown is opened).
           actions.push({ fieldId: field.id, action: field.type === 'select' ? 'select' : 'click_then_type', value: declineOpt || 'Decline to self-identify' });
-        } else if (/\bcountry\b/i.test(searchText) && /\b(usa|u\.?s\.?a?|united states)\b/i.test(profileData.location || '')) {
+        } else if (/\bcountry\b/i.test(searchText) && isUSLocation(profileData.location || '')) {
           actions.push({ fieldId: field.id, action: customAction, value: 'United States' });
         } else if (/how did you hear|referral source|^source$/i.test(searchText)) {
           actions.push({ fieldId: field.id, action: field.type === 'select' ? 'select' : 'type', value: 'Company website' });
