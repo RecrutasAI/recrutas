@@ -134,3 +134,4 @@ supabase_schema.sql
 # Supabase CLI temporary files (project link metadata)
 supabase/.temp/
 eng.traineddata
+extension/web-ext-artifacts/

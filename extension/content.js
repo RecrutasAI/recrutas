@@ -486,7 +486,17 @@
 
     // Click an exact menu match; else keyboard-commit the highlighted option.
     // (react-select filtering is case-insensitive.)
-    const opt = await waitFor(matchInMenu, 1000, 120);
+    let opt = await waitFor(matchInMenu, 1500, 120);
+    if (!opt) {
+      // Re-type once: on a cold/slow control the first input event can race the
+      // async filtered render, so the target option isn't in the DOM yet when the
+      // first poll expires. Clear + retype, then poll again before giving up. This
+      // was the main cause of typed-filter (Country/Degree) misses on slow runs.
+      typeFilter(searchInput, '');
+      await sleep(120);
+      typeFilter(searchInput, wanted);
+      opt = await waitFor(matchInMenu, 1200, 120);
+    }
     if (opt) {
       clickOption(opt);
     } else {
