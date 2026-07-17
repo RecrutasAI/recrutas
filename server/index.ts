@@ -95,7 +95,20 @@ async function initializeBackgroundServices() {
   }
 }
 
-export async function configureApp() {
+// Memoized so warm serverless invocations reuse the same built app instead of
+// re-registering every route/middleware onto the module-level `app` (which stacked
+// duplicate handlers over a lambda's life) and re-running initializeSupabase's
+// Storage round-trip on every request — the main reason warm latency was ~2s.
+let _appPromise: Promise<typeof app> | null = null;
+
+export function configureApp(): Promise<typeof app> {
+  if (!_appPromise) {
+    _appPromise = buildApp();
+  }
+  return _appPromise;
+}
+
+async function buildApp() {
   // CORS: allow Vercel deployment origins, configured FRONTEND_URL, and localhost for dev
   const allowedOrigins = [
     process.env.FRONTEND_URL,
@@ -219,7 +232,14 @@ export async function configureApp() {
     next();
   });
 
-  await initializeSupabase();
+  // The resumes bucket already exists in prod, so on serverless don't block the
+  // (cold) request on a Storage round-trip — self-heal in the background instead.
+  // Locally we still await so a fresh dev DB provisions the bucket before serving.
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    void initializeSupabase();
+  } else {
+    await initializeSupabase();
+  }
   await registerRoutes(app);
   registerChatRoutes(app);
 
