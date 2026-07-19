@@ -31,7 +31,7 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 30 4 * * * $RUN warm-candidate-matches 10 npx tsx scripts/warm-candidate-matches.ts
 
 # Purge Old Jobs — daily 05:00
-0 5 * * * $RUN purge-old-jobs 5 npx tsx scripts/purge-old-jobs.ts --retainDays=90
+0 5 * * * $RUN purge-old-jobs 5 npx tsx scripts/purge-old-jobs.ts --retainDays=45
 
 # Scrape External Jobs (aggregators) — daily 06:30
 30 6 * * * $RUN scrape-external-jobs 12 npx tsx scripts/scrape-external-jobs.ts --timeout=540000

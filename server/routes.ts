@@ -353,6 +353,31 @@ export async function registerRoutes(app: Express): Promise<Express> {
     }
   }));
 
+  // VPS watchdog: 200 while any cron has reported to pipeline_runs recently,
+  // 503 once the freshest run is older than the threshold (i.e. the VPS cron
+  // box is presumed dead). Polled by an external monitor (cron-job.org) that
+  // emails on failure — the dead-man's switch for the whole cron fleet.
+  // Deliberately minimal + unauthenticated: exposes only overall freshness,
+  // not per-pipeline detail (that's /api/admin/pipeline-health).
+  const WATCHDOG_MAX_AGE_HOURS = 26; // busiest cadence is daily; 26h absorbs schedule jitter
+  app.get('/api/health/pipelines', asyncHandler(async (req, res) => {
+    try {
+      const result: any = await db.execute(sql`SELECT MAX(created_at) AS latest FROM pipeline_runs`);
+      const rows: any[] = Array.isArray(result) ? result : (result?.rows ?? []);
+      const latest = rows[0]?.latest ? new Date(rows[0].latest) : null;
+      const ageHours = latest ? (Date.now() - latest.getTime()) / 3_600_000 : null;
+      const fresh = ageHours !== null && ageHours <= WATCHDOG_MAX_AGE_HOURS;
+      res.status(fresh ? 200 : 503).json({
+        status: fresh ? 'fresh' : 'stale',
+        lastPipelineRunAt: latest?.toISOString() ?? null,
+        ageHours: ageHours !== null ? Math.round(ageHours * 10) / 10 : null,
+        maxAgeHours: WATCHDOG_MAX_AGE_HOURS,
+      });
+    } catch (error) {
+      res.status(503).json({ status: 'error' });
+    }
+  }));
+
   // ML Matching info endpoint
   app.get('/api/ml-matching/status', asyncHandler(async (req, res) => {
     try {
