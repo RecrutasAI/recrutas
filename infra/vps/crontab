@@ -43,4 +43,12 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 0 6 * * 0 $RUN cleanup-errors 5 npx tsx scripts/cleanup-errors.ts
 
 # Supabase DB backup — daily 09:00 (independent logical dump → /opt/recrutas/backups/db)
+# Kept during the post-cutover rollback window: Supabase still holds auth + a
+# fallback copy of the migrated data. Retire once auth also leaves Supabase.
 0 9 * * * $RUN db-backup 30 bash infra/vps/backup-supabase.sh
+
+# Self-hosted VPS DB backup — daily 09:30 (logical dump of the migrated local DB)
+30 9 * * * $RUN vps-db-backup 30 bash infra/vps/backup-vps-db.sh
+
+# VPS DB health check — every 15 min (liveness + disk; heartbeats to pipeline_runs)
+*/15 * * * * $RUN vps-db-health 3 bash infra/vps/healthcheck-db.sh

@@ -40,6 +40,7 @@ export const PIPELINE_MAX_AGE_MIN: Record<string, number> = {
   'retry-failed-parses': 24 * 60 + 180,   // daily
   'warm-candidate-matches': 24 * 60 + 180,// daily
   'cleanup-errors': 7 * 24 * 60 + 24 * 60,// weekly (+1d slack)
+  'vps-db-health': 15 + 30,               // every 15 min — self-hosted DB liveness
 };
 
 export async function recordPipelineRun(input: {
