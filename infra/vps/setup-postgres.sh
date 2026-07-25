@@ -50,7 +50,10 @@ shared_buffers = 256MB
 effective_cache_size = 768MB
 work_mem = 8MB
 maintenance_work_mem = 128MB
-max_connections = 40
+# Vercel serverless opens ~3 conns/instance and scales horizontally; 60 leaves
+# headroom over the localhost cron connections. App idle_timeout recycles fast.
+# (If sustained concurrency grows, front with pgBouncer rather than raising this.)
+max_connections = 60
 # HNSW build/scan tuning for pgvector (matches app's SET LOCAL hnsw.ef_search).
 max_parallel_maintenance_workers = 1
 EOF

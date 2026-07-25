@@ -24,10 +24,15 @@ set -a; # shellcheck disable=SC1091
 source .env; set +a
 
 # Use the direct/session connection (port 5432). pg_dump cannot run through the
-# transaction pooler (6543). POSTGRES_URL_NON_POOLING is the session-mode URL.
-URL="${POSTGRES_URL_NON_POOLING:-${POSTGRES_URL:-}}"
+# transaction pooler (6543).
+#
+# After the DB migration the app's POSTGRES_URL_* point at the self-hosted VPS
+# Postgres, so this backup (which must keep dumping SUPABASE for auth + the
+# rollback data copy) reads a DEDICATED SUPABASE_DIRECT_URL. Falls back to the
+# old vars for pre-migration environments.
+URL="${SUPABASE_DIRECT_URL:-${POSTGRES_URL_NON_POOLING:-${POSTGRES_URL:-}}}"
 if [ -z "$URL" ]; then
-  echo "[db-backup] POSTGRES_URL_NON_POOLING / POSTGRES_URL not set" >&2
+  echo "[db-backup] SUPABASE_DIRECT_URL / POSTGRES_URL_NON_POOLING not set" >&2
   exit 1
 fi
 
