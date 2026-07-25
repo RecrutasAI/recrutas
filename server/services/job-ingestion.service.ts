@@ -11,6 +11,7 @@ import { gt } from 'drizzle-orm/sql/expressions';
 import { sql } from 'drizzle-orm/sql';
 import { normalizeSkills, SKILL_ALIASES } from '../skill-normalizer';
 import { classifyWorkType } from '../lib/work-type';
+import { checkDbCapacity } from '../lib/db-capacity.js';
 
 /** Extract canonical skills from free-form text using the full alias taxonomy. */
 function extractSkillsFromText(text: string): string[] {
@@ -109,6 +110,17 @@ export class JobIngestionService {
   async ingestExternalJobs(jobs: ExternalJobInput[]): Promise<{ inserted: number; duplicates: number; errors: number; skippedNonUS: number; skippedBadUrl: number }> {
     const stats = { inserted: 0, duplicates: 0, errors: 0, skippedNonUS: 0, skippedBadUrl: 0 };
     console.log(`[JobIngestion] Processing ${jobs.length} external jobs...`);
+
+    const capacity = await checkDbCapacity();
+    if (capacity.blocked) {
+      const mb = (n: number) => (n / (1024 * 1024)).toFixed(0);
+      console.error(
+        `[JobIngestion] BLOCKED: DB size ${mb(capacity.sizeBytes)}MB >= soft limit ${mb(capacity.limitBytes)}MB. ` +
+        `Skipping ${jobs.length} jobs to avoid a hard provider quota. Free space (purge/upgrade) or raise DB_SOFT_LIMIT_BYTES.`
+      );
+      stats.errors = jobs.length;
+      return stats;
+    }
 
     const systemUserId = await ensureSystemUserExists();
     const now = new Date();
