@@ -19,9 +19,50 @@ scp .env root@<server>:/opt/recrutas/app/.env   # from the dev machine
 ssh root@<server> 'bash /opt/recrutas/app/infra/vps/setup.sh'  # re-run to install crontab
 ```
 
+## Backups
+
+Three layers, in increasing order of what they survive:
+
+| Job | Time (UTC) | Writes | Survives |
+| --- | --- | --- | --- |
+| `db-backup` (`backup-supabase.sh`) | 09:00 | `/opt/recrutas/backups/db` | Supabase-side data loss |
+| `vps-db-backup` (`backup-vps-db.sh`) | 09:30 | `/opt/recrutas/backups/vps-db` | bad migration / accidental delete |
+| `offsite-backup` (`offsite-backup.sh`) | 10:15 | remote bucket, encrypted | **loss of the VPS itself** |
+
+The first two write to the same disk as the database, so neither survives losing
+the box — that is what the third is for. It is **inert until configured** and
+heartbeats a `warning` in the admin Pipeline Health panel until then.
+
+To turn it on, add to `/opt/recrutas/app/.env`:
+
+```sh
+OFFSITE_RCLONE_REMOTE=r2:recrutas-backups   # any rclone remote
+OFFSITE_GPG_PASSPHRASE=<long random string> # store OUTSIDE this box
+OFFSITE_RETAIN_DAYS=14                      # optional; ~5.4GB at current sizes
+```
+
+and configure the remote once with `rclone config` (Cloudflare R2 = `s3` provider
+`Cloudflare`; 10GB free tier covers this). Dumps are gpg-AES256-encrypted before
+upload — they contain candidate PII. **If the passphrase is only on the VPS, the
+offsite copy is undecryptable in the exact scenario it exists for.**
+
+Restore is documented in the header of `offsite-backup.sh`.
+
+> Once Supabase auth is retired (Better Auth phase 2), drop `--schema=public`
+> from `backup-supabase.sh` — that dump is ~193MB today mostly because it still
+> carries a stale copy of the migrated app data.
+
 ## Operating
 
 - **Deploy app updates:** `ssh root@<server> /opt/recrutas/app/infra/vps/deploy.sh`
+  — ⚠️ this runs `git pull`, which currently **fails on the VPS**: the box has no
+  GitHub credentials and the repo is not anonymously readable. Until that is
+  fixed, ship code with a bundle from the dev machine:
+  ```sh
+  git bundle create /tmp/sync.bundle ^$(ssh root@<server> 'git -C /opt/recrutas/app rev-parse HEAD') main
+  scp /tmp/sync.bundle root@<server>:/tmp/
+  ssh root@<server> 'cd /opt/recrutas/app && git fetch /tmp/sync.bundle main && git reset --hard FETCH_HEAD && crontab infra/vps/crontab'
+  ```
 - **Run a job manually:** `infra/vps/run-cron.sh <job> <timeout-min> npx tsx scripts/<script>.ts`
 - **Tail a job:** `tail -f /opt/recrutas/logs/scrape-ats-jobs.log`
 - **Health:** jobs still write `pipeline_runs` heartbeats, so the admin
