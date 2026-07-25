@@ -50,5 +50,12 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # Self-hosted VPS DB backup — daily 09:30 (logical dump of the migrated local DB)
 30 9 * * * $RUN vps-db-backup 30 bash infra/vps/backup-vps-db.sh
 
+# Offsite backup push — daily 10:15 (after both dumps land; encrypts then uploads)
+# Inert until OFFSITE_RCLONE_REMOTE + OFFSITE_GPG_PASSPHRASE are set in .env;
+# until then it heartbeats a 'warning' so the health panel shows there is no
+# offsite copy. Both dumps live on the DB's own disk, so this is the only thing
+# standing between a VPS loss and total data loss.
+15 10 * * * $RUN offsite-backup 45 bash infra/vps/offsite-backup.sh
+
 # VPS DB health check — every 15 min (liveness + disk; heartbeats to pipeline_runs)
 */15 * * * * $RUN vps-db-health 3 bash infra/vps/healthcheck-db.sh
