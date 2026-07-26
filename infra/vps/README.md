@@ -27,7 +27,13 @@ Three layers, in increasing order of what they survive:
 | --- | --- | --- | --- |
 | `db-backup` (`backup-supabase.sh`) | 09:00 | `/opt/recrutas/backups/db` | Supabase-side data loss |
 | `vps-db-backup` (`backup-vps-db.sh`) | 09:30 | `/opt/recrutas/backups/vps-db` | bad migration / accidental delete |
+| `storage-backup` (`backup-storage.sh`) | 09:45 | `/opt/recrutas/backups/storage` | loss of the résumé bucket |
 | `offsite-backup` (`offsite-backup.sh`) | 10:15 | remote bucket, encrypted | **loss of the VPS itself** |
+
+`storage-backup` exists because the SQL dumps carry the `storage` *schema* —
+object metadata rows — and not one byte of any actual résumé. It downloads the
+whole bucket (~492 objects / 54MB) and verifies the byte total against
+Supabase's own metadata before tarring.
 
 The first two write to the same disk as the database, so neither survives losing
 the box — that is what the third is for. It is **inert until configured** and

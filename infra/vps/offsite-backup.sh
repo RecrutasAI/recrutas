@@ -6,9 +6,12 @@
 # of it. Until now the only offsite copy was the old Supabase project, which is
 # a rollback artefact with a ~2-week shelf life, not a backup target.
 #
-# Ships both dumps, because they hold different irreplaceable things:
+# Ships all three artefacts, because they hold different irreplaceable things:
 #   - vps-db/recrutas-db-*.sql.gz  → public schema (app data, lives on this box)
-#   - db/supabase-*.sql.gz         → auth + storage (user accounts; NOT on this box)
+#   - db/supabase-*.sql.gz         → auth + storage metadata (user accounts)
+#   - storage/resumes-*.tar.gz     → the résumé FILES themselves (see
+#                                    backup-storage.sh; the SQL dumps contain
+#                                    only rows describing them, not the bytes)
 #
 # Transport is rclone, so the destination is your choice — any rclone remote
 # works (Cloudflare R2, Backblaze B2, S3, Hetzner Storage Box). Dumps are
@@ -32,6 +35,7 @@ set -uo pipefail
 APP_DIR="${RECRUTAS_DIR:-/opt/recrutas/app}"
 VPS_DIR="${RECRUTAS_VPS_BACKUP_DIR:-/opt/recrutas/backups/vps-db}"
 SUPA_DIR="${RECRUTAS_BACKUP_DIR:-/opt/recrutas/backups/db}"
+STORAGE_DIR="${RECRUTAS_STORAGE_BACKUP_DIR:-/opt/recrutas/backups/storage}"
 RETAIN_DAYS="${OFFSITE_RETAIN_DAYS:-14}"
 PSQL="${PSQL_BIN:-/usr/lib/postgresql/17/bin/psql}"
 RCLONE="${RCLONE_BIN:-/usr/bin/rclone}"
@@ -125,14 +129,16 @@ push_latest() { # local_dir, glob, remote_subdir
   "$RCLONE" delete "$OFFSITE_RCLONE_REMOTE/$sub/" --min-age "${RETAIN_DAYS}d" 2>/dev/null || true
 }
 
-push_latest "$VPS_DIR"  'recrutas-db-*.sql.gz' db
-push_latest "$SUPA_DIR" 'supabase-*.sql.gz'    auth
+ARTEFACTS=3
+push_latest "$VPS_DIR"     'recrutas-db-*.sql.gz' db
+push_latest "$SUPA_DIR"    'supabase-*.sql.gz'    auth
+push_latest "$STORAGE_DIR" 'resumes-*.tar.gz'     storage
 
 # --- Report ------------------------------------------------------------------
 HUMAN="$(numfmt --to=iec "$TOTAL" 2>/dev/null || echo "${TOTAL}B")"
 if [ "$FAILED" -gt 0 ]; then
-  echo "[offsite-backup] $FAILED of 2 uploads failed (pushed $HUMAN)" >&2
-  heartbeat failed "$FAILED of 2 offsite uploads failed; pushed $HUMAN" "$TOTAL"
+  echo "[offsite-backup] $FAILED of $ARTEFACTS uploads failed (pushed $HUMAN)" >&2
+  heartbeat failed "$FAILED of $ARTEFACTS offsite uploads failed; pushed $HUMAN" "$TOTAL"
   exit 1
 fi
 
