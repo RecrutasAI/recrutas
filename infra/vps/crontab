@@ -50,6 +50,11 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # Self-hosted VPS DB backup — daily 09:30 (logical dump of the migrated local DB)
 30 9 * * * $RUN vps-db-backup 30 bash infra/vps/backup-vps-db.sh
 
+# Supabase Storage objects (résumé FILES) — daily 09:45.
+# The SQL dumps only carry storage METADATA; without this the files themselves
+# have no backup at all and a bucket loss is unrecoverable.
+45 9 * * * $RUN storage-backup 30 bash infra/vps/backup-storage.sh
+
 # Offsite backup push — daily 10:15 (after both dumps land; encrypts then uploads)
 # Inert until OFFSITE_RCLONE_REMOTE + OFFSITE_GPG_PASSPHRASE are set in .env;
 # until then it heartbeats a 'warning' so the health panel shows there is no
