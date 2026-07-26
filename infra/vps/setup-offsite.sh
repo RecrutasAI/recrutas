@@ -97,7 +97,7 @@ if grep -q '^OFFSITE_RCLONE_REMOTE=' "$ENV_FILE"; then
 else
   printf 'OFFSITE_RCLONE_REMOTE=%s\n' "$REMOTE_NAME:$BUCKET" >> "$ENV_FILE"
 fi
-grep -q '^OFFSITE_RETAIN_DAYS=' "$ENV_FILE" || printf 'OFFSITE_RETAIN_DAYS=14\n' >> "$ENV_FILE"
+grep -q '^OFFSITE_RETAIN_DAYS=' "$ENV_FILE" || printf 'OFFSITE_RETAIN_DAYS=7\n' >> "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 
 echo

@@ -49,7 +49,7 @@ To turn it on, add to `/opt/recrutas/app/.env`:
 ```sh
 OFFSITE_RCLONE_REMOTE=r2:recrutas-backups   # any rclone remote
 OFFSITE_GPG_PASSPHRASE=<long random string> # store OUTSIDE this box
-OFFSITE_RETAIN_DAYS=14                      # optional; ~5.4GB at current sizes
+OFFSITE_RETAIN_DAYS=7                       # optional; ~3GB at current sizes
 ```
 
 and configure the remote once with `rclone config` (Cloudflare R2 = `s3` provider

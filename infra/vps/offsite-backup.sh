@@ -22,7 +22,8 @@
 #   OFFSITE_RCLONE_REMOTE   e.g. r2:recrutas-backups   (unset => inert, warns)
 #   OFFSITE_GPG_PASSPHRASE  symmetric key — STORE IT OUTSIDE THIS BOX or the
 #                           offsite copy is undecryptable exactly when needed
-#   OFFSITE_RETAIN_DAYS     default 14 (~5.4GB at current dump sizes)
+#   OFFSITE_RETAIN_DAYS     default 7 (~3GB at current dump sizes, which keeps
+#                           this inside Cloudflare R2's 10GB free tier)
 #
 # Restore:
 #   rclone copy "$OFFSITE_RCLONE_REMOTE/db/recrutas-db-<ts>.sql.gz.gpg" .
@@ -36,7 +37,7 @@ APP_DIR="${RECRUTAS_DIR:-/opt/recrutas/app}"
 VPS_DIR="${RECRUTAS_VPS_BACKUP_DIR:-/opt/recrutas/backups/vps-db}"
 SUPA_DIR="${RECRUTAS_BACKUP_DIR:-/opt/recrutas/backups/db}"
 STORAGE_DIR="${RECRUTAS_STORAGE_BACKUP_DIR:-/opt/recrutas/backups/storage}"
-RETAIN_DAYS="${OFFSITE_RETAIN_DAYS:-14}"
+RETAIN_DAYS="${OFFSITE_RETAIN_DAYS:-7}"
 PSQL="${PSQL_BIN:-/usr/lib/postgresql/17/bin/psql}"
 RCLONE="${RCLONE_BIN:-/usr/bin/rclone}"
 
