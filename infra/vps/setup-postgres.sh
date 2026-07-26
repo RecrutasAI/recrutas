@@ -79,6 +79,27 @@ ssl_cert_file = '${SSL_CRT}'
 ssl_key_file = '${SSL_KEY}'
 EOF
 
+echo "==> WAL archiving for point-in-time recovery"
+# Without this, recovery granularity is the nightly dump: corruption at 09:29
+# loses everything back to the previous morning. Pairs with backup-basebackup.sh
+# — WAL can only be replayed onto a physical base backup, never onto a pg_dump.
+# NOTE: archive_mode requires a RESTART (not a reload) to take effect.
+WAL_ARCHIVE="${WAL_ARCHIVE_DIR:-/opt/recrutas/backups/wal}"
+mkdir -p "$WAL_ARCHIVE"
+chown postgres:postgres "$WAL_ARCHIVE"
+cat > "${CONF_D}/35-recrutas-archive.conf" <<EOF
+archive_mode = on
+archive_command = '${RECRUTAS_DIR:-/opt/recrutas/app}/infra/vps/archive-wal.sh %p %f'
+# Bounds the worst-case RPO during IDLE periods by forcing a segment switch.
+# Kept at 1h, not minutes: each forced switch archives a full 16MB segment, so
+# 5min would burn ~4.6GB/day of a 38GB disk. Under real cron churn segments fill
+# and rotate far more often than this anyway, so the effective RPO is minutes.
+archive_timeout = 3600
+# Compress full-page images inside the WAL itself — less WAL at the source,
+# which is the cheapest possible win on a small disk.
+wal_compression = on
+EOF
+
 echo "==> Listen addresses (localhost only unless EXPOSE_REMOTE=1)"
 if [ "$EXPOSE_REMOTE" = "1" ]; then
   echo "listen_addresses = '*'" > "${CONF_D}/40-recrutas-listen.conf"
