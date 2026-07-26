@@ -50,6 +50,11 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # Self-hosted VPS DB backup — daily 09:30 (logical dump of the migrated local DB)
 30 9 * * * $RUN vps-db-backup 30 bash infra/vps/backup-vps-db.sh
 
+# Restore verification — weekly, Sunday 11:00 (after the offsite push).
+# Proves the nightly dump actually restores. A backup that has never been
+# restored is a hypothesis; this is the only job that turns it into a fact.
+0 11 * * 0 $RUN verify-restore 60 bash infra/vps/verify-restore.sh
+
 # Physical base backup — weekly, Sunday 08:00. The other half of PITR: WAL
 # segments can only be replayed onto a PHYSICAL base backup, never onto a
 # pg_dump. Also prunes archived WAL older than the oldest base backup kept.
