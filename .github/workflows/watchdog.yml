@@ -43,7 +43,7 @@ jobs:
         # the box-death signal, and the one users actually feel.
         run: |
           code=$(curl -sS -o /tmp/stats.json -w '%{http_code}' --max-time 30 \
-            https://www.recrutas.ai/api/platform/stats || echo 000)
+            https://www.recrutas.ai/api/platform/stats) || code=000
           echo "http=$code"; cat /tmp/stats.json || true; echo
           if [ "$code" != "200" ]; then
             echo "::error::App/DB check failed (http=$code) — Vercel down or VPS Postgres unreachable"
@@ -57,7 +57,7 @@ jobs:
         if: always()
         run: |
           code=$(curl -sS -o /tmp/pipe.json -w '%{http_code}' --max-time 30 \
-            https://www.recrutas.ai/api/health/pipelines || echo 000)
+            https://www.recrutas.ai/api/health/pipelines) || code=000
           echo "http=$code"; cat /tmp/pipe.json || true; echo
           if [ "$code" != "200" ]; then
             echo "::error::Pipeline freshness check failed (http=$code) — VPS crons presumed dead"
