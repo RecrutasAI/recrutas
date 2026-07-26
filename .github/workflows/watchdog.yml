@@ -1,0 +1,65 @@
+name: Watchdog
+
+# Off-box dead-man's switch for the Hetzner VPS.
+#
+# Every alert built into the VPS runs ON the VPS: run-cron.sh emails through
+# alert.sh when a job fails, healthcheck-db.sh heartbeats every 15min. None of
+# that can tell you the box is DEAD — a dead box sends nothing, and silence is
+# indistinguishable from healthy. This runs somewhere else on purpose.
+#
+# GitHub Actions rather than a monitoring vendor: it is already here, free, and
+# independent of both Hetzner and Vercel. On failure GitHub emails the repo
+# owner, which is the alerting channel.
+#
+# Cost: private-repo Actions minutes are billed per run rounded UP to 1 minute,
+# so hourly is ~720 min/month against the 2000 free — leaving room for CI.
+# Every 15min would be 2880 and blow the budget.
+#
+# Caveat worth knowing: GitHub delays scheduled workflows under load and
+# disables them after 60 days of repo inactivity. This is a good free backstop,
+# not a hard SLA. If detection latency ever needs to be minutes, put
+# cron-job.org or Healthchecks.io in front of the same endpoints.
+
+on:
+  schedule:
+    # Hourly. NOTE: unlike the other workflows in this repo, this schedule is
+    # deliberately live — it does not duplicate anything in the VPS crontab,
+    # and by design it must not run on the machine it is watching.
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: watchdog
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: App + database reachable
+        # /api/platform/stats queries the VPS Postgres, so this failing means
+        # either Vercel is down or the app can no longer reach the database —
+        # the box-death signal, and the one users actually feel.
+        run: |
+          code=$(curl -sS -o /tmp/stats.json -w '%{http_code}' --max-time 30 \
+            https://www.recrutas.ai/api/platform/stats || echo 000)
+          echo "http=$code"; cat /tmp/stats.json || true; echo
+          if [ "$code" != "200" ]; then
+            echo "::error::App/DB check failed (http=$code) — Vercel down or VPS Postgres unreachable"
+            exit 1
+          fi
+
+      - name: Cron fleet alive
+        # 503 once the freshest pipeline_runs heartbeat is older than 26h, i.e.
+        # the VPS cron fleet has stopped. Runs even if the previous step failed
+        # so a single run reports both facts rather than hiding the second.
+        if: always()
+        run: |
+          code=$(curl -sS -o /tmp/pipe.json -w '%{http_code}' --max-time 30 \
+            https://www.recrutas.ai/api/health/pipelines || echo 000)
+          echo "http=$code"; cat /tmp/pipe.json || true; echo
+          if [ "$code" != "200" ]; then
+            echo "::error::Pipeline freshness check failed (http=$code) — VPS crons presumed dead"
+            exit 1
+          fi
