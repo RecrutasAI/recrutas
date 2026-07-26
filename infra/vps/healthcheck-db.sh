@@ -40,6 +40,33 @@ if [ "$DISK_PCT" -ge "$DISK_WARN_PCT" ]; then
   echo "[vps-db-health] $MSG" >&2
 fi
 
+# 2b. WAL archiver. If archive_command starts failing, Postgres refuses to
+# recycle WAL and pg_wal grows until the disk is full and the database stops —
+# so an unnoticed archiver failure turns PITR into an outage. Alert on a recent
+# failure or on pg_wal growing past a sane bound.
+ARCH="$("$PSQL" "$URL" -tAc "
+  SELECT COALESCE(failed_count,0) || ' ' ||
+         COALESCE(EXTRACT(EPOCH FROM (now() - last_failed_time))::bigint, 999999)
+  FROM pg_stat_archiver" 2>/dev/null)"
+ARCH_FAILED="$(echo "$ARCH" | awk '{print $1+0}')"
+ARCH_AGE="$(echo "$ARCH" | awk '{print $2+0}')"
+WAL_MB="$(du -sm /var/lib/postgresql/17/main/pg_wal 2>/dev/null | cut -f1)"
+WAL_MB="${WAL_MB:-0}"
+WAL_MAX_MB="${WAL_MAX_MB:-4096}"
+
+# A failure within the last hour is live, not historical.
+if [ "$ARCH_FAILED" -gt 0 ] && [ "$ARCH_AGE" -lt 3600 ]; then
+  STATUS=warning
+  MSG="WAL ARCHIVER FAILING: ${ARCH_FAILED} failures, last ${ARCH_AGE}s ago (pg_wal=${WAL_MB}MB, db=${DB_SIZE})"
+  echo "[vps-db-health] $MSG" >&2
+elif [ "$WAL_MB" -ge "$WAL_MAX_MB" ]; then
+  STATUS=warning
+  MSG="pg_wal BACKING UP: ${WAL_MB}MB (limit ${WAL_MAX_MB}MB) — archiving may be stuck (db=${DB_SIZE})"
+  echo "[vps-db-health] $MSG" >&2
+else
+  MSG="$MSG wal=${WAL_MB}MB"
+fi
+
 # 3. Heartbeat into pipeline_runs (best-effort; never fail the check on a write error)
 "$PSQL" "$URL" -v ON_ERROR_STOP=0 -q >/dev/null 2>&1 <<SQL || true
 INSERT INTO pipeline_runs (pipeline, status, started_at, finished_at, items_processed, message, stats)
