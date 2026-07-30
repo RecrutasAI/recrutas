@@ -135,6 +135,31 @@ async function main() {
     `got atsType=${r.atsType} inconclusive=${r.inconclusive}`
   );
 
+  // ── 6. A persistently blocked provider stops blocking every verdict ────────
+  // Workable 429s even for sequential requests on known-good slugs (it blocks us
+  // at the account/IP level). If its coverage stays mandatory, EVERY company is
+  // inconclusive forever and the backlog never drains. After it trips repeatedly
+  // we must be able to reach a verdict on the remaining providers.
+  // Runs last: degraded state is per-run and intentionally not reset here.
+  await clearCircuits();
+  handler = (u) => (u.includes('workable') ? { status: 429 } : { status: 404 });
+
+  let sawInconclusiveEarly = false;
+  let reachedVerdictAfterDegrade = false;
+  for (let i = 0; i < 8; i++) {
+    // Expire only the circuit, keeping the 429 counter hot — this reproduces the
+    // real pattern where the 60s pause lapses and the provider instantly re-trips.
+    await redis.set('ats-probe:circuit-pause-until:workable', '0', 1);
+    const rr = await probeCompany(`blockedprovider co ${i}`);
+    if (rr.inconclusive) sawInconclusiveEarly = true;
+    else if (i > 0) reachedVerdictAfterDegrade = true;
+  }
+  check(
+    'persistently blocked provider stops forcing inconclusive',
+    sawInconclusiveEarly && reachedVerdictAfterDegrade,
+    `inconclusive_seen=${sawInconclusiveEarly} verdict_after_degrade=${reachedVerdictAfterDegrade}`
+  );
+
   console.log('\n' + results.join('\n'));
   const failed = results.filter(x => x.startsWith('FAIL')).length;
   console.log(`\n${results.length - failed}/${results.length} passed`);

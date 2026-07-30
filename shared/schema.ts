@@ -972,6 +972,8 @@ export const discoveredCompanies = pgTable("discovered_companies", {
   status: varchar("status", { length: 50 }).default("pending"),
   createdAt: timestamp("createdAt").defaultNow(),
   updatedAt: timestamp("updatedAt").defaultNow(),
+  /** When the ATS probe last attempted this company. NULL = never probed. */
+  lastProbedAt: timestamp("lastProbedAt"),
 }, (table: any) => {
   return {
     idx_discovered_status: index("idx_discovered_status").on(table.status),

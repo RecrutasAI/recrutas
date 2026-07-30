@@ -98,6 +98,46 @@ async function record429(provider: string): Promise<void> {
     const pauseUntil = Date.now() + CIRCUIT_BREAKER_PAUSE_MS;
     await redis.set(`${REDIS_CIRCUIT_KEY}:${provider}`, String(pauseUntil), 65);
     console.warn(`[AtsProbe] Circuit breaker tripped for ${provider} — pausing it for 60s`);
+    noteProviderTrip(provider);
+  }
+}
+
+// ── Persistently blocked providers ────────────────────────────────────────────
+//
+// A provider that trips its breaker over and over inside one run isn't having a
+// blip — it is refusing us outright. Measured on the cron box: Workable returns
+// 429 even for sequential requests 2s apart against known-good slugs, so it is
+// blocked at the account/IP level and no amount of pacing recovers it.
+//
+// Requiring coverage from such a provider is corrosive: every company comes back
+// `inconclusive` and stays pending forever, so genuine no-ATS companies never
+// drain and the backlog stops moving. Once a provider is judged degraded we stop
+// counting it toward coverage, and a company can reach a verdict on the rest.
+//
+// This is deliberately scoped to the low-yield failure case: Workable and
+// Recruitee together account for ~99 of ~4,400 jobs ingested per week, the two
+// smallest of seven providers. Anything we misjudge is recoverable by re-probing
+// the rejected pool (scripts/reprobe-rejected-companies.ts).
+
+const DEGRADED_TRIP_THRESHOLD = 3;
+
+const runTripCounts = new Map<string, number>();
+const degradedProviders = new Set<string>();
+
+function resetRunProviderHealth(): void {
+  runTripCounts.clear();
+  degradedProviders.clear();
+}
+
+function noteProviderTrip(provider: string): void {
+  const trips = (runTripCounts.get(provider) ?? 0) + 1;
+  runTripCounts.set(provider, trips);
+  if (trips >= DEGRADED_TRIP_THRESHOLD && !degradedProviders.has(provider)) {
+    degradedProviders.add(provider);
+    console.warn(
+      `[AtsProbe] ${provider} tripped ${trips}x this run — treating it as blocked ` +
+      `and no longer requiring its coverage to reach a verdict`
+    );
   }
 }
 
@@ -429,8 +469,11 @@ export async function probeCompany(normalizedName: string): Promise<ProbeResult>
     const jsonLd = await probeJsonLd(normalizedName);
     if (jsonLd) return jsonLd;
 
-    if (unchecked.size > 0) {
-      console.warn(`[AtsProbe] ${normalizedName}: inconclusive (unchecked: ${[...unchecked].join(', ')})`);
+    // Providers we've judged blocked for this whole run don't count as missing
+    // coverage — otherwise nothing ever reaches a verdict while they're down.
+    const blocking = [...unchecked].filter(p => !degradedProviders.has(p));
+    if (blocking.length > 0) {
+      console.warn(`[AtsProbe] ${normalizedName}: inconclusive (unchecked: ${blocking.join(', ')})`);
       return { normalizedName, atsType: null, atsId: null, careerPageUrl: null, inconclusive: true };
     }
     return { normalizedName, atsType: null, atsId: null, careerPageUrl: null };
@@ -451,18 +494,28 @@ export async function probePendingCompanies(limit: number = 10): Promise<ProbeRe
   // Prioritize higher-yield sources: manual seeds > Apollo channels > job_mining.
   // This keeps the 361+ queued Apollo seeds from getting buried behind the
   // ~14% structural-yield job_mining backlog (see project_aggregator_to_ats_funnel).
+  // Ordering, in priority order:
+  //   1. never probed (lastProbedAt IS NULL) — includes fresh discoveries
+  //   2. least recently probed — so a company that came back inconclusive sinks
+  //      to the back instead of re-sorting to the front of every nightly run
+  //   3. higher-yield sources first: manual seeds > Apollo channels > job_mining
+  //      (keeps queued Apollo seeds from getting buried behind the ~14%
+  //      structural-yield job_mining backlog — see project_aggregator_to_ats_funnel)
   const pending = await db
     .select({ id: discoveredCompanies.id, normalizedName: discoveredCompanies.normalizedName })
     .from(discoveredCompanies)
     .where(
       eq(discoveredCompanies.status, 'pending')
     )
-    .orderBy(sql`CASE
-      WHEN ${discoveredCompanies.discoverySource} = 'seed' THEN 0
-      WHEN ${discoveredCompanies.discoverySource} LIKE 'apollo:%' THEN 1
-      WHEN ${discoveredCompanies.discoverySource} = 'job_mining' THEN 2
-      ELSE 3
-    END, ${discoveredCompanies.id}`)
+    .orderBy(sql`
+      (${discoveredCompanies.lastProbedAt} IS NOT NULL),
+      ${discoveredCompanies.lastProbedAt} ASC,
+      CASE
+        WHEN ${discoveredCompanies.discoverySource} = 'seed' THEN 0
+        WHEN ${discoveredCompanies.discoverySource} LIKE 'apollo:%' THEN 1
+        WHEN ${discoveredCompanies.discoverySource} = 'job_mining' THEN 2
+        ELSE 3
+      END, ${discoveredCompanies.id}`)
     .limit(limit);
 
   if (pending.length === 0) {
@@ -471,6 +524,7 @@ export async function probePendingCompanies(limit: number = 10): Promise<ProbeRe
   }
 
   console.log(`[AtsProbe] Probing ${pending.length} companies...`);
+  resetRunProviderHealth();
   const results: ProbeResult[] = [];
 
   // Process in batches of MAX_CONCURRENT

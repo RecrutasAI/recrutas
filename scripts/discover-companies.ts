@@ -48,11 +48,17 @@ async function main(): Promise<PipelineSummary> {
     let approved = 0;
     let rejected = 0;
     let inconclusive = 0;
+    const probedAt = new Date();
     for (const result of results) {
       if (result.inconclusive) {
         // Rate limited / provider paused — we never actually determined whether
         // this company has an ATS. Leave it `pending` so a later run retries it;
         // rejecting here would permanently drop a company we never checked.
+        // Stamping lastProbedAt is what keeps it from re-sorting to the front of
+        // the very next run and starving every company behind it.
+        await db.update(dcTable)
+          .set({ lastProbedAt: probedAt })
+          .where(eq(dcTable.normalizedName, result.normalizedName));
         inconclusive++;
         continue;
       }
@@ -63,13 +69,14 @@ async function main(): Promise<PipelineSummary> {
             atsId: result.atsId,
             careerPageUrl: result.careerPageUrl ?? undefined,
             status: 'approved',
-            updatedAt: new Date(),
+            updatedAt: probedAt,
+            lastProbedAt: probedAt,
           })
           .where(eq(dcTable.normalizedName, result.normalizedName));
         approved++;
       } else {
         await db.update(dcTable)
-          .set({ status: 'rejected', updatedAt: new Date() })
+          .set({ status: 'rejected', updatedAt: probedAt, lastProbedAt: probedAt })
           .where(eq(dcTable.normalizedName, result.normalizedName));
         rejected++;
       }
