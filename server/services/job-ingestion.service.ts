@@ -125,6 +125,22 @@ function describeDbError(error: unknown): string {
   return (err?.message ?? String(error)).slice(0, 200);
 }
 
+/**
+ * Coerce an aggregator salary to the integer column salary_min/salary_max.
+ *
+ * Aggregators report hourly rates as decimals ("15.25"), which Postgres rejects
+ * outright: `22P02 invalid input syntax for type integer`. Because inserts are
+ * chunked and all-or-nothing, one such row used to fail its entire 500-row
+ * chunk — this is the actual source of the ~395 lost jobs per aggregator run.
+ * Rounding keeps the row; the cents are noise at this precision anyway.
+ */
+function toSalaryInt(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const n = typeof value === 'number' ? value : Number(String(value).replace(/[$,\s]/g, ''));
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n);
+}
+
 /** Build one job_postings row. Shared by the bulk path and the salvage path. */
 function buildJobRow(job: any, systemUserId: string, now: Date, expiresAt: Date | null) {
   return {
@@ -145,8 +161,8 @@ function buildJobRow(job: any, systemUserId: string, now: Date, expiresAt: Date 
       title: job.title,
       description: job.description,
     }),
-    salaryMin: job.salaryMin ?? null,
-    salaryMax: job.salaryMax ?? null,
+    salaryMin: toSalaryInt(job.salaryMin),
+    salaryMax: toSalaryInt(job.salaryMax),
     source: job.source ?? 'unknown',
     externalId: job.effectiveExternalId,
     externalUrl: job.externalUrl ?? null,
