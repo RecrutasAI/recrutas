@@ -105,6 +105,39 @@ async function record429(provider: string): Promise<void> {
 /** Guard every provider call: skip fast if that provider is paused. */
 async function guardProvider(provider: string): Promise<void> {
   if (await isCircuitOpen(provider)) throw new RateLimitedError(provider);
+  await spaceOutRequestTo(provider);
+}
+
+// ── Per-provider pacing ───────────────────────────────────────────────────────
+//
+// MAX_CONCURRENT companies each walk the provider list, so without pacing we
+// point ~10 simultaneous requests at a single host and trip its rate limiter
+// within seconds (measured: Workable and Recruitee both do this, while the same
+// requests issued sequentially never 429 at all). Spacing requests per provider
+// keeps every host under its limit without slowing the sweep much, since the
+// seven providers are paced independently.
+
+const PROVIDER_MIN_INTERVAL_MS: Record<string, number> = {
+  greenhouse: 60,
+  lever: 60,
+  ashby: 60,
+  workable: 250,      // trips fastest in practice
+  recruitee: 250,     // ditto
+  smartrecruiters: 80,
+  breezy: 100,
+};
+const DEFAULT_MIN_INTERVAL_MS = 100;
+
+const providerNextFreeAt = new Map<string, number>();
+
+/** Resolves when it is this provider's turn, serialising calls per provider. */
+async function spaceOutRequestTo(provider: string): Promise<void> {
+  const gap = PROVIDER_MIN_INTERVAL_MS[provider] ?? DEFAULT_MIN_INTERVAL_MS;
+  const now = Date.now();
+  const earliest = Math.max(now, providerNextFreeAt.get(provider) ?? 0);
+  providerNextFreeAt.set(provider, earliest + gap);
+  const waitMs = earliest - now;
+  if (waitMs > 0) await delay(waitMs);
 }
 
 // ── Concurrency semaphore ─────────────────────────────────────────────────────
