@@ -99,14 +99,39 @@ async function main() {
     `got atsType=${r.atsType} inconclusive=${r.inconclusive}`
   );
 
-  // ── 4. Healthy discovery still works with no rate limiting at all ──────────
+  // ── 4. Greenhouse detection uses the API host ──────────────────────────────
+  // boards.greenhouse.io 301s for every slug (real or nonsense) and then hits
+  // bot protection, so it can never yield a positive. Only boards-api answers
+  // truthfully. Serving 200 ONLY from the HTML host must not count as a match.
   await clearCircuits();
-  handler = (u) =>
-    u.includes('boards.greenhouse.io') ? { status: 200 } : { status: 404 };
+  const greenhouseHostsHit: string[] = [];
+  handler = (u) => {
+    if (u.includes('greenhouse')) greenhouseHostsHit.push(u);
+    if (u.includes('boards-api.greenhouse.io')) {
+      return { status: 200, body: { jobs: [], meta: { total: 0 } } };
+    }
+    if (u.includes('boards.greenhouse.io')) return { status: 200 }; // decoy
+    return { status: 404 };
+  };
   r = await probeCompany('greenhouseco');
   check(
-    'normal greenhouse discovery unaffected',
-    r.atsType === 'greenhouse' && !r.inconclusive,
+    'greenhouse detected via boards-api (not the dead HTML host)',
+    r.atsType === 'greenhouse' &&
+      greenhouseHostsHit.some(u => u.includes('boards-api.greenhouse.io')) &&
+      !greenhouseHostsHit.some(u => /\/\/boards\.greenhouse\.io/.test(u)),
+    `atsType=${r.atsType} hosts=${JSON.stringify(greenhouseHostsHit.slice(0, 3))}`
+  );
+
+  // ── 5. An empty-but-real greenhouse board still counts as a real board ─────
+  await clearCircuits();
+  handler = (u) =>
+    u.includes('boards-api.greenhouse.io')
+      ? { status: 404 }   // unknown board
+      : { status: 404 };
+  r = await probeCompany('nosuchboard');
+  check(
+    'unknown greenhouse board is not a match',
+    r.atsType === null && !r.inconclusive,
     `got atsType=${r.atsType} inconclusive=${r.inconclusive}`
   );
 

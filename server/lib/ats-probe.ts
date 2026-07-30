@@ -23,7 +23,6 @@ import { resolveHomepage, analyzeCareersPage } from './adzuna-link-resolver.js';
 
 const MAX_CONCURRENT = 10;
 const BATCH_DELAY_MS = 200;
-const PROBE_TIMEOUT_MS = 8000; // HEAD requests
 const JSON_PROBE_TIMEOUT_MS = 10000; // JSON API requests (Lever/Ashby can be slow)
 const CIRCUIT_BREAKER_THRESHOLD = 10;
 const CIRCUIT_BREAKER_PAUSE_MS = 60_000;
@@ -128,26 +127,33 @@ function delay(ms: number): Promise<void> {
 
 // ── Individual ATS probes ─────────────────────────────────────────────────────
 
-async function probeWithTimeout(url: string): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
-  try {
-    return await fetch(url, {
-      method: 'HEAD',
-      headers: { 'User-Agent': 'RecrutasJobAggregator/1.0' },
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 async function probeGreenhouse(slug: string): Promise<boolean> {
   try {
     await guardProvider('greenhouse');
-    const res = await probeWithTimeout(`https://boards.greenhouse.io/${slug}`);
+    // Must use the API host, not boards.greenhouse.io. The HTML host now 301s
+    // for EVERY slug (verified against known-good boards and a nonsense slug
+    // alike), and following that redirect lands on bot protection — measured
+    // 403/406 on every single request and not one 200, so this probe could
+    // never return a positive. Greenhouse is our highest-yield source, so this
+    // silently starved company discovery of its biggest contributor.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), JSON_PROBE_TIMEOUT_MS);
+    const res = await fetch(`https://boards-api.greenhouse.io/v1/boards/${slug}/jobs`, {
+      headers: { 'User-Agent': 'RecrutasJobAggregator/1.0' },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
     if (res.status === 429) { await record429('greenhouse'); throw new RateLimitedError('greenhouse'); }
-    if (res.ok) { await recordSuccess('greenhouse'); return true; }
+    if (res.status === 404) return false; // unknown board
+    if (res.ok) {
+      const json = await res.json().catch(() => null);
+      // Valid boards return { jobs: [...], meta: {...} } — including {"jobs":[]}
+      // for a real board with no live postings, which is still a real board.
+      if (json && typeof json === 'object' && Array.isArray((json as { jobs?: unknown }).jobs)) {
+        await recordSuccess('greenhouse');
+        return true;
+      }
+    }
     return false;
   } catch (e) {
     if (e instanceof RateLimitedError) throw e;
