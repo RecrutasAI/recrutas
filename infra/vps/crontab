@@ -42,6 +42,13 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # Cleanup Errors — weekly, Sunday 06:00
 0 6 * * 0 $RUN cleanup-errors 5 npx tsx scripts/cleanup-errors.ts
 
+# Job Supply Watchdog — daily 08:00, after the night's ingestion has landed
+# (discover 02:00, tiers 06:00, aggregators 06:30). Watches OUTCOMES, not
+# per-pipeline health: a ~5x supply collapse ran for weeks while every cron
+# reported ok/warning, because the scrapers were healthy and simply had nothing
+# new to find. Fails loudly — that is what turns into an alert email.
+0 8 * * * $RUN supply-health 5 npx tsx scripts/check-supply-health.ts --minNewJobs=150 --minApproved=1
+
 # Supabase DB backup — daily 09:00 (independent logical dump → /opt/recrutas/backups/db)
 # Kept during the post-cutover rollback window: Supabase still holds auth + a
 # fallback copy of the migrated data. Retire once auth also leaves Supabase.

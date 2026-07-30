@@ -54,13 +54,23 @@ async function main() {
       )`
     : sql`status = 'rejected'`;
 
-  const res = await db.execute(sql`
+  await db.execute(sql`
     UPDATE discovered_companies
        SET status = 'pending', "lastProbedAt" = NULL, "updatedAt" = now()
      WHERE ${where}
   `);
 
-  console.log(`[ReprobeRejected] Re-queued ${(res as any).rowCount ?? 'unknown'} companies as pending`);
+  // Count rather than trust driver rowCount — postgres-js and node-postgres
+  // disagree on where it lives, and this run reported "unknown" the first time.
+  const [{ count: stillRejected }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(discoveredCompanies)
+    .where(eq(discoveredCompanies.status, 'rejected'));
+
+  console.log(
+    `[ReprobeRejected] Re-queued ${rejectedCount - stillRejected} companies as pending ` +
+    `(${stillRejected} still rejected)`
+  );
   process.exit(0);
 }
 
