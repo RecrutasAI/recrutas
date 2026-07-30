@@ -106,6 +106,61 @@ export function isJobPostUrl(url: string | null | undefined): boolean {
   return false;
 }
 
+/**
+ * Unwrap the real Postgres cause from a Drizzle error.
+ *
+ * Drizzle's `message` is just "Failed query: insert into ..." with every bind
+ * parameter inlined — for a 500-row chunk that is a ~250KB string with the
+ * actual reason nowhere in it. Logging only `.message` is why 395 failed rows
+ * per aggregator run sat undiagnosed: the logs recorded the SQL and dropped
+ * the error. The driver puts the real detail on `.cause`.
+ */
+function describeDbError(error: unknown): string {
+  const err = error as { cause?: { message?: string; code?: string; detail?: string }; message?: string };
+  const cause = err?.cause;
+  if (cause?.message || cause?.code) {
+    const bits = [cause.code, cause.message, cause.detail].filter(Boolean);
+    return bits.join(' | ').slice(0, 300);
+  }
+  return (err?.message ?? String(error)).slice(0, 200);
+}
+
+/** Build one job_postings row. Shared by the bulk path and the salvage path. */
+function buildJobRow(job: any, systemUserId: string, now: Date, expiresAt: Date | null) {
+  return {
+    talentOwnerId: systemUserId,
+    title: job.title ?? 'Untitled Position',
+    company: job.company ?? 'Unknown Company',
+    location: job.location ?? null,
+    description: job.description ?? 'No description provided',
+    requirements: job.requirements ?? null,
+    skills: normalizeSkills(
+      job.skills?.length > 0 ? job.skills : extractSkillsFromText(job.description)
+    ),
+    // The upstream aggregators' workType is unreliable (loose description
+    // scans, hardcoded 'hybrid' defaults). Re-derive it from the canonical
+    // location signal so the feed filter is exact.
+    workType: classifyWorkType({
+      location: job.location,
+      title: job.title,
+      description: job.description,
+    }),
+    salaryMin: job.salaryMin ?? null,
+    salaryMax: job.salaryMax ?? null,
+    source: job.source ?? 'unknown',
+    externalId: job.effectiveExternalId,
+    externalUrl: job.externalUrl ?? null,
+    careerPageUrl: job.careerPageUrl ?? null,
+    trustScore: getSourceTrustScore(job.source),
+    livenessStatus: 'unknown' as const,
+    lastLivenessCheck: now,
+    expiresAt,
+    status: 'active' as const,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 export class JobIngestionService {
   async ingestExternalJobs(jobs: ExternalJobInput[]): Promise<{ inserted: number; duplicates: number; errors: number; skippedNonUS: number; skippedBadUrl: number }> {
     const stats = { inserted: 0, duplicates: 0, errors: 0, skippedNonUS: 0, skippedBadUrl: 0 };
@@ -260,49 +315,64 @@ export class JobIngestionService {
       if (toInsert.length > 0) {
         try {
           await db.insert(jobPostings).values(
-            toInsert.map(job => ({
-              talentOwnerId: systemUserId,
-              title: job.title ?? 'Untitled Position',
-              company: job.company ?? 'Unknown Company',
-              location: job.location ?? null,
-              description: job.description ?? 'No description provided',
-              requirements: job.requirements ?? null,
-              skills: normalizeSkills(
-                job.skills?.length > 0 ? job.skills : extractSkillsFromText(job.description)
-              ),
-              // The upstream aggregators' workType is unreliable (loose
-              // description scans, hardcoded 'hybrid' defaults). Re-derive it
-              // from the canonical location signal so the feed filter is exact.
-              workType: classifyWorkType({
-                location: job.location,
-                title: job.title,
-                description: job.description,
-              }),
-              salaryMin: job.salaryMin ?? null,
-              salaryMax: job.salaryMax ?? null,
-              source: job.source ?? 'unknown',
-              externalId: job.effectiveExternalId,
-              externalUrl: job.externalUrl ?? null,
-              careerPageUrl: job.careerPageUrl ?? null,
-              trustScore: getSourceTrustScore(job.source),
-              livenessStatus: 'unknown' as const,
-              lastLivenessCheck: now,
-              expiresAt,
-              status: 'active' as const,
-              createdAt: now,
-              updatedAt: now,
-            }))
+            toInsert.map(job => buildJobRow(job, systemUserId, now, expiresAt))
           ).onConflictDoNothing();
           stats.inserted += toInsert.length;
         } catch (error) {
-          console.error(`[JobIngestion] Bulk insert error for chunk ${i}–${i + CHUNK}:`, (error as Error).message);
-          stats.errors += toInsert.length;
+          // A chunk insert is all-or-nothing, so ONE bad row used to discard up
+          // to 500 perfectly good jobs — measured at 395 lost per aggregator run
+          // (~25% of that source). Fall back to per-row inserts so we lose only
+          // the rows that are genuinely broken.
+          console.error(
+            `[JobIngestion] Bulk insert failed for chunk ${i}–${i + CHUNK} (${describeDbError(error)}) — ` +
+            `retrying ${toInsert.length} rows individually`
+          );
+          const salvaged = await this.insertRowsIndividually(toInsert, systemUserId, now, expiresAt, stats);
+          console.log(
+            `[JobIngestion] Chunk ${i}–${i + CHUNK}: salvaged ${salvaged}/${toInsert.length} rows`
+          );
         }
       }
     }
 
     console.log(`[JobIngestion] Complete. Inserted: ${stats.inserted}, Duplicates: ${stats.duplicates}, Errors: ${stats.errors}, Skipped non-US: ${stats.skippedNonUS}, Skipped bad URL: ${stats.skippedBadUrl}`);
     return stats;
+  }
+
+  /**
+   * Salvage path for a failed bulk chunk: insert row by row so a single poison
+   * row costs us that row instead of the other 499. Returns rows inserted, and
+   * counts only the genuinely broken ones as errors — with the real reason, so
+   * a recurring data problem is visible instead of silent.
+   */
+  private async insertRowsIndividually(
+    rows: any[],
+    systemUserId: string,
+    now: Date,
+    expiresAt: Date | null,
+    stats: { inserted: number; errors: number },
+  ): Promise<number> {
+    let inserted = 0;
+    const reasons = new Map<string, number>();
+
+    for (const job of rows) {
+      try {
+        await db.insert(jobPostings)
+          .values(buildJobRow(job, systemUserId, now, expiresAt))
+          .onConflictDoNothing();
+        inserted++;
+        stats.inserted++;
+      } catch (rowError) {
+        const reason = describeDbError(rowError);
+        reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+        stats.errors++;
+      }
+    }
+
+    for (const [reason, count] of [...reasons].sort((a, b) => b[1] - a[1]).slice(0, 3)) {
+      console.error(`[JobIngestion]   ${count} row(s) rejected: ${reason}`);
+    }
+    return inserted;
   }
 
   async expireStaleJobs(daysOld: number = 60): Promise<number> {
