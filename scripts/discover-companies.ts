@@ -47,7 +47,15 @@ async function main(): Promise<PipelineSummary> {
 
     let approved = 0;
     let rejected = 0;
+    let inconclusive = 0;
     for (const result of results) {
+      if (result.inconclusive) {
+        // Rate limited / provider paused — we never actually determined whether
+        // this company has an ATS. Leave it `pending` so a later run retries it;
+        // rejecting here would permanently drop a company we never checked.
+        inconclusive++;
+        continue;
+      }
       if (result.atsType && result.atsId) {
         await db.update(dcTable)
           .set({
@@ -66,8 +74,13 @@ async function main(): Promise<PipelineSummary> {
         rejected++;
       }
     }
-    console.log(`[DiscoverCompanies] Probe done: ${approved} approved, ${rejected} rejected`);
-    return { status: 'ok', itemsProcessed: approved + rejected, message: `probe: ${approved} approved, ${rejected} rejected`, stats: { phase, approved, rejected } };
+    console.log(`[DiscoverCompanies] Probe done: ${approved} approved, ${rejected} rejected, ${inconclusive} inconclusive (left pending)`);
+    return {
+      status: 'ok',
+      itemsProcessed: approved + rejected,
+      message: `probe: ${approved} approved, ${rejected} rejected, ${inconclusive} inconclusive`,
+      stats: { phase, approved, rejected, inconclusive },
+    };
   }
 
   if (phase === 'apollo') {
