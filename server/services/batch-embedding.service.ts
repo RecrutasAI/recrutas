@@ -121,10 +121,14 @@ export async function batchComputeEmbeddings(
         forceRefresh
           ? eq(jobPostings.status, 'active')
           : staleBefore
+            // Bind the cutover as an ISO string with an explicit cast, NOT a JS
+            // Date: postgres.js cannot serialize a Date as a bind parameter and
+            // throws ERR_INVALID_ARG_TYPE ("Received an instance of Date"),
+            // which fails the query before a single row is read.
             ? sql`${jobPostings.status} = 'active' AND (
                   ${jobPostings.vectorEmbedding} IS NULL
                   OR ${jobPostings.embeddingUpdatedAt} IS NULL
-                  OR ${jobPostings.embeddingUpdatedAt} < ${staleBefore}
+                  OR ${jobPostings.embeddingUpdatedAt} < ${staleBefore.toISOString()}::timestamptz
                 )`
             : sql`${jobPostings.status} = 'active' AND ${jobPostings.vectorEmbedding} IS NULL`,
       )
