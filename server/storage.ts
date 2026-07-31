@@ -878,6 +878,13 @@ export class DatabaseStorage implements IStorage {
       const cutoffDateStr = ninetyDaysAgo.toISOString();
 
       // Rank by how many of the candidate's skills actually match, then by recency.
+      //
+      // NULL (not `sql`0``) when there are no skills: a bare integer literal in
+      // ORDER BY is a COLUMN POSITION in Postgres, so `ORDER BY 0 DESC` fails
+      // with "ORDER BY position 0 is not in select list". That threw on every
+      // title-only search, and the catch below turned it into an empty result —
+      // so a candidate with no parsed skills yet (i.e. every brand-new signup)
+      // who searched by job title silently got nothing back.
       const skillMatchExpr = skills.length > 0
         ? sql`(${sql.join(
             skills.map(skill =>
@@ -885,7 +892,7 @@ export class DatabaseStorage implements IStorage {
             ),
             sql` + `
           )})`
-        : sql`0`;
+        : null;
 
       const baseConditions = (): any[] => [
         eq(jobPostings.status, 'active'),
@@ -954,7 +961,11 @@ export class DatabaseStorage implements IStorage {
           .select()
           .from(jobPostings)
           .where(and(...conditions))
-          .orderBy(sql`${skillMatchExpr} DESC, ${jobPostings.createdAt} DESC`)
+          .orderBy(
+            skillMatchExpr
+              ? sql`${skillMatchExpr} DESC, ${jobPostings.createdAt} DESC`
+              : sql`${jobPostings.createdAt} DESC`,
+          )
           .limit(limit);
       };
 
