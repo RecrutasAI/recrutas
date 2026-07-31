@@ -11,12 +11,22 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # Scrape ATS Jobs — every 4 hours
 0 */4 * * * $RUN scrape-ats-jobs 60 npx tsx scripts/scrape-all-company-jobs.ts
 
-# Batch Embeddings — daily 00:00 (quiet slot; finishes before discover-companies at 02:00).
-# Was 4x/day to chase Gemini's daily free-tier quota windows; the local provider
-# (EMBED_PROVIDER=local, bge-small) has no quota, so one nightly pass suffices.
-# BATCH_LIMIT=20000 lets a single run clear the full active backlog; on Gemini it
-# simply early-bails once the daily cap is hit, so the value is safe for either provider.
-0 0 * * * $RUN batch-embeddings 90 env BATCH_LIMIT=20000 npx tsx server/services/batch-embedding.service.ts
+# Batch Embeddings (JOBS) — every 6h. The local provider (EMBED_PROVIDER=local,
+# bge-small) has no quota, so cadence is driven by feed freshness rather than by
+# Gemini's daily windows: at ~12.8K new jobs/day a nightly-only pass would leave
+# up to 24h of supply unsearchable. ~3.2K jobs per 6h run ≈ 11 min at the measured
+# ~5 jobs/sec. BATCH_LIMIT is a ceiling, not a target — it only embeds what is
+# missing. On Gemini it simply early-bails once the daily cap is hit, so the value
+# is safe for either provider.
+0 */6 * * * $RUN batch-embeddings 90 env BATCH_LIMIT=20000 npx tsx server/services/batch-embedding.service.ts
+
+# Candidate Embeddings — every 10 min, offset off the hour so it does not load a
+# second copy of the ONNX model alongside the heavy top-of-hour crons (the box has
+# 1.9GB and swap is disabled). Split out from the job pass because a candidate who
+# just uploaded a résumé has NO embedding until this runs — their feed is
+# keyword-only in the meantime — and waiting behind an hour-long job backfill would
+# make that window unacceptable. Résumé upload only invalidates; this recomputes.
+5-55/10 * * * * $RUN embed-candidates 10 npx tsx server/services/batch-embedding.service.ts --candidates-only
 
 # Discover Companies — daily 02:00 (phases continue on error, like GHA)
 0 2 * * * $RUN discover-companies 90 bash -c 'npx tsx scripts/discover-companies.ts --phase=discover; npx tsx scripts/discover-companies.ts --phase=apollo; npx tsx scripts/discover-companies.ts --phase=probe --limit=1500'

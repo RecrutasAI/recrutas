@@ -215,14 +215,21 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   const limit = parseInt(process.env.BATCH_LIMIT || '500');
   const force = process.argv.includes('--force');
+  // Candidates are embedded on a much faster cadence than the job backlog: a
+  // candidate whose résumé was just parsed has NO embedding until this runs, so
+  // their feed is keyword-only until then. Skipping the (potentially hour-long)
+  // job phase lets a frequent cron close that window in minutes.
+  const candidatesOnly = process.argv.includes('--candidates-only');
 
   const startedAt = new Date();
   (async () => {
     const { recordPipelineRun } = await import('./pipeline-run.service.js');
     try {
       // Job embeddings
-      const jobResult = await batchComputeEmbeddings(limit, force);
-      console.log('[BatchEmbed] Jobs done:', jobResult);
+      const jobResult = candidatesOnly
+        ? { processed: 0, errors: 0, rateLimited: 0 }
+        : await batchComputeEmbeddings(limit, force);
+      if (!candidatesOnly) console.log('[BatchEmbed] Jobs done:', jobResult);
 
       // Candidate embeddings backfill
       const { backfillCandidateEmbeddings } = await import('./candidate-embedding.service.js');
@@ -242,7 +249,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         const message = `All candidate embeddings failed with hard errors ` +
           `(${candidateResult.errors} errors, ${candidateResult.rateLimited} throttled) — provider down or out of credits.`;
         console.error(`[BatchEmbed] FAILED: ${message}`);
-        await recordPipelineRun({ pipeline: 'batch-embeddings', status: 'failed', startedAt, itemsProcessed: processed, itemsFailed: failed, message, stats });
+        await recordPipelineRun({ pipeline: candidatesOnly ? 'embed-candidates' : 'batch-embeddings', status: 'failed', startedAt, itemsProcessed: processed, itemsFailed: failed, message, stats });
         process.exit(1);
       }
 
@@ -250,7 +257,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       // the free tier); 'ok' otherwise. The job-phase hard-outage already threw above.
       const status = throttled > 0 ? 'warning' : 'ok';
       await recordPipelineRun({
-        pipeline: 'batch-embeddings', status, startedAt,
+        pipeline: candidatesOnly ? 'embed-candidates' : 'batch-embeddings', status, startedAt,
         itemsProcessed: processed, itemsFailed: failed,
         message: `${processed} written, ${throttled} throttled, ${failed} hard errors`,
         stats,
@@ -258,7 +265,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.exit(0);
     } catch (err: any) {
       console.error('[BatchEmbed] Failed:', err);
-      await recordPipelineRun({ pipeline: 'batch-embeddings', status: 'failed', startedAt, message: err?.message ?? String(err) });
+      await recordPipelineRun({ pipeline: candidatesOnly ? 'embed-candidates' : 'batch-embeddings', status: 'failed', startedAt, message: err?.message ?? String(err) });
       process.exit(1);
     }
   })();

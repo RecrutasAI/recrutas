@@ -30,6 +30,8 @@ export interface PipelineSummary {
 // Keys are the canonical pipeline names passed to runAsPipeline/recordPipelineRun.
 export const PIPELINE_MAX_AGE_MIN: Record<string, number> = {
   'batch-embeddings': 6 * 60 + 90,        // every 6h
+  'embed-candidates': 15 + 30,            // every 10 min — closes the keyword-only
+                                          // window after a résumé upload
   'scrape-ats': 4 * 60 + 90,              // every 4h
   'scrape-external': 24 * 60 + 180,       // daily
   'scrape-tier': 12 * 60 + 180,           // twice daily

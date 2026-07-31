@@ -4,7 +4,7 @@ import { User } from '@shared/schema';
 import { normalizeSkills } from '../skill-normalizer';
 import { sendInngestEvent } from '../inngest-service.js';
 import { captureException } from '../error-monitoring';
-import { updateCandidateEmbedding } from './candidate-embedding.service';
+import { invalidateCandidateEmbedding } from './candidate-embedding.service';
 
 /** Recursively strip PostgreSQL-illegal null bytes (\0) from all strings in a value. */
 function stripNullBytes<T>(val: T): T {
@@ -272,11 +272,13 @@ export class ResumeService {
       await this.storage.upsertCandidateUser(profileUpdate);
       console.log(`[ResumeService] Profile updated for user: ${userId}`);
 
-      // Compute candidate embedding in background (non-blocking)
+      // Mark the embedding stale; the VPS cron recomputes it. NOT computed here:
+      // this runs on Vercel, which can only reach the Gemini provider, while jobs
+      // are embedded locally on the VPS — embedding here would put the candidate
+      // in a different vector space than every job. See candidate-embedding.service.
       if (extractedSkills.length > 0) {
-        const jobTitles = positions.map((p: any) => p.title).filter(Boolean) as string[];
-        updateCandidateEmbedding(userId, extractedSkills, profileUpdate.experience || '', jobTitles)
-          .catch((e: any) => console.warn('[ResumeService] Embedding failed:', e?.message));
+        invalidateCandidateEmbedding(userId)
+          .catch((e: any) => console.warn('[ResumeService] Embedding invalidation failed:', e?.message));
       }
 
       // Warm-compute job matches in background (non-blocking).
@@ -466,11 +468,13 @@ export class ResumeService {
 
       await this.storage.upsertCandidateUser(profileUpdate);
 
-      // Compute candidate embedding in background (non-blocking)
+      // Mark the embedding stale; the VPS cron recomputes it. NOT computed here:
+      // this runs on Vercel, which can only reach the Gemini provider, while jobs
+      // are embedded locally on the VPS — embedding here would put the candidate
+      // in a different vector space than every job. See candidate-embedding.service.
       if (extractedSkills.length > 0) {
-        const jobTitles = positions.map((p: any) => p.title).filter(Boolean) as string[];
-        updateCandidateEmbedding(userId, extractedSkills, profileUpdate.experience || '', jobTitles)
-          .catch((e: any) => console.warn('[ResumeService] Embedding failed:', e?.message));
+        invalidateCandidateEmbedding(userId)
+          .catch((e: any) => console.warn('[ResumeService] Embedding invalidation failed:', e?.message));
       }
 
       // Fire match warming on success

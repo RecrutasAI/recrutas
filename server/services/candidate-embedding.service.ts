@@ -1,13 +1,40 @@
 /**
- * Compute and store candidate embedding (Gemini gemini-embedding-001, 384-dim).
- * Called after resume parsing and during batch backfill. Must share the same
- * provider/space as job embeddings (see server/ml-matching.ts).
+ * Compute and store candidate embedding (384-dim, provider per EMBED_PROVIDER).
+ * Called during batch backfill on the VPS. Must share the same provider/space as
+ * job embeddings (see server/ml-matching.ts).
+ *
+ * NOTE: this is deliberately NOT called from the web request path any more.
+ * Embeddings are computed only where the active provider can actually run —
+ * EMBED_PROVIDER=local (bge-small-en-v1.5 via ONNX) runs on the VPS and CANNOT
+ * run on Vercel (onnxruntime is excluded from that bundle to stay under the
+ * 250MB function limit). If Vercel embedded a candidate with Gemini while the
+ * VPS embedded jobs locally, the two vectors would sit in DIFFERENT spaces and
+ * matching would return confident nonsense instead of failing. So the request
+ * path calls invalidateCandidateEmbedding() and the cron recomputes.
  */
 
 import { db, client } from '../db';
 import { candidateProfiles } from '../../shared/schema';
 import { eq } from 'drizzle-orm';
-import { generateCandidateEmbedding } from '../ml-matching';
+import { generateCandidateEmbedding, embedProvider } from '../ml-matching';
+
+/**
+ * Mark a candidate's embedding as needing recomputation by clearing it.
+ *
+ * Called from the resume path instead of embedding inline. Clearing (rather than
+ * leaving a stale vector) is deliberate: a NULL embedding degrades the feed to
+ * keyword matching, which is correct-but-worse, whereas a stale or wrong-space
+ * vector silently produces wrong matches. backfillCandidateEmbeddings picks up
+ * anything NULL on its next run.
+ */
+export async function invalidateCandidateEmbedding(userId: string): Promise<void> {
+  await client`
+    UPDATE candidate_users
+    SET vector_embedding = NULL,
+        embedding = NULL
+    WHERE user_id = ${userId}
+  `;
+}
 
 /**
  * Compute a candidate's embedding from skills + experience + job titles and persist it.
@@ -20,7 +47,8 @@ export async function updateCandidateEmbedding(
   previousJobTitles?: string[],
 ): Promise<void> {
   if (!skills || skills.length === 0) return;
-  if (!process.env.GEMINI_API_KEY) {
+  // Only the metered provider needs a key; the local ONNX model has none.
+  if (embedProvider() === 'gemini' && !process.env.GEMINI_API_KEY) {
     throw Object.assign(new Error('GEMINI_API_KEY not set'), { embeddingFailure: 'auth' });
   }
 

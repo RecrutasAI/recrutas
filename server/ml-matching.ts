@@ -36,7 +36,7 @@ const EMBED_BATCH_SIZE = 100;
 // schema/index change. They are DIFFERENT vector spaces, though: switching providers
 // requires a one-time full re-embed of every job + candidate (they can't be mixed in
 // one ANN index). Read at call time (not module load) so env is set by then.
-function embedProvider(): 'gemini' | 'local' {
+export function embedProvider(): 'gemini' | 'local' {
   return (process.env.EMBED_PROVIDER || 'gemini').toLowerCase() === 'local' ? 'local' : 'gemini';
 }
 
