@@ -1150,19 +1150,24 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       if (!req.user) {return res.status(401).json({ message: "Unauthorized" });}
       const isNew = !(await storage.getUser(req.user.id));
 
-      // Early access gate: new users must provide a valid invite code
+      // Early access gate: new users must provide a valid invite code.
+      // Validate only — redemption happens AFTER upsertUser below, because
+      // invite_code_redemptions has a FK to users.id and the row does not exist
+      // yet. Redeeming here burned a use and then 403'd on the FK failure.
       let redeemedCode: string | undefined;
+      let pendingInvite: any = null;
       if (isNew) {
         const inviteCode = req.body?.inviteCode || req.headers['x-invite-code'];
         if (!inviteCode) {
           return res.status(403).json({ message: 'Invite code required', code: 'INVITE_REQUIRED' });
         }
         const role = req.user.user_metadata?.role || 'candidate';
-        const result = await storage.validateAndRedeemInviteCode(inviteCode, req.user.id, role);
+        const result = await storage.validateInviteCode(inviteCode, role);
         if (!result.valid) {
           return res.status(403).json({ message: result.error, code: 'INVITE_INVALID' });
         }
-        redeemedCode = result.code;
+        pendingInvite = result.invite;
+        redeemedCode = pendingInvite.code;
       }
 
       // Derive signup source from invite code prefix (e.g. REDDIT-A1B2 → reddit)
@@ -1177,6 +1182,10 @@ Analyze the form and return the actions JSON to fill every field you can.`;
         emailVerified: true,
         ...(isNew && redeemedCode ? { invite_code_used: redeemedCode, signup_source: signupSource } : {}),
       });
+      // Safe to consume now that the user row exists.
+      if (pendingInvite) {
+        await storage.redeemInviteCode(pendingInvite, req.user.id);
+      }
       if (isNew && req.user.email) {
         serverTrack(req.user.id, 'signup_completed', { role: req.user.user_metadata?.role, source: signupSource });
         sendWelcomeEmail(req.user.email, req.user.user_metadata?.first_name).catch((err: Error) =>
@@ -1199,16 +1208,19 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       // Early access gate: if user is not yet in local DB, they must have an invite code
       const existingUser = await storage.getUser(req.user.id);
       let roleRedeemedCode: string | undefined;
+      let rolePendingInvite: any = null;
       if (!existingUser) {
         const inviteCode = req.body?.inviteCode || req.headers['x-invite-code'];
         if (!inviteCode) {
           return res.status(403).json({ message: 'Invite code required', code: 'INVITE_REQUIRED' });
         }
-        const result = await storage.validateAndRedeemInviteCode(inviteCode, req.user.id, role);
+        // Validate only; redeem after upsertUser (see /api/auth/sync).
+        const result = await storage.validateInviteCode(inviteCode, role);
         if (!result.valid) {
           return res.status(403).json({ message: result.error, code: 'INVITE_INVALID' });
         }
-        roleRedeemedCode = result.code;
+        rolePendingInvite = result.invite;
+        roleRedeemedCode = rolePendingInvite.code;
       }
 
       // Ensure user exists in local DB before updating role (Supabase Auth doesn't auto-sync)
@@ -1222,6 +1234,10 @@ Analyze the form and return the actions JSON to fill every field you can.`;
         emailVerified: true,
         ...(!existingUser && roleRedeemedCode ? { invite_code_used: roleRedeemedCode, signup_source: roleSignupSource } : {}),
       });
+      // Safe to consume now that the user row exists.
+      if (rolePendingInvite) {
+        await storage.redeemInviteCode(rolePendingInvite, req.user.id);
+      }
       const updatedUser = await storage.updateUserRole(req.user.id, role);
 
       if (role === 'talent_owner' && req.user.email) {

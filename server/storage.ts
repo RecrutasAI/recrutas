@@ -210,7 +210,8 @@ export interface IStorage {
   saveScreeningAnswers(applicationId: number, answers: any[]): Promise<any[]>;
 
   // Invite code operations
-  validateAndRedeemInviteCode(code: string, userId: string, role: string): Promise<{ valid: boolean; error?: string }>;
+  validateInviteCode(code: string, role: string): Promise<{ valid: boolean; error?: string; invite?: any }>;
+  redeemInviteCode(invite: { id: number }, userId: string): Promise<void>;
   createInviteCode(data: { code: string; description?: string; role?: string; maxUses?: number; createdBy?: string; expiresAt?: Date }): Promise<any>;
   listInviteCodes(): Promise<any[]>;
 
@@ -3283,7 +3284,19 @@ export class DatabaseStorage implements IStorage {
 
   // ── Invite Code Operations ──────────────────────────────────────────────────
 
-  async validateAndRedeemInviteCode(code: string, userId: string, role: string): Promise<{ valid: boolean; error?: string; code?: string }> {
+  /**
+   * Check an invite code WITHOUT writing anything.
+   *
+   * Validation and redemption are deliberately separate. `invite_code_redemptions`
+   * has a FK to `users.id`, and the signup routes call this BEFORE upsertUser —
+   * so redeeming here could never insert the redemption row for a genuinely new
+   * user. The old combined version incremented used_count, then threw on that FK,
+   * then reported the code invalid: every new signup got a 403 AND permanently
+   * burned one use of the code. Evidence when found: invite_code_redemptions had
+   * zero rows ever, and all 46 users had invite_code_used NULL — the gate had
+   * never let anybody through.
+   */
+  async validateInviteCode(code: string, role: string): Promise<{ valid: boolean; error?: string; invite?: any }> {
     try {
       const [invite] = await db
         .select()
@@ -3296,23 +3309,34 @@ export class DatabaseStorage implements IStorage {
       if (invite.maxUses !== -1 && invite.usedCount >= (invite.maxUses ?? 1)) return { valid: false, error: 'Invite code has been fully used' };
       if (invite.role !== 'any' && invite.role !== role) return { valid: false, error: `This invite code is for ${invite.role} accounts only` };
 
-      // Check if user already redeemed any code
-      const [existing] = await db
-        .select()
-        .from(inviteCodeRedemptions)
-        .where(eq(inviteCodeRedemptions.userId, userId))
-        .limit(1);
-      if (existing) return { valid: true, code: invite.code }; // already redeemed — allow through
-
-      // Redeem: increment count + record redemption
-      await db.update(inviteCodes).set({ usedCount: invite.usedCount + 1 }).where(eq(inviteCodes.id, invite.id));
-      await db.insert(inviteCodeRedemptions).values({ codeId: invite.id, userId });
-
-      return { valid: true, code: invite.code };
+      return { valid: true, invite };
     } catch (error) {
       console.error('[Storage] Invite code validation error:', error);
       return { valid: false, error: 'Failed to validate invite code' };
     }
+  }
+
+  /**
+   * Consume one use of an already-validated code. Call AFTER the user row exists.
+   * Idempotent (a user who already redeemed anything is a no-op) and transactional,
+   * so a failure can never leave a use burned without a redemption record.
+   */
+  async redeemInviteCode(invite: { id: number }, userId: string): Promise<void> {
+    const [existing] = await db
+      .select()
+      .from(inviteCodeRedemptions)
+      .where(eq(inviteCodeRedemptions.userId, userId))
+      .limit(1);
+    if (existing) return;
+
+    await db.transaction(async (tx) => {
+      // Increment in SQL rather than read-then-write so concurrent signups on the
+      // same code cannot both write the same value and overshoot max_uses.
+      await tx.update(inviteCodes)
+        .set({ usedCount: sql`${inviteCodes.usedCount} + 1` })
+        .where(eq(inviteCodes.id, invite.id));
+      await tx.insert(inviteCodeRedemptions).values({ codeId: invite.id, userId });
+    });
   }
 
   async createInviteCode(data: { code: string; description?: string; role?: string; maxUses?: number; createdBy?: string; expiresAt?: Date }): Promise<any> {
