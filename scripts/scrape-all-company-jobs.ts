@@ -90,7 +90,30 @@ async function main(): Promise<PipelineSummary> {
   console.log(`Found ${atsCompanies.length} companies with ATS APIs`);
 
   let scraped = 0, totalJobs = 0;
-  const allJobs: any[] = [];
+
+  // Scraped jobs are ingested in bounded batches rather than accumulated across
+  // all ~1.4K companies and flushed once at the end. Holding every job (with its
+  // full description) in one array grew the heap past V8's ~650MB ceiling under
+  // the cron's MemoryMax=1300M cgroup and killed the run at company ~1400/1431
+  // with "Reached heap limit" (exit 134). ingestExternalJobs is stateless per
+  // call — it re-checks capacity and dedups against the DB — so batching is safe,
+  // and earlier batches are already visible to later batches' dedup queries.
+  const FLUSH_AT = 5000;
+  const pending: any[] = [];
+  const ingestTotals = { inserted: 0, duplicates: 0, errors: 0, skippedNonUS: 0, skippedBadUrl: 0 };
+  let ingestedAny = false;
+
+  const flush = async (force = false) => {
+    if (pending.length === 0) return;
+    if (!force && pending.length < FLUSH_AT) return;
+    const batch = pending.splice(0, pending.length);
+    if (DRY_RUN) return;
+    const s = await jobIngestionService.ingestExternalJobs(batch);
+    ingestedAny = true;
+    for (const k of Object.keys(ingestTotals) as Array<keyof typeof ingestTotals>) {
+      ingestTotals[k] += s[k] ?? 0;
+    }
+  };
 
   for (let i = 0; i < atsCompanies.length; i += CONC) {
     const slice = atsCompanies.slice(i, i + CONC);
@@ -108,7 +131,7 @@ async function main(): Promise<PipelineSummary> {
         scraped++;
         totalJobs += r.value.jobs.length;
         for (const j of r.value.jobs) {
-          allJobs.push({
+          pending.push({
             title: j.title,
             company: r.value.company,
             location: j.location || '',
@@ -124,6 +147,8 @@ async function main(): Promise<PipelineSummary> {
         }
       }
     }
+
+    await flush();
 
     process.stdout.write(`\r  [${Math.min(i + CONC, atsCompanies.length)}/${atsCompanies.length}] companies=${scraped} jobs=${totalJobs}   `);
   }
@@ -155,19 +180,18 @@ async function main(): Promise<PipelineSummary> {
       if (r.status === 'fulfilled' && r.value) {
         jsonLdScraped++;
         jsonLdJobs += r.value.length;
-        allJobs.push(...r.value);
+        pending.push(...r.value);
       }
     }
+    await flush();
     process.stdout.write(`\r  [${Math.min(i + CONC, jsonLdCompanies.length)}/${jsonLdCompanies.length}] companies=${jsonLdScraped} jobs=${jsonLdJobs}   `);
   }
   console.log(`\nPhase 3: ${jsonLdScraped} companies, ${jsonLdJobs} fresh jobs`);
 
-  let ingestStats: any = null;
-  if (!DRY_RUN && allJobs.length > 0) {
-    console.log('\nIngesting...');
-    ingestStats = await jobIngestionService.ingestExternalJobs(allJobs);
-    console.log('Stats:', ingestStats);
-  }
+  if (pending.length > 0) console.log(`\nIngesting final batch (${pending.length})...`);
+  await flush(true);
+  const ingestStats = ingestedAny ? ingestTotals : null;
+  if (ingestStats) console.log('Stats:', ingestStats);
 
   const freshJobs = totalJobs + jsonLdJobs;
   console.log('\n=== DONE ===');

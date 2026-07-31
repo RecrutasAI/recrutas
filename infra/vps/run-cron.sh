@@ -49,8 +49,10 @@ JOB_ENV="$(printf '%s' "$JOB" | tr '[:lower:]-' '[:upper:]_')"
 MEM_MAX_VAR="CRON_MEM_MAX_${JOB_ENV}"
 MEM_SWAP_VAR="CRON_MEM_SWAP_${JOB_ENV}"
 MEM_SWAP="${!MEM_SWAP_VAR:-${CRON_MEM_SWAP:-0}}"
-# 1.9GB total, Postgres ~300-450MB, OS ~200MB. These workers peak around 460MB,
-# so 1300M is a runaway ceiling, not a working limit.
+# 1.9GB total, Postgres ~300-450MB, OS ~200MB. Most workers peak around 460MB,
+# so 1300M is a runaway ceiling, not a working limit. Note this cap also sets
+# Node's own heap ceiling to roughly half of it (~650M) — see the exit-134 note
+# below; a job that dies at ~650M of heap is hitting that, not this.
 MEM_MAX="${!MEM_MAX_VAR:-${CRON_MEM_MAX:-1300M}}"
 
 echo "=== $(date -u +%FT%TZ) [$JOB] start (memMax=$MEM_MAX swap=$MEM_SWAP) ===" >>"$LOG"
@@ -66,6 +68,12 @@ else
 fi
 [ $rc -eq 124 ] && echo "[$JOB] KILLED after ${TIMEOUT_MIN}m timeout" >>"$LOG"
 [ $rc -eq 137 ] && echo "[$JOB] KILLED (SIGKILL — likely exceeded MemoryMax=$MEM_MAX)" >>"$LOG"
+# 134 = SIGABRT. For a Node job this is almost always V8 aborting on its own heap
+# limit ("FATAL ERROR: Reached heap limit"), which it hits WELL BELOW MemoryMax:
+# Node sizes its old-space from the cgroup limit, so MemoryMax=1300M gives a
+# ~650M heap ceiling. Raising MemoryMax alone does not fix it — the job has to
+# stop holding that much at once (or be given --max-old-space-size to match).
+[ $rc -eq 134 ] && echo "[$JOB] ABORTED (SIGABRT — for Node, usually V8 heap limit ~half of MemoryMax=$MEM_MAX, NOT the cgroup)" >>"$LOG"
 echo "=== $(date -u +%FT%TZ) [$JOB] exit $rc ===" >>"$LOG"
 
 # Alert on failure. Hooked here rather than in each script so every job — the
@@ -76,6 +84,7 @@ if [ $rc -ne 0 ]; then
   DETAIL="exit code: $rc"
   [ $rc -eq 124 ] && DETAIL="TIMED OUT after ${TIMEOUT_MIN}m"
   [ $rc -eq 137 ] && DETAIL="OOM-KILLED (exceeded MemoryMax=$MEM_MAX)"
+  [ $rc -eq 134 ] && DETAIL="ABORTED (exit 134 — likely V8 heap limit, see log)"
   { echo "$DETAIL"; echo; echo "--- last 40 lines of $LOG ---"; tail -40 "$LOG"; } \
     | bash "$APP_DIR/infra/vps/alert.sh" "cron-$JOB" "[recrutas] cron failed: $JOB ($DETAIL)" - \
     >>"$LOG" 2>&1
