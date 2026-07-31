@@ -87,7 +87,18 @@ export async function updateJobEmbedding(jobId: number): Promise<void> {
 
 export async function batchComputeEmbeddings(
   limit: number = 500,
-  forceRefresh: boolean = false
+  forceRefresh: boolean = false,
+  /**
+   * Provider migration: also re-embed rows whose embedding predates this instant.
+   *
+   * Vectors from different providers occupy different spaces and cannot be
+   * compared, so switching EMBED_PROVIDER requires re-embedding everything that
+   * was written by the old one. `forceRefresh` can't do this incrementally — it
+   * always takes the newest N rows, so repeated runs re-embed the same page
+   * forever instead of advancing. Selecting on embedding_updated_at makes the
+   * work drain: each pass converts rows and they stop matching the filter.
+   */
+  staleBefore?: Date,
 ): Promise<{ processed: number; errors: number; rateLimited: number }> {
   console.log(`[BatchEmbed] Starting batch embedding computation (limit: ${limit})`);
 
@@ -109,7 +120,13 @@ export async function batchComputeEmbeddings(
       .where(
         forceRefresh
           ? eq(jobPostings.status, 'active')
-          : sql`${jobPostings.status} = 'active' AND ${jobPostings.vectorEmbedding} IS NULL`,
+          : staleBefore
+            ? sql`${jobPostings.status} = 'active' AND (
+                  ${jobPostings.vectorEmbedding} IS NULL
+                  OR ${jobPostings.embeddingUpdatedAt} IS NULL
+                  OR ${jobPostings.embeddingUpdatedAt} < ${staleBefore}
+                )`
+            : sql`${jobPostings.status} = 'active' AND ${jobPostings.vectorEmbedding} IS NULL`,
       )
       .orderBy(sql`${jobPostings.createdAt} DESC`)
       .limit(limit);
@@ -220,6 +237,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // their feed is keyword-only until then. Skipping the (potentially hour-long)
   // job phase lets a frequent cron close that window in minutes.
   const candidatesOnly = process.argv.includes('--candidates-only');
+  // --stale-before=<ISO>: re-embed rows written by a previous provider. Used once
+  // per EMBED_PROVIDER change; see batchComputeEmbeddings.
+  const staleArg = process.argv.find(a => a.startsWith('--stale-before='));
+  const staleBefore = staleArg ? new Date(staleArg.split('=')[1]) : undefined;
+  if (staleArg && Number.isNaN(staleBefore!.getTime())) {
+    console.error(`[BatchEmbed] Invalid --stale-before value: ${staleArg.split('=')[1]}`);
+    process.exit(1);
+  }
 
   const startedAt = new Date();
   (async () => {
@@ -228,7 +253,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       // Job embeddings
       const jobResult = candidatesOnly
         ? { processed: 0, errors: 0, rateLimited: 0 }
-        : await batchComputeEmbeddings(limit, force);
+        : await batchComputeEmbeddings(limit, force, staleBefore);
       if (!candidatesOnly) console.log('[BatchEmbed] Jobs done:', jobResult);
 
       // Candidate embeddings backfill
