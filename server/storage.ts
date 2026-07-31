@@ -1268,6 +1268,12 @@ export class DatabaseStorage implements IStorage {
       sql`${jobPostings.source} NOT IN (${sql.join(
         [...AGGREGATOR_SOURCES].map(s => sql`${s}`), sql`, `
       )})`,
+      // Reposters run a real ATS board, so source/URL checks all pass — only the
+      // company name identifies them. Applied here because baseFilters is shared
+      // by BOTH keyword retrieval paths; the pgvector path has its own copy of
+      // this condition in the raw SQL above. All retrieval paths must agree, or
+      // a demoted company simply arrives through whichever one was missed.
+      reposterExclusion,
       aggregatorUrlExclusion,
       // Require URL to point to a real job post page (platform jobs exempt — no external_url)
       or(
@@ -1313,6 +1319,14 @@ export class DatabaseStorage implements IStorage {
       // Return cosine_dist so scoreJob can use pre-computed similarity (avoids JSON.parse of 8KB text per row)
       const aggregatorList = [...AGGREGATOR_SOURCES].map(s => `'${s}'`).join(', ');
       const aggregatorUrlList = AGGREGATOR_URL_PATTERNS.map(p => `external_url ILIKE '%${p}%'`).join(' OR ');
+      // Reposters must be excluded HERE too, not only in the keyword path.
+      // fetchScoredJobs retrieves through two independent queries — this raw
+      // pgvector ANN query and the drizzle-built keyword query — and they do not
+      // share a WHERE clause. Excluding a company from one still lets it reach
+      // the feed through the other, which is exactly how jobgether kept
+      // appearing after the first fix: it matches semantically, so the vector
+      // path served it. Keep the two in sync.
+      const reposterList = [...REPOSTER_COMPANIES].map(c => `'${c}'`).join(', ');
       // Mirror of jobPostUrlRequirement — must stay in sync with the drizzle fragment above.
       const jobPostUrlRequirementSql = `(
         source = 'platform' OR (
@@ -1361,6 +1375,7 @@ export class DatabaseStorage implements IStorage {
           AND (source = 'platform' OR created_at > $2)
           AND source NOT IN (${aggregatorList})
           AND (external_url IS NULL OR NOT (${aggregatorUrlList}))
+          AND (company IS NULL OR LOWER(company) NOT IN (${reposterList}))
           AND ${jobPostUrlRequirementSql}
           AND (
             source = 'platform'
