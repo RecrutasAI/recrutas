@@ -247,6 +247,41 @@ function escapeLike(s: string): string {
 
 // Job board aggregators — excluded from the candidate feed (links don't go to actual job pages)
 const AGGREGATOR_SOURCES = new Set(['Adzuna', 'JSearch', 'Jooble', 'Indeed', 'ArbeitNow', 'USAJobs', 'RemoteOK', 'WeWorkRemotely', 'The Muse']);
+
+// Reposters: they run a REAL ATS board (so source is `ATS:lever` and the URL is
+// a genuine jobs.lever.co deep link) but the roles are not their own — they are
+// a marketplace or staffing agency relisting other companies' jobs. Every
+// structural guard we have says these are direct, which is exactly why they need
+// naming: source and URL cannot distinguish them, only knowing the company can.
+//
+// They are DEMOTED, not deleted — the product promise is that the main dashboard
+// shows jobs from the company itself, and anything else appears only when the
+// dashboard has nothing. So these are excluded from the matched feed and served
+// by the empty-state fallback alongside the aggregators.
+//
+// Curated deliberately, NOT inferred. A heuristic on description text ("our
+// client") flags Accenture Federal Services at 100% — a real employer whose
+// consultants genuinely work with clients — and would wrongly bury it. Add a
+// company here only after confirming the postings are someone else's roles.
+const REPOSTER_COMPANIES = new Set([
+  'jobgether',              // remote-work marketplace relisting other companies' roles
+  'nexthire',               // recruiting agency
+  'crisp recruit',          // recruiting agency
+  'seasoned recruitment',   // recruiting agency
+  'talent software services',
+  'horizontal talent',
+]);
+// SQL fragment: keep reposter-owned boards out of the direct feed.
+const reposterExclusion = sql`(
+  ${jobPostings.company} IS NULL
+  OR lower(${jobPostings.company}) NOT IN (${sql.join(
+    [...REPOSTER_COMPANIES].map(c => sql`${c}`), sql`, `
+  )})
+)`;
+// Inverse, for the empty-state fallback.
+const reposterOnly = sql`lower(${jobPostings.company}) IN (${sql.join(
+  [...REPOSTER_COMPANIES].map(c => sql`${c}`), sql`, `
+)})`;
 // URL patterns that identify aggregator apply links
 const AGGREGATOR_URL_PATTERNS = ['adzuna', 'jooble', 'jsearch', 'indeed.com', 'usajobs.gov', 'arbeitnow', 'remoteok.io', 'weworkremotely.com', 'themuse.com'];
 // SQL fragment: exclude any external_url that routes through an aggregator
@@ -719,6 +754,9 @@ export class DatabaseStorage implements IStorage {
         )})`,
         // Exclude any external_url that still routes through an aggregator
         aggregatorUrlExclusion,
+        // Exclude reposters (marketplaces/agencies on a real ATS board) — they
+        // pass every source and URL check but the job is not theirs.
+        reposterExclusion,
         // Require URL to point to a real job post page (platform jobs exempt — no external_url)
         or(
           eq(jobPostings.source, 'platform'),
@@ -849,9 +887,15 @@ export class DatabaseStorage implements IStorage {
 
       const baseConditions = (): any[] => [
         eq(jobPostings.status, 'active'),
-        sql`${jobPostings.source} IN (${sql.join(
-          [...AGGREGATOR_SOURCES].map(s => sql`${s}`), sql`, `
-        )})`,
+        // Aggregator-sourced OR reposter-owned: both are "not from the company
+        // itself", so both belong here — visible only when the main dashboard
+        // has nothing to show.
+        or(
+          sql`${jobPostings.source} IN (${sql.join(
+            [...AGGREGATOR_SOURCES].map(s => sql`${s}`), sql`, `
+          )})`,
+          reposterOnly,
+        ),
         sql`${jobPostings.externalUrl} IS NOT NULL`,
         // Aggregators are served with their native redirect/apply URLs (no
         // resolution). Native aggregator redirects click through to the real
