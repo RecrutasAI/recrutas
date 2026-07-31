@@ -1,86 +1,37 @@
 /**
- * Full company job discovery pipeline:
- * 1. Resolves all unresolved Adzuna URLs
- * 2. Extracts ATS IDs from resolved URLs
- * 3. Scrapes all known ATS companies for fresh jobs
+ * Full company job scraping pipeline:
+ * 1. Scrapes all known ATS companies for fresh jobs
+ * 2. Scrapes JSON-LD-approved companies' career pages
  *
  * Usage:
- *   npx tsx scripts/scrape-all-company-jobs.ts [--dry-run] [--limit N]
+ *   npx tsx scripts/scrape-all-company-jobs.ts [--dry-run]
  */
 import 'dotenv/config';
 import postgres from 'postgres';
-import { listAtsJobs, resolveAdzunaLink } from '../server/lib/adzuna-link-resolver';
+import { listAtsJobs } from '../server/lib/adzuna-link-resolver';
 import { jobIngestionService } from '../server/services/job-ingestion.service';
 import { runAsPipeline, type PipelineSummary } from '../server/services/pipeline-run.service';
 
 const DRY_RUN   = process.argv.includes('--dry-run');
-const LIMIT_ARG  = process.argv.indexOf('--limit');
-const MAX_ADZUNA = LIMIT_ARG !== -1 ? parseInt(process.argv[LIMIT_ARG + 1], 10) : 500;
 const CONC      = 8;
 const ATS_TYPES = new Set(['greenhouse', 'lever', 'ashby', 'workable', 'recruitee', 'smartrecruiters', 'breezy']);
 
 async function main(): Promise<PipelineSummary> {
   const sql = postgres(process.env.POSTGRES_URL_NON_POOLING || process.env.POSTGRES_URL || '', { max: 3, prepare: false });
 
-  // --- PHASE 1: Resolve Adzuna redirect URLs ---
-  console.log('=== PHASE 1: Resolving Adzuna URLs ===');
-  const unresolved = await sql`
-    SELECT id, title, company, location, external_url, description
-    FROM job_postings
-    WHERE source = 'Adzuna' AND external_url LIKE '%adzuna%'
-    ORDER BY id DESC
-    LIMIT ${MAX_ADZUNA}
-  `;
-  console.log(`Found ${unresolved.length} unresolved Adzuna jobs`);
+  // Adzuna redirect-URL resolution used to run here as phase 1, re-resolving the
+  // newest 500 unresolved rows every 4 hours. Removed 2026-07-31: it had no
+  // consumer left. The feed deliberately serves Adzuna's native redirect URLs
+  // (see project_aggregator_resolution_off), company discovery mines company
+  // names and careerPageUrl rather than the resolved external_url, and the only
+  // theoretical benefit — collapsing an Adzuna row against an ATS-scraped copy
+  // of the same posting via external_url — measured 9 rows out of 1,586 ever
+  // resolved (0.6%). Against that it spent ~3K homepage/SearXNG/careers-page/ATS
+  // requests a day from the IP the ATS probe needs, and because nothing recorded
+  // a failed attempt it mostly re-ground rows that had already failed.
 
-  let resolved = 0, stillAdzuna = 0;
-  const updates: Array<{ id: number; url: string; via: string }> = [];
-
-  for (let i = 0; i < unresolved.length; i += CONC) {
-    const slice = unresolved.slice(i, i + CONC);
-    const results = await Promise.allSettled(
-      slice.map(async (j) => {
-        const r = await resolveAdzunaLink({
-          title: j.title,
-          company: j.company,
-          location: j.location,
-          fallbackUrl: j.external_url,
-          description: j.description ?? undefined,
-        });
-        return { id: j.id, url: r.url, via: r.resolvedVia };
-      })
-    );
-
-    for (const r of results) {
-      if (r.status === 'fulfilled') {
-        if (r.value.url !== r.value.url) break; // noop
-        if (!r.value.url.includes('adzuna')) {
-          resolved++;
-          updates.push(r.value);
-        } else {
-          stillAdzuna++;
-        }
-      }
-    }
-
-    process.stdout.write(`\r  [${i + CONC}/${unresolved.length}] resolved=${resolved} still_adzuna=${stillAdzuna}   `);
-  }
-  console.log(`\nPhase 1: ${resolved} resolved, ${stillAdzuna} still Adzuna`);
-
-  if (!DRY_RUN && updates.length > 0) {
-    // Bulk update via unnest — one round trip instead of N
-    const ids  = updates.map(u => u.id);
-    const urls = updates.map(u => u.url);
-    await sql`
-      UPDATE job_postings AS jp
-      SET external_url = v.url
-      FROM unnest(${sql.array(ids)}::int[], ${sql.array(urls)}::text[]) AS v(id, url)
-      WHERE jp.id = v.id
-    `;
-  }
-
-  // --- PHASE 2: Scrape ATS companies ---
-  console.log('\n=== PHASE 2: Scraping ATS Companies ===');
+  // --- PHASE 1: Scrape ATS companies ---
+  console.log('=== PHASE 1: Scraping ATS Companies ===');
   const atsCompanies = await sql`
     SELECT "normalizedName", "detectedAts", "atsId"
     FROM discovered_companies
@@ -153,11 +104,11 @@ async function main(): Promise<PipelineSummary> {
     process.stdout.write(`\r  [${Math.min(i + CONC, atsCompanies.length)}/${atsCompanies.length}] companies=${scraped} jobs=${totalJobs}   `);
   }
 
-  console.log(`\nPhase 2: ${scraped} companies, ${totalJobs} fresh jobs`);
+  console.log(`\nPhase 1: ${scraped} companies, ${totalJobs} fresh jobs`);
 
-  // --- PHASE 3: Scrape JSON-LD-approved companies ---
+  // --- PHASE 2: Scrape JSON-LD-approved companies ---
   // Companies without a public ATS API but with schema.org JobPosting on /careers.
-  console.log('\n=== PHASE 3: Scraping JSON-LD Companies ===');
+  console.log('\n=== PHASE 2: Scraping JSON-LD Companies ===');
   const jsonLdCompanies = await sql<Array<{ normalizedName: string; careerPageUrl: string | null; name: string }>>`
     SELECT "normalizedName", "careerPageUrl", name
     FROM discovered_companies
@@ -186,7 +137,7 @@ async function main(): Promise<PipelineSummary> {
     await flush();
     process.stdout.write(`\r  [${Math.min(i + CONC, jsonLdCompanies.length)}/${jsonLdCompanies.length}] companies=${jsonLdScraped} jobs=${jsonLdJobs}   `);
   }
-  console.log(`\nPhase 3: ${jsonLdScraped} companies, ${jsonLdJobs} fresh jobs`);
+  console.log(`\nPhase 2: ${jsonLdScraped} companies, ${jsonLdJobs} fresh jobs`);
 
   if (pending.length > 0) console.log(`\nIngesting final batch (${pending.length})...`);
   await flush(true);
@@ -195,7 +146,6 @@ async function main(): Promise<PipelineSummary> {
 
   const freshJobs = totalJobs + jsonLdJobs;
   console.log('\n=== DONE ===');
-  console.log(`Adzuna URLs resolved: ${resolved}`);
   console.log(`ATS companies scraped: ${scraped}`);
   console.log(`JSON-LD companies scraped: ${jsonLdScraped}`);
   console.log(`Fresh jobs found: ${freshJobs}`);
@@ -206,8 +156,8 @@ async function main(): Promise<PipelineSummary> {
     status: (ingestStats?.errors || 0) > 0 ? 'warning' : 'ok',
     itemsProcessed: ingestStats?.inserted ?? 0,
     itemsFailed: ingestStats?.errors ?? 0,
-    message: `${resolved} URLs resolved, ${scraped + jsonLdScraped} companies, ${freshJobs} fresh jobs, ${ingestStats?.inserted ?? 0} inserted${DRY_RUN ? ' (dry-run)' : ''}`,
-    stats: { resolved, atsCompanies: scraped, jsonLdCompanies: jsonLdScraped, freshJobs, inserted: ingestStats?.inserted ?? 0, duplicates: ingestStats?.duplicates ?? 0, errors: ingestStats?.errors ?? 0, dryRun: DRY_RUN },
+    message: `${scraped + jsonLdScraped} companies, ${freshJobs} fresh jobs, ${ingestStats?.inserted ?? 0} inserted${DRY_RUN ? ' (dry-run)' : ''}`,
+    stats: { atsCompanies: scraped, jsonLdCompanies: jsonLdScraped, freshJobs, inserted: ingestStats?.inserted ?? 0, duplicates: ingestStats?.duplicates ?? 0, errors: ingestStats?.errors ?? 0, dryRun: DRY_RUN },
   };
 }
 
