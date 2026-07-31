@@ -330,10 +330,15 @@ export class JobIngestionService {
       // Bulk insert new jobs using ON CONFLICT DO NOTHING as safety net
       if (toInsert.length > 0) {
         try {
-          await db.insert(jobPostings).values(
+          // Count what the DB actually wrote, not what we offered it. With a
+          // UNIQUE index on external_url, ON CONFLICT silently drops rows that
+          // lost a race against a concurrent ingest, and assuming they all
+          // landed would report inserts that never happened.
+          const written = await db.insert(jobPostings).values(
             toInsert.map(job => buildJobRow(job, systemUserId, now, expiresAt))
-          ).onConflictDoNothing();
-          stats.inserted += toInsert.length;
+          ).onConflictDoNothing().returning({ id: jobPostings.id });
+          stats.inserted += written.length;
+          stats.duplicates += toInsert.length - written.length;
         } catch (error) {
           // A chunk insert is all-or-nothing, so ONE bad row used to discard up
           // to 500 perfectly good jobs — measured at 395 lost per aggregator run
@@ -366,18 +371,24 @@ export class JobIngestionService {
     systemUserId: string,
     now: Date,
     expiresAt: Date | null,
-    stats: { inserted: number; errors: number },
+    stats: { inserted: number; errors: number; duplicates: number },
   ): Promise<number> {
     let inserted = 0;
     const reasons = new Map<string, number>();
 
     for (const job of rows) {
       try {
-        await db.insert(jobPostings)
+        const written = await db.insert(jobPostings)
           .values(buildJobRow(job, systemUserId, now, expiresAt))
-          .onConflictDoNothing();
-        inserted++;
-        stats.inserted++;
+          .onConflictDoNothing()
+          .returning({ id: jobPostings.id });
+        if (written.length > 0) {
+          inserted++;
+          stats.inserted++;
+        } else {
+          // Lost a uniqueness race — the row is already there, not an error.
+          stats.duplicates++;
+        }
       } catch (rowError) {
         const reason = describeDbError(rowError);
         reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
