@@ -18,7 +18,15 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # ~5 jobs/sec. BATCH_LIMIT is a ceiling, not a target — it only embeds what is
 # missing. On Gemini it simply early-bails once the daily cap is hit, so the value
 # is safe for either provider.
-0 */6 * * * $RUN batch-embeddings 90 env BATCH_LIMIT=20000 npx tsx server/services/batch-embedding.service.ts
+#
+# Hours 1/7/13/19 are deliberate, NOT `0 */6`. The per-job cgroup caps bound each
+# job but NOT their SUM, so two heavy jobs overlapping can exhaust a 1.9GB box
+# with swap off — and then the kernel picks the victim, which could be Postgres.
+# `0 */6` put this on 06:00/18:00, exactly when scrape-tech-companies runs;
+# measured 2026-07-31T18:00 with both live: 806MB + 395MB and only 280MB free,
+# with the embedding pass visibly slowed by CPU contention on 2 vCPUs.
+# 1/7/13/19 collide with nothing else in this file — keep it that way.
+0 1,7,13,19 * * * $RUN batch-embeddings 90 env BATCH_LIMIT=20000 npx tsx server/services/batch-embedding.service.ts
 
 # Candidate Embeddings — every 10 min, offset off the hour so it does not load a
 # second copy of the ONNX model alongside the heavy top-of-hour crons (the box has
