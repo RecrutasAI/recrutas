@@ -10,8 +10,12 @@
  * - Match time (comparison)
  */
 
-// Lowercase alias → canonical name
-export const SKILL_ALIASES: Record<string, string> = {
+// Lowercase alias → canonical name.
+// Prototype-free (Object.create(null)) because it is indexed with raw words
+// from job descriptions: on a plain object, SKILL_ALIASES['constructor'] is
+// Object.prototype.constructor — a truthy FUNCTION — which then flows into the
+// skills array and crashes normalizeSkills with "skill.split is not a function".
+export const SKILL_ALIASES: Record<string, string> = Object.assign(Object.create(null), {
   // JavaScript ecosystem
   'js': 'JavaScript',
   'javascript': 'JavaScript',
@@ -612,7 +616,7 @@ export const SKILL_ALIASES: Record<string, string> = {
   'hardware support': 'Hardware Support',
   'root cause analysis': 'Root Cause Analysis',
   'rca': 'Root Cause Analysis',
-};
+});
 
 /**
  * Normalize a single skill string to its canonical form.
