@@ -266,6 +266,8 @@ const AGGREGATOR_SOURCES = new Set(['Adzuna', 'JSearch', 'Jooble', 'Indeed', 'Ar
 const REPOSTER_COMPANIES = new Set([
   'jobgether',              // remote-work marketplace relisting other companies' roles
   'nexthire',               // recruiting agency
+  'bluelight consulting',   // staffing/outsourcing; 1,138 postings across only 17
+                            // distinct titles, and every one uses client language
   'crisp recruit',          // recruiting agency
   'seasoned recruitment',   // recruiting agency
   'talent software services',
