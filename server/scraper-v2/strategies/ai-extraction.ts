@@ -14,6 +14,37 @@ import { callAI } from '../../lib/ai-client.js';
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024; // 5MB
 
+// Groq's free tier caps a SINGLE request at 12,000 tokens (TPM) and rejects
+// anything over it with a hard 413 instead of truncating — so an oversized
+// payload returns zero jobs, not fewer jobs.
+//
+// Cleaned career-page HTML tokenizes at roughly 2.1 chars/token, far denser than
+// prose. Measured 2026-08-01: the previous 25,000-char cap billed 12,042 tokens
+// against the 12,000 limit — a 42-token overshoot that had been failing Google's
+// board on every run. The cap was picked in characters without accounting for
+// HTML token density or the ~350-token system prompt.
+//
+// 20,000 chars ≈ 9,500 tokens, leaving headroom for the system prompt and for
+// tokenizer variance across sites. Large boards are truncation-bound either way
+// (Microsoft's cleaned page is ~678,000 chars); the only question is whether we
+// get a partial extraction or nothing at all.
+const MAX_HTML_CHARS = 20_000;
+
+// Conservative — under-estimating chars/token over-estimates the token count,
+// which is the safe direction for both the 413 ceiling and throttler pacing.
+const CHARS_PER_TOKEN = 2.1;
+const SYSTEM_PROMPT_TOKENS = 400;
+
+function truncateForAI(html: string): string {
+  return html.length > MAX_HTML_CHARS
+    ? html.substring(0, MAX_HTML_CHARS) + '\n...[truncated]'
+    : html;
+}
+
+function estimateTokens(prompt: string): number {
+  return Math.ceil(prompt.length / CHARS_PER_TOKEN) + SYSTEM_PROMPT_TOKENS;
+}
+
 interface AIExtractedJob {
   title: string;
   location: string;
@@ -222,11 +253,8 @@ async function callOllamaForExtraction(html: string, company: CompanyConfig): Pr
 async function callGroqForExtraction(html: string, company: CompanyConfig): Promise<AIResponse> {
   const groq = getGroqClient();
 
-  // Truncate HTML to fit in context window
-  const maxLength = 25000;
-  const truncatedHtml = html.length > maxLength
-    ? html.substring(0, maxLength) + '\n...[truncated]'
-    : html;
+  // Same 12,000-token per-request ceiling as the unified client path above.
+  const truncatedHtml = truncateForAI(html);
 
   const completion = await groq.chat.completions.create({
     model: 'llama-3.3-70b-versatile',
@@ -260,17 +288,17 @@ async function callGroqForExtraction(html: string, company: CompanyConfig): Prom
  * Call AI for job extraction (tries Ollama first if available, then Groq)
  */
 async function callAIForExtraction(html: string, company: CompanyConfig): Promise<AIResponse> {
-  // Truncate HTML to fit in context window
-  const maxLength = 25000;
-  const truncatedHtml = html.length > maxLength
-    ? html.substring(0, maxLength) + '\n...[truncated]'
-    : html;
+  const truncatedHtml = truncateForAI(html);
+  const userPrompt = `Extract job listings from ${company.name}'s careers page:\n\n${truncatedHtml}`;
 
-  // Use unified AI client (Gemini-first, Groq fallback) to avoid burning Groq tokens
+  // Use unified AI client (Gemini-first, Groq fallback) to avoid burning Groq tokens.
+  // estimatedTokens paces the Groq throttler, so it has to track the real payload:
+  // the previous hardcoded 5000 under-reserved by ~2.4x against a measured 12,042,
+  // letting through far more requests per minute than the budget could fund.
   const content = await callAI(
     systemPrompt,
-    `Extract job listings from ${company.name}'s careers page:\n\n${truncatedHtml}`,
-    { priority: 'low', estimatedTokens: 5000, temperature: 0.1, maxOutputTokens: 4000 }
+    userPrompt,
+    { priority: 'low', estimatedTokens: estimateTokens(userPrompt), temperature: 0.1, maxOutputTokens: 4000 }
   );
 
   if (!content) {

@@ -55,7 +55,20 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 30 6 * * * $RUN scrape-external-jobs 12 npx tsx scripts/scrape-external-jobs.ts --timeout=540000
 
 # Scrape Tech Companies — 06:00 and 18:00 (tiers continue on error, like GHA)
-0 6,18 * * * $RUN scrape-tech-companies 60 bash -c 'npx tsx scripts/scrape-tier.ts --tier=1 --timeout=900000; npx tsx scripts/scrape-tier.ts --tier=2 --timeout=600000; npx tsx scripts/scrape-tier.ts --tier=3 --timeout=300000; npx tsx scripts/scrape-tier.ts --cleanup --days=15'
+#
+# Tier 3 was REMOVED 2026-08-01. It is 10 mega-corp boards (Google, Microsoft,
+# Apple, Amazon, ServiceNow…) that only parse via AI, and free inference cannot
+# fund them: Gemini's free tier is permanently exhausted and Groq's 100K
+# tokens/day cannot cover 10 AI-parsed boards twice daily on top of tiers 1-2.
+# It had failed on every run for 12+ days. Measured in isolation on 2026-08-01
+# with the ENTIRE daily budget to itself, it still returned 3 jobs found / 0
+# ingested / 7 errors in 8 minutes — so this was not contention with tiers 1-2.
+# Against scrape-ats-jobs at ~2,700 inserted per run, tier 3 was well under 1%
+# of supply for ~8 min of a 2-vCPU box twice a day, and its permanent `failed`
+# state was constant noise on the alert channel that doubles as the off-box
+# dead-man's switch. Revive only with paid inference (OpenRouter is already
+# wired in server/lib/ai-client.ts), not by reordering the tiers.
+0 6,18 * * * $RUN scrape-tech-companies 60 bash -c 'npx tsx scripts/scrape-tier.ts --tier=1 --timeout=900000; npx tsx scripts/scrape-tier.ts --tier=2 --timeout=600000; npx tsx scripts/scrape-tier.ts --cleanup --days=15'
 
 # Cleanup Errors — weekly, Sunday 06:00
 0 6 * * 0 $RUN cleanup-errors 5 npx tsx scripts/cleanup-errors.ts
