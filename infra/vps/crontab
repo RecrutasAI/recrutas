@@ -68,7 +68,20 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # state was constant noise on the alert channel that doubles as the off-box
 # dead-man's switch. Revive only with paid inference (OpenRouter is already
 # wired in server/lib/ai-client.ts), not by reordering the tiers.
-0 6,18 * * * $RUN scrape-tech-companies 60 bash -c 'npx tsx scripts/scrape-tier.ts --tier=1 --timeout=900000; npx tsx scripts/scrape-tier.ts --tier=2 --timeout=600000; npx tsx scripts/scrape-tier.ts --cleanup --days=15'
+#
+# Tier 1's timeout was raised 15min -> 30min on 2026-08-01. It had been set
+# BELOW the job's own runtime, so the AbortController fired on all 63 runs in
+# the log ("Tier 1 timeout reached (900000ms)") — every run for a month was
+# silently cut off mid-sweep. Tier 1 is 66 companies (83 total - 7 tier-2 -
+# 10 tier-3) but recent runs reported only 40-50 scraped, and wall time still
+# ran 16-22 min because the abort only stops NEW work while in-flight requests
+# drain. Dispatching all 66 extrapolates to ~20 min plus drain, so 30 min is
+# the observed need with real headroom rather than a number that merely beats
+# the last run. Total chain is now 30 + 10 + cleanup ≈ 41 min, inside the 60min
+# run-cron cap above. Watch the 18:00 run: if it reports 66 companies well
+# under 30 min, this is right-sized; if it aborts again, the sweep is slower
+# than linear and the cap (not just this value) needs revisiting.
+0 6,18 * * * $RUN scrape-tech-companies 60 bash -c 'npx tsx scripts/scrape-tier.ts --tier=1 --timeout=1800000; npx tsx scripts/scrape-tier.ts --tier=2 --timeout=600000; npx tsx scripts/scrape-tier.ts --cleanup --days=15'
 
 # Cleanup Errors — weekly, Sunday 06:00
 0 6 * * 0 $RUN cleanup-errors 5 npx tsx scripts/cleanup-errors.ts
