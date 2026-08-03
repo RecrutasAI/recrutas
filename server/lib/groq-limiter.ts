@@ -18,6 +18,11 @@ const TOKEN_REFILL_RATE = 5000 / 60; // tokens per second
 const REQ_BUCKET_CAPACITY = 25;
 const REQ_REFILL_RATE = 25 / 60; // requests per second
 
+// Safety net for the bucket wait below. Both buckets refill fully in 60s, so a
+// satisfiable wait can never legitimately exceed that; anything longer means the
+// pacing maths is wrong and we'd rather send the request than hang the process.
+const MAX_BUCKET_WAIT_MS = 120_000;
+
 const PRIORITY_ORDER: GroqPriority[] = ['critical', 'high', 'medium', 'low'];
 
 interface QueueEntry<T> {
@@ -85,11 +90,28 @@ async function processQueue(): Promise<void> {
 
       if (!nextEntry) break;
 
-      // Wait for token bucket capacity
+      // Wait for token bucket capacity.
+      //
+      // A single request can legitimately want more than the bucket holds — a
+      // 20K-char scrape prompt estimates at ~9,900 tokens against a 5,000
+      // capacity. refillBuckets() clamps the bucket AT capacity, so reserving an
+      // unclamped amount makes the loop below unsatisfiable: it spins on a timer
+      // forever and takes the whole process with it (this is what killed every
+      // scrape-tech-companies run once estimatedTokens went dynamic). Cap the
+      // reservation at capacity — an oversized request drains the bucket and
+      // goes, which still paces it correctly against the next one.
       refillBuckets();
-      const requiredTokens = nextEntry.estimatedTokens;
+      const requiredTokens = Math.min(nextEntry.estimatedTokens, TOKEN_BUCKET_CAPACITY);
+      const waitDeadline = Date.now() + MAX_BUCKET_WAIT_MS;
 
       while (tokenBucket < requiredTokens || reqBucket < 1) {
+        if (Date.now() >= waitDeadline) {
+          console.warn(
+            `[GroqLimiter] Bucket wait exceeded ${MAX_BUCKET_WAIT_MS}ms ` +
+            `(need ${requiredTokens} tokens, have ${tokenBucket.toFixed(0)}) — proceeding anyway`,
+          );
+          break;
+        }
         const tokenWait = tokenBucket < requiredTokens
           ? ((requiredTokens - tokenBucket) / TOKEN_REFILL_RATE) * 1000
           : 0;

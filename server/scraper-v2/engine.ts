@@ -255,9 +255,25 @@ export class ScraperEngine {
         totalCompanies: companies.length
       });
 
-      const batchResults = await Promise.allSettled(
+      // Race the batch against the abort signal. Checking `signal.aborted` only
+      // between batches is not enough: if a company stalls inside the batch, the
+      // allSettled never resolves and the abort is inert, so the caller's timeout
+      // passes silently and the run burns until something SIGKILLs it. Partial
+      // results collected so far are still returned.
+      const batchPromise = Promise.allSettled(
         batch.map(company => this.scrapeCompany(company, signal))
       );
+
+      let batchResults: PromiseSettledResult<ScrapingResult>[];
+      try {
+        batchResults = await this.raceAbort(batchPromise, signal);
+      } catch {
+        logger.warn('Scrape aborted mid-batch — returning partial results', {
+          companiesCompleted: results.length,
+          totalCompanies: companies.length,
+        });
+        break;
+      }
 
       for (const result of batchResults) {
         if (result.status === 'fulfilled') {
@@ -273,6 +289,26 @@ export class ScraperEngine {
     }
 
     return results;
+  }
+
+  /**
+   * Resolve with `work`, or reject as soon as `signal` aborts — whichever first.
+   * Without a signal the work is simply awaited. The abort listener is removed on
+   * settle so a long run does not accumulate one per batch.
+   */
+  private raceAbort<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (!signal) {return work;}
+    if (signal.aborted) {return Promise.reject(new Error('Scrape aborted'));}
+
+    let onAbort!: () => void;
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () => reject(new Error('Scrape aborted'));
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+
+    return Promise.race([work, aborted]).finally(() => {
+      signal.removeEventListener('abort', onAbort);
+    });
   }
 
   private createError(error: unknown): ScrapingError {
