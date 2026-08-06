@@ -6,7 +6,7 @@
 import { createHash } from 'crypto';
 import { db } from '../db';
 import { jobPostings, users } from '@shared/schema';
-import { eq, and, or } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { gt } from 'drizzle-orm/sql/expressions';
 import { sql } from 'drizzle-orm/sql';
 import { normalizeSkills, SKILL_ALIASES } from '../skill-normalizer';
@@ -402,28 +402,67 @@ export class JobIngestionService {
     return inserted;
   }
 
-  async expireStaleJobs(daysOld: number = 60): Promise<number> {
+  /**
+   * Close jobs that are past their expiry or older than `daysOld`.
+   *
+   * Batched deliberately. As a single statement this NEVER completed: db.ts sets
+   * a 20s statement_timeout, and the update rewrites ~14KB-wide rows across all
+   * 12 indexes on job_postings — `status` is indexed, so Postgres cannot take the
+   * HOT-update path and every row re-inserts into every index, including the HNSW
+   * vector index. It timed out on each run for weeks while reporting a cron
+   * failure, leaving 37% of the live feed as postings that should have been
+   * closed (2026-08-06).
+   *
+   * Each batch is its own transaction, so progress is kept even if a later batch
+   * fails or the cron's wall-clock timeout fires — the next run resumes where this
+   * one stopped, because closed rows no longer match the predicate.
+   */
+  async expireStaleJobs(
+    daysOld: number = 60,
+    opts: { batchSize?: number; maxMs?: number } = {}
+  ): Promise<number> {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - daysOld);
 
-    const result = await db
-      .update(jobPostings)
-      .set({
-        status: 'closed',
-        livenessStatus: 'stale'
-      })
-      .where(
-        and(
-          sql`${jobPostings.source} != 'platform'`,
-          or(
-            sql`${jobPostings.expiresAt} < NOW()`,
-            sql`${jobPostings.createdAt} < ${cutoffDate.toISOString()}`
-          ),
-          eq(jobPostings.status, 'active')
-        )
-      );
+    const batchSize = opts.batchSize ?? 500;
+    // Wall-clock budget so this can never be the reason a cron is killed. The
+    // remainder is simply picked up by the next run.
+    const maxMs = opts.maxMs ?? 10 * 60 * 1000;
+    const startedAt = Date.now();
 
-    return result.count ?? 0;
+    let total = 0;
+    for (;;) {
+      if (Date.now() - startedAt > maxMs) {
+        console.warn(
+          `[JobIngestion] expireStaleJobs hit its ${maxMs}ms budget after ${total} rows — remainder deferred to the next run`
+        );
+        break;
+      }
+
+      // The LIMIT lives in a subquery: UPDATE itself takes no LIMIT, and this
+      // lets each statement finish well inside the 20s statement_timeout.
+      const result = await db
+        .update(jobPostings)
+        .set({
+          status: 'closed',
+          livenessStatus: 'stale'
+        })
+        .where(
+          sql`${jobPostings.id} IN (
+            SELECT id FROM job_postings
+            WHERE source != 'platform'
+              AND status = 'active'
+              AND (expires_at < NOW() OR created_at < ${cutoffDate.toISOString()})
+            LIMIT ${batchSize}
+          )`
+        );
+
+      const n = result.count ?? 0;
+      total += n;
+      if (n < batchSize) break; // drained
+    }
+
+    return total;
   }
 
   // Resolve bad URLs for existing jobs (e.g., amazon.com → amazon.jobs)
