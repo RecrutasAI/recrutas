@@ -18,6 +18,7 @@ import { eq, or } from 'drizzle-orm';
 import { sql } from 'drizzle-orm/sql';
 import { redis } from './redis.js';
 import { resolveHomepage, analyzeCareersPage } from './adzuna-link-resolver.js';
+import { TECH_MIN_POSTINGS, TECH_BAND_MIN, TECH_BAND_MAX } from './tech-roles.js';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -507,11 +508,21 @@ export async function probePendingCompanies(limit: number = 10): Promise<ProbeRe
     .where(
       eq(discoveredCompanies.status, 'pending')
     )
-    //   4. tech-heavy companies first, WITHIN each source tier. Deliberately
+    //   4. credible tech employers first, WITHIN each source tier. Deliberately
     //      ranked *after* the source CASE, not before: Apollo seeds have no
-    //      postings yet so their techScore is 0, and promoting techScore above
+    //      postings yet so their techScore is 0, and promoting tech above
     //      source would re-bury them behind job_mining — undoing the fix the
     //      rule above exists for. See server/lib/tech-roles.ts.
+    //
+    //      ⚠️ This is a BAND, not `techScore DESC`. Measured on prod 2026-08-06:
+    //      333 of 395 scored companies sat at 90-100 on an average of 1.3
+    //      postings — a single tech-titled job scores 100 — so a plain DESC
+    //      sorts by "fewest postings" and aims the prober at noise. Real tech
+    //      employers land at 25-60 (anduril 33, okx 37, airwallex 30) precisely
+    //      because they also hire sales/finance/HR; a pure ~100 is either
+    //      small-N noise or an IT staffing shop, which is the last thing we want
+    //      promoted into direct-scraped supply. So: require a real sample, and
+    //      treat the middle of the range as the signal.
     .orderBy(sql`
       (${discoveredCompanies.lastProbedAt} IS NOT NULL),
       ${discoveredCompanies.lastProbedAt} ASC,
@@ -521,7 +532,11 @@ export async function probePendingCompanies(limit: number = 10): Promise<ProbeRe
         WHEN ${discoveredCompanies.discoverySource} = 'job_mining' THEN 2
         ELSE 3
       END,
-      ${discoveredCompanies.techScore} DESC NULLS LAST,
+      CASE
+        WHEN ${discoveredCompanies.jobCount} >= ${TECH_MIN_POSTINGS}
+         AND ${discoveredCompanies.techScore} BETWEEN ${TECH_BAND_MIN} AND ${TECH_BAND_MAX}
+        THEN 0 ELSE 1
+      END,
       ${discoveredCompanies.id}`)
     .limit(limit);
 
