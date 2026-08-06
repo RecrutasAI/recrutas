@@ -13,6 +13,7 @@ import { jobPostings, discoveredCompanies } from '@shared/schema';
 import { eq } from 'drizzle-orm';
 import { sql, isNotNull, ne } from 'drizzle-orm/sql';
 import { wikipediaDiscovery } from './wikipedia-discovery'; // NEW
+import { TECH_TITLE_PATTERN } from './lib/tech-roles';
 
 // ATS detection patterns
 const ATS_PATTERNS = {
@@ -121,6 +122,7 @@ class CompanyDiscoveryPipeline {
     detectedAts?: string;
     atsId?: string;
     jobCount: number;
+    techScore?: number;
     source: string;
   }>): Promise<void> {
     if (companies.length === 0) return;
@@ -142,6 +144,7 @@ class CompanyDiscoveryPipeline {
             detectedAts: c.detectedAts,
             atsId: c.atsId,
             jobCount: c.jobCount,
+            techScore: c.techScore ?? 0,
             discoverySource: c.source,
             status: 'pending',
           })))
@@ -149,6 +152,9 @@ class CompanyDiscoveryPipeline {
             target: discoveredCompanies.normalizedName,
             set: {
               jobCount: sql`excluded."jobCount"`,
+              // Refresh on every run — a company's mix shifts as we ingest more
+              // of its postings, and a stale score would freeze its queue rank.
+              techScore: sql`excluded."techScore"`,
               updatedAt: new Date(),
             },
           });
@@ -184,6 +190,7 @@ class CompanyDiscoveryPipeline {
           detectedAts: atsType,
           atsId: this.extractAtsId(comp.careerPageUrl || '', atsType),
           jobCount: comp.count,
+          techScore: comp.techScore,
           source: 'job_mining'
         });
       }
@@ -246,11 +253,16 @@ class CompanyDiscoveryPipeline {
   /**
    * Get unique companies from job postings
    */
-  private async getUniqueCompaniesFromJobs(): Promise<Array<{ company: string; count: number; careerPageUrl?: string }>> {
+  private async getUniqueCompaniesFromJobs(): Promise<Array<{ company: string; count: number; careerPageUrl?: string; techScore: number }>> {
     const result = await db.select({
       company: jobPostings.company,
       count: sql<number>`count(*)`,
-      careerPageUrl: sql<string>`max(${jobPostings.careerPageUrl})`
+      careerPageUrl: sql<string>`max(${jobPostings.careerPageUrl})`,
+      // 0-100 share of this company's postings that look like tech roles. Feeds
+      // the probe-queue tiebreaker so the ~14K-deep backlog converts toward tech
+      // instead of toward whoever posts the most. Ranking only — see
+      // server/lib/tech-roles.ts for why this is deliberately not a filter.
+      techScore: sql<number>`round(100.0 * count(*) filter (where ${jobPostings.title} ~* ${TECH_TITLE_PATTERN}) / count(*))`,
     })
     .from(jobPostings)
     .where(isNotNull(jobPostings.company))
@@ -260,7 +272,8 @@ class CompanyDiscoveryPipeline {
     return result.map(row => ({
       company: row.company,
       count: Number(row.count),
-      careerPageUrl: row.careerPageUrl || undefined
+      careerPageUrl: row.careerPageUrl || undefined,
+      techScore: Number(row.techScore) || 0,
     }));
   }
 

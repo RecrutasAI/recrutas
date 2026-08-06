@@ -969,6 +969,11 @@ export const discoveredCompanies = pgTable("discovered_companies", {
   detectedAts: varchar("detectedAts", { length: 50 }),
   atsId: varchar("atsId", { length: 255 }),
   jobCount: integer("jobCount").default(0),
+  /**
+   * 0-100: share of this company's known postings with a tech-role title.
+   * A probe-queue RANKING signal only — never filters. See server/lib/tech-roles.ts.
+   */
+  techScore: integer("techScore").default(0),
   status: varchar("status", { length: 50 }).default("pending"),
   createdAt: timestamp("createdAt").defaultNow(),
   updatedAt: timestamp("updatedAt").defaultNow(),

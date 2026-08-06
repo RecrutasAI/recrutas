@@ -507,6 +507,11 @@ export async function probePendingCompanies(limit: number = 10): Promise<ProbeRe
     .where(
       eq(discoveredCompanies.status, 'pending')
     )
+    //   4. tech-heavy companies first, WITHIN each source tier. Deliberately
+    //      ranked *after* the source CASE, not before: Apollo seeds have no
+    //      postings yet so their techScore is 0, and promoting techScore above
+    //      source would re-bury them behind job_mining — undoing the fix the
+    //      rule above exists for. See server/lib/tech-roles.ts.
     .orderBy(sql`
       (${discoveredCompanies.lastProbedAt} IS NOT NULL),
       ${discoveredCompanies.lastProbedAt} ASC,
@@ -515,7 +520,9 @@ export async function probePendingCompanies(limit: number = 10): Promise<ProbeRe
         WHEN ${discoveredCompanies.discoverySource} LIKE 'apollo:%' THEN 1
         WHEN ${discoveredCompanies.discoverySource} = 'job_mining' THEN 2
         ELSE 3
-      END, ${discoveredCompanies.id}`)
+      END,
+      ${discoveredCompanies.techScore} DESC NULLS LAST,
+      ${discoveredCompanies.id}`)
     .limit(limit);
 
   if (pending.length === 0) {
