@@ -62,18 +62,28 @@ fi
 # recycle WAL and pg_wal grows until the disk is full and the database stops —
 # so an unnoticed archiver failure turns PITR into an outage. Alert on a recent
 # failure or on pg_wal growing past a sane bound.
+#
+# failed_count is CUMULATIVE and never decreases, so "failures in the last hour"
+# stays true for an hour after the archiver has already recovered — which is a
+# false alarm every 15 minutes on a channel whose whole value is being believed.
+# The archiver is stuck only if the most recent EVENT was a failure, i.e. nothing
+# has archived since. Compare the timestamps rather than counting.
 ARCH="$("$PSQL" "$URL" -tAc "
   SELECT COALESCE(failed_count,0) || ' ' ||
-         COALESCE(EXTRACT(EPOCH FROM (now() - last_failed_time))::bigint, 999999)
+         COALESCE(EXTRACT(EPOCH FROM (now() - last_failed_time))::bigint, 999999) || ' ' ||
+         CASE WHEN last_failed_time IS NOT NULL
+               AND (last_archived_time IS NULL OR last_failed_time > last_archived_time)
+              THEN 1 ELSE 0 END
   FROM pg_stat_archiver" 2>/dev/null)"
 ARCH_FAILED="$(echo "$ARCH" | awk '{print $1+0}')"
 ARCH_AGE="$(echo "$ARCH" | awk '{print $2+0}')"
+ARCH_STUCK="$(echo "$ARCH" | awk '{print $3+0}')"
 WAL_MB="$(du -sm /var/lib/postgresql/17/main/pg_wal 2>/dev/null | cut -f1)"
 WAL_MB="${WAL_MB:-0}"
 WAL_MAX_MB="${WAL_MAX_MB:-4096}"
 
-# A failure within the last hour is live, not historical.
-if [ "$ARCH_FAILED" -gt 0 ] && [ "$ARCH_AGE" -lt 3600 ]; then
+# A failure within the last hour is live only if nothing has archived since.
+if [ "$ARCH_STUCK" -eq 1 ] && [ "$ARCH_AGE" -lt 3600 ]; then
   STATUS=warning
   MSG="WAL ARCHIVER FAILING: ${ARCH_FAILED} failures, last ${ARCH_AGE}s ago (pg_wal=${WAL_MB}MB, db=${DB_SIZE})"
   echo "[vps-db-health] $MSG" >&2
