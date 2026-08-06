@@ -13,6 +13,10 @@ import { logger } from '../scraper-v2/utils/logger.js';
 import { companyDiscoveryService, DiscoveredCompany } from './company-discovery.service.js';
 import { atsDetectionService } from './ats-detection.service.js';
 import { deriveWorkdayApiUrl } from '../scraper-v2/strategies/ats-apis.js';
+import { db } from '../db.js';
+import { discoveredCompanies } from '../../shared/schema.js';
+import { and, eq } from 'drizzle-orm';
+import { inArray } from 'drizzle-orm/sql/expressions';
 
 // Import the company list from career-page-scraper and convert to SOTA format
 // Synced with server/career-page-scraper.ts — keep both in sync when adding companies
@@ -254,9 +258,107 @@ export class SOTAScraperService {
   }
 
   /**
+   * Merge APPROVED companies from the `discovered_companies` TABLE.
+   *
+   * ⚠️ Not the same thing as mergeDiscoveredCompanies() above, which merges the
+   * hardcoded KNOWN_COMPANIES array inside company-discovery.service.ts. That
+   * name collision is how this gap survived: the nightly discover → probe →
+   * approve pipeline wrote `status='approved'` for 1,956 companies and NOTHING
+   * ever scraped them. `career-page-scraper.ts` has a loadDynamicCompanies()
+   * that does this correctly, but its only caller (JobRefreshService) is
+   * started from server/index.ts inside the background-services block, which is
+   * disabled on serverless and never runs on the VPS. The crons reach
+   * scrapeSubset() here instead, which read a hardcoded list only.
+   *
+   * STAGED ROLLOUT: scoped by SCRAPER_DYNAMIC_SOURCES (default 'seed') so this
+   * starts with the ~114 curated tech companies rather than opening tier 1 from
+   * ~90 to ~2,000 companies in a single run — this box has a history of tier-1
+   * timeouts and exit-134 heap deaths. Widen by setting the env var (e.g.
+   * 'seed,apollo:ai-data' or 'seed,job_mining') once runtime and memory are
+   * measured. No code change needed to widen.
+   *
+   * Async + memoized: the constructor cannot await, so scrapeSubset()/scrapeAll()
+   * call this before selecting a tier.
+   */
+  private dynamicMergeDone = false;
+
+  private async mergeApprovedFromDatabase(): Promise<void> {
+    if (this.dynamicMergeDone) {return;}
+    this.dynamicMergeDone = true;
+    if (!db) {return;}
+
+    const scope = (process.env.SCRAPER_DYNAMIC_SOURCES ?? 'seed')
+      .split(',').map(s => s.trim()).filter(Boolean);
+    if (scope.length === 0) {return;}
+
+    try {
+      const rows = await db.select().from(discoveredCompanies).where(
+        and(
+          eq(discoveredCompanies.status, 'approved'),
+          inArray(discoveredCompanies.discoverySource, scope),
+        )
+      );
+
+      const existingNames = new Set(this.companies.map(c => c.name.toLowerCase()));
+      let added = 0;
+      let unreachable = 0;
+
+      for (const row of rows) {
+        if (!row.atsId || existingNames.has(row.name.toLowerCase())) {continue;}
+
+        const legacy = this.approvedRowToLegacy(row);
+        if (!legacy) {
+          // workable / smartrecruiters / breezy / recruitee: scrapeSubset()'s
+          // tier filter only selects greenhouse+ashby (1), lever+workday (2)
+          // and !ats (3), so these match NO tier. Skipping them beats pushing a
+          // config nothing will ever select — and beats career-page-scraper.ts's
+          // behaviour of falling back to a bogus boards.greenhouse.io URL.
+          unreachable++;
+          continue;
+        }
+
+        this.companies.push(convertToSOTAConfig(legacy));
+        existingNames.add(row.name.toLowerCase());
+        added++;
+      }
+
+      logger.info(
+        `Merged ${added} approved companies from DB (sources: ${scope.join(',')}); ` +
+        `${unreachable} skipped — their ATS is not covered by any tier`
+      );
+    } catch (err: any) {
+      // Never let this break a scrape: worst case we run the hardcoded list.
+      logger.error(`Failed to merge approved companies: ${err?.message}`);
+    }
+  }
+
+  /** Map an approved discovered_companies row onto convertToSOTAConfig's input. */
+  private approvedRowToLegacy(row: typeof discoveredCompanies.$inferSelect): any | null {
+    const id = row.atsId!;
+    switch (row.detectedAts) {
+      case 'greenhouse':
+        return { name: row.name, careerUrl: row.careerPageUrl || `https://boards.greenhouse.io/${id}`, greenhouseId: id };
+      case 'ashby':
+        return { name: row.name, careerUrl: row.careerPageUrl || `https://jobs.ashbyhq.com/${id}`, ashbyId: id };
+      case 'lever':
+        return { name: row.name, careerUrl: row.careerPageUrl || `https://jobs.lever.co/${id}`, leverId: id };
+      case 'workday':
+        // Only usable when we have a real *.myworkdayjobs.com board URL to
+        // derive the JSON API from; otherwise it degrades to page scraping,
+        // which tier 2 does not select for.
+        return row.careerPageUrl?.includes('myworkdayjobs.com')
+          ? { name: row.name, careerUrl: row.careerPageUrl, workdayBoardUrl: row.careerPageUrl }
+          : null;
+      default:
+        return null;
+    }
+  }
+
+  /**
    * Run full scrape of all companies
    */
   async scrapeAll(options?: { signal?: AbortSignal }): Promise<ScrapeResult> {
+    await this.mergeApprovedFromDatabase();
     const startTime = Date.now();
     const result: ScrapeResult = {
       success: true,
@@ -320,6 +422,7 @@ export class SOTAScraperService {
    * Tier 3: Custom career pages (AI extraction, slowest)
    */
   async scrapeSubset(tier: 1 | 2 | 3, options?: { signal?: AbortSignal }): Promise<ScrapeResult> {
+    await this.mergeApprovedFromDatabase();
     const startTime = Date.now();
     const result: ScrapeResult = {
       success: true,
