@@ -106,10 +106,24 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # restored is a hypothesis; this is the only job that turns it into a fact.
 0 11 * * 0 $RUN verify-restore 60 bash infra/vps/verify-restore.sh
 
-# Physical base backup — weekly, Sunday 08:00. The other half of PITR: WAL
-# segments can only be replayed onto a PHYSICAL base backup, never onto a
-# pg_dump. Also prunes archived WAL older than the oldest base backup kept.
-0 8 * * 0 $RUN basebackup 60 bash infra/vps/backup-basebackup.sh
+# Physical base backup — TWICE weekly, Sunday + Wednesday 08:00. The other half
+# of PITR: WAL segments can only be replayed onto a PHYSICAL base backup, never
+# onto a pg_dump. Also prunes archived WAL older than the oldest base backup kept.
+#
+# Twice weekly, not weekly (2026-08-06): WAL retention is keyed to the OLDEST
+# base backup kept, so with KEEP=2 the cadence IS the retention window. Weekly
+# meant 7-14 days of WAL, which at the measured rate reached 18GB and filled the
+# disk. Twice weekly halves that window to 3.5-7 days for the cost of one extra
+# ~850MB backup, and keeps prune-wal-cap.sh a genuine exception rather than a
+# routine event.
+0 8 * * 0,3 $RUN basebackup 60 bash infra/vps/backup-basebackup.sh
+
+# WAL archive space cap — hourly at :40 (a slot nothing else uses).
+# Safety valve under the retention above: retention is bounded by TIME, the disk
+# by SPACE, and only the second one causes outages. Normally a no-op; it prunes
+# only when the archive exceeds WAL_ARCHIVE_MAX_MB, and refuses to prune past the
+# newest base backup (that would leave WAL with nothing to replay onto).
+40 * * * * $RUN prune-wal-cap 10 bash infra/vps/prune-wal-cap.sh
 
 # Supabase Storage objects (résumé FILES) — daily 09:45.
 # The SQL dumps only carry storage METADATA; without this the files themselves

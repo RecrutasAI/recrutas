@@ -40,6 +40,24 @@ if [ "$DISK_PCT" -ge "$DISK_WARN_PCT" ]; then
   echo "[vps-db-health] $MSG" >&2
 fi
 
+# 2a. Backup partition. Once /opt/recrutas/backups is its own volume, a full
+# backup disk no longer shows up in the DB-partition check above — and silence
+# there would be indistinguishable from health while backups quietly stop.
+# Checked separately (and only when it IS a separate mount, so this is a no-op
+# on the single-disk layout).
+BACKUP_DIR_CHK="${RECRUTAS_BACKUPS_ROOT:-/opt/recrutas/backups}"
+if mountpoint -q "$BACKUP_DIR_CHK" 2>/dev/null; then
+  BK_PCT="$(df --output=pcent "$BACKUP_DIR_CHK" 2>/dev/null | tail -1 | tr -dc '0-9')"
+  BK_PCT="${BK_PCT:-0}"
+  if [ "$BK_PCT" -ge "$DISK_WARN_PCT" ]; then
+    STATUS=warning
+    MSG="LOW DISK on BACKUP volume: ${BK_PCT}% used (db partition ${DISK_PCT}%, db=${DB_SIZE})"
+    echo "[vps-db-health] $MSG" >&2
+  else
+    MSG="$MSG backup=${BK_PCT}%"
+  fi
+fi
+
 # 2b. WAL archiver. If archive_command starts failing, Postgres refuses to
 # recycle WAL and pg_wal grows until the disk is full and the database stops —
 # so an unnoticed archiver failure turns PITR into an outage. Alert on a recent
