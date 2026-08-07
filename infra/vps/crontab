@@ -106,17 +106,25 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # restored is a hypothesis; this is the only job that turns it into a fact.
 0 11 * * 0 $RUN verify-restore 60 bash infra/vps/verify-restore.sh
 
-# Physical base backup — TWICE weekly, Sunday + Wednesday 08:00. The other half
-# of PITR: WAL segments can only be replayed onto a PHYSICAL base backup, never
-# onto a pg_dump. Also prunes archived WAL older than the oldest base backup kept.
+# Physical base backup — DAILY at 08:00. The other half of PITR: WAL segments
+# can only be replayed onto a PHYSICAL base backup, never onto a pg_dump. Also
+# prunes archived WAL older than the oldest base backup kept.
 #
-# Twice weekly, not weekly (2026-08-06): WAL retention is keyed to the OLDEST
-# base backup kept, so with KEEP=2 the cadence IS the retention window. Weekly
-# meant 7-14 days of WAL, which at the measured rate reached 18GB and filled the
-# disk. Twice weekly halves that window to 3.5-7 days for the cost of one extra
-# ~850MB backup, and keeps prune-wal-cap.sh a genuine exception rather than a
-# routine event.
-0 8 * * 0,3 $RUN basebackup 60 bash infra/vps/backup-basebackup.sh
+# Cadence history: weekly → twice weekly (2026-08-06) → daily (2026-08-07).
+# WAL retention is keyed to the OLDEST base backup kept, so with KEEP=2 the
+# cadence IS the retention window — the cadence is really a DISK SETTING wearing
+# a schedule's clothes.
+#
+# Daily because the scraper fix (31ff655) took ingestion from ~40 companies to
+# ~1,555, and WAL with it to a measured ~3.3GB/day. Twice weekly meant intervals
+# of up to 4 days = ~13GB of WAL, which is ABOVE the 10GB cap in
+# prune-wal-cap.sh — i.e. the cap could never be satisfied by pruning and every
+# run would have fail-alerted. Daily puts one interval at ~3.3GB, ~3x under cap.
+# Cost is one extra ~1.1GB backup/day at KEEP=2; PITR window is now ~2 days deep
+# (the 7-day offsite dumps cover anything older).
+#
+# If WAL/day grows again, change THIS before raising the cap.
+0 8 * * * $RUN basebackup 60 bash infra/vps/backup-basebackup.sh
 
 # WAL archive space cap — hourly at :40 (a slot nothing else uses).
 # Safety valve under the retention above: retention is bounded by TIME, the disk

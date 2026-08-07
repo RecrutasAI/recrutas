@@ -34,13 +34,20 @@ PG_ARCHIVECLEANUP="${PG_ARCHIVECLEANUP_BIN:-/usr/lib/postgresql/17/bin/pg_archiv
 PSQL="${PSQL_BIN:-/usr/lib/postgresql/17/bin/psql}"
 ALERT="$APP_DIR/infra/vps/alert.sh"
 
-# Cap in MB. Default 20GB: comfortably above the ~10GB a tuned 7-day window
-# costs, low enough to leave room on a 100GB backup volume for the dumps.
-CAP_MB="${WAL_ARCHIVE_MAX_MB:-20480}"
-
 cd "$APP_DIR" || { echo "[prune-wal-cap] cannot cd $APP_DIR" >&2; exit 1; }
 set -a; # shellcheck disable=SC1091
 source .env; set +a
+
+# Cap in MB. MUST be read AFTER sourcing .env — it was computed before, which
+# made WAL_ARCHIVE_MAX_MB in .env dead config that silently did nothing (found
+# 2026-08-07: set it to 10240, script still reported "cap 20480MB" and declined
+# to prune while the disk climbed).
+#
+# Default 10GB, sized against the measured ~3.3GB/day of WAL: with the DAILY
+# basebackup this now sits under, one interval costs ~3.3GB, so 10GB is ~3x
+# headroom. Raising the basebackup interval without raising this cap puts the
+# script straight into its own "one interval exceeds the cap" alert.
+CAP_MB="${WAL_ARCHIVE_MAX_MB:-10240}"
 
 STARTED="$(date -u +%FT%TZ)"
 DB_URL="${POSTGRES_URL_NON_POOLING:-${POSTGRES_URL:-}}"

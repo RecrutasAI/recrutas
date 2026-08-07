@@ -1,10 +1,23 @@
 #!/usr/bin/env bash
 # Nightly Supabase logical backup → local gzip on the VPS.
 #
-# Dumps the irreplaceable business schemas (public = app data, auth = user
-# accounts, storage = object metadata) as plain SQL, gzipped. Plain SQL so it
-# restores anywhere, no pg_restore version coupling:
+# Dumps the schemas that still LIVE in Supabase — auth (user accounts) and
+# storage (object metadata) — as plain SQL, gzipped. Plain SQL so it restores
+# anywhere, no pg_restore version coupling:
 #   gunzip -c supabase-<ts>.sql.gz | psql "$TARGET_DATABASE_URL"
+#
+# `public` is deliberately NOT dumped any more. App data moved to the
+# self-hosted VPS Postgres on 2026-07-25 (backup-vps-db.sh covers it); Supabase's
+# copy has been frozen ever since — 0 new rows in 24h vs 16,600 on the VPS. We
+# were re-dumping that dead 604MB nightly and keeping 7 copies of it: 1.5GB of a
+# 38GB disk spent re-photographing a corpse, which contributed to the 2026-08-06
+# disk-full incident. auth+storage is ~2.5MB uncompressed, so a dump is now
+# sub-megabyte instead of 199MB.
+#
+# The frozen `public` snapshot still has value as the rollback target for the
+# migration, so ONE full pre-trim dump is retained out-of-band in
+# backups/db/ (supabase-20260806T090001Z.sql.gz). Do not let retention eat it
+# without taking a replacement full dump first.
 #
 # This is INDEPENDENT of Supabase's own managed backups by design — its whole
 # job is to survive a Supabase account lockout/deletion (the same vendor-T&S
@@ -49,7 +62,7 @@ ERR="$BACKUP_DIR/last-error.log"
 
 # Atomic: write to .partial, validate, then rename.
 "$PG_DUMP" "$URL" \
-  --schema=public --schema=auth --schema=storage \
+  --schema=auth --schema=storage \
   --no-owner --no-acl --quote-all-identifiers \
   2>"$ERR" | gzip > "$TMP"
 rc=${PIPESTATUS[0]}
@@ -60,10 +73,21 @@ if [ "$rc" -ne 0 ]; then
   exit "$rc"
 fi
 
-# Guard against truncated / near-empty dumps (real dump is hundreds of MB).
+# Guard against truncated / near-empty dumps. Threshold was 1MB back when this
+# dumped `public` too and ran to hundreds of MB; auth+storage compresses to well
+# under that, so the old floor would have failed every run.
 SZ="$(stat -c%s "$TMP" 2>/dev/null || echo 0)"
-if [ "$SZ" -lt 1048576 ]; then
+if [ "$SZ" -lt 65536 ]; then
   echo "[db-backup] dump suspiciously small ($SZ bytes); keeping $TMP for inspection" >&2
+  exit 1
+fi
+
+# Size alone is a weak check on a small dump, so assert the payload we actually
+# care about is present: a dump that lost auth.users is worthless no matter how
+# many bytes it has.
+if ! zcat "$TMP" | grep -qaE 'COPY "auth"\."users"'; then
+  echo "[db-backup] dump is missing auth.users — refusing to publish it" >&2
+  mv "$TMP" "$OUT.suspect"
   exit 1
 fi
 
