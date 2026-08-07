@@ -1142,45 +1142,82 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     }
   }));
 
+  // Early-access invite gate — OPEN by default since 2026-08-07.
+  //
+  // This used to 403 every new signup unconditionally with no way to turn it
+  // off, which meant no stranger could create an account. Removing it is the
+  // launch blocker it always was; the flag exists so re-gating is a config
+  // change rather than another code change.
+  const INVITE_GATE_ON = /^(1|true|on)$/i.test(process.env.INVITE_GATE ?? '');
+
+  /**
+   * Resolve an OPTIONAL invite code for a new user.
+   *
+   * Returns a 403 only while the gate is on. With the gate off a code is no
+   * longer a credential — it is just a campaign tag, so an unknown or expired
+   * one still yields `source` and lets the signup through. That keeps launch-URL
+   * attribution (`/signup/candidate?code=REDDIT-A1B2`) working without minting a
+   * real invite row per channel, which is the whole reason signup_source exists.
+   *
+   * Validate only — callers must redeem AFTER upsertUser, because
+   * invite_code_redemptions has a FK to users.id and that row does not exist
+   * yet. Redeeming here burned a use and then 403'd on the FK failure.
+   */
+  async function resolveSignupInvite(req: any, role: string): Promise<
+    | { ok: true; invite: any | null; code?: string; source?: string }
+    | { ok: false; status: number; body: { message: string; code: string } }
+  > {
+    const raw = req.body?.inviteCode ?? req.headers['x-invite-code'];
+    const supplied = typeof raw === 'string' ? raw.trim() : '';
+
+    // Source is the code PREFIX (REDDIT-A1B2 → reddit), derived before any
+    // validation so it survives codes that were never real invite rows.
+    const source = supplied ? supplied.split('-')[0].toLowerCase() || undefined : undefined;
+
+    if (!supplied) {
+      return INVITE_GATE_ON
+        ? { ok: false, status: 403, body: { message: 'Invite code required', code: 'INVITE_REQUIRED' } }
+        : { ok: true, invite: null };
+    }
+
+    const result = await storage.validateInviteCode(supplied, role);
+    if (!result.valid) {
+      return INVITE_GATE_ON
+        ? { ok: false, status: 403, body: { message: result.error ?? 'Invalid invite code', code: 'INVITE_INVALID' } }
+        : { ok: true, invite: null, source };
+    }
+    return { ok: true, invite: result.invite, code: result.invite.code, source };
+  }
+
   // Sync Supabase auth user into local DB (called after signup/login)
-  // For new users: requires a valid invite code (early access gate).
-  // Existing users pass through without a code.
+  // New users may supply an invite code; it is only REQUIRED when the gate is on.
   app.post('/api/auth/sync', isAuthenticated, asyncHandler(async (req: any, res) => {
     try {
       if (!req.user) {return res.status(401).json({ message: "Unauthorized" });}
       const isNew = !(await storage.getUser(req.user.id));
 
-      // Early access gate: new users must provide a valid invite code.
-      // Validate only — redemption happens AFTER upsertUser below, because
-      // invite_code_redemptions has a FK to users.id and the row does not exist
-      // yet. Redeeming here burned a use and then 403'd on the FK failure.
       let redeemedCode: string | undefined;
       let pendingInvite: any = null;
+      let signupSource: string | undefined;
       if (isNew) {
-        const inviteCode = req.body?.inviteCode || req.headers['x-invite-code'];
-        if (!inviteCode) {
-          return res.status(403).json({ message: 'Invite code required', code: 'INVITE_REQUIRED' });
-        }
         const role = req.user.user_metadata?.role || 'candidate';
-        const result = await storage.validateInviteCode(inviteCode, role);
-        if (!result.valid) {
-          return res.status(403).json({ message: result.error, code: 'INVITE_INVALID' });
+        const invite = await resolveSignupInvite(req, role);
+        if (!invite.ok) {
+          return res.status(invite.status).json(invite.body);
         }
-        pendingInvite = result.invite;
-        redeemedCode = pendingInvite.code;
+        pendingInvite = invite.invite;
+        redeemedCode = invite.code;
+        signupSource = invite.source;
       }
-
-      // Derive signup source from invite code prefix (e.g. REDDIT-A1B2 → reddit)
-      const signupSource = redeemedCode
-        ? redeemedCode.split('-')[0].toLowerCase()
-        : undefined;
 
       const user = await storage.upsertUser({
         id: req.user.id,
         email: req.user.email || '',
         name: req.user.email || req.user.id,
         emailVerified: true,
-        ...(isNew && redeemedCode ? { invite_code_used: redeemedCode, signup_source: signupSource } : {}),
+        // Recorded independently: an untracked code still yields a source.
+        ...(isNew && redeemedCode ? { invite_code_used: redeemedCode } : {}),
+        ...(isNew && signupSource ? { signup_source: signupSource } : {}),
       });
       // Safe to consume now that the user row exists.
       if (pendingInvite) {
@@ -1205,34 +1242,29 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       const { role } = req.body;
       if (!['candidate', 'talent_owner'].includes(role)) {return res.status(400).json({ message: "Invalid role" });}
 
-      // Early access gate: if user is not yet in local DB, they must have an invite code
+      // Same optional-invite handling as /api/auth/sync (see resolveSignupInvite).
       const existingUser = await storage.getUser(req.user.id);
       let roleRedeemedCode: string | undefined;
       let rolePendingInvite: any = null;
+      let roleSignupSource: string | undefined;
       if (!existingUser) {
-        const inviteCode = req.body?.inviteCode || req.headers['x-invite-code'];
-        if (!inviteCode) {
-          return res.status(403).json({ message: 'Invite code required', code: 'INVITE_REQUIRED' });
+        const invite = await resolveSignupInvite(req, role);
+        if (!invite.ok) {
+          return res.status(invite.status).json(invite.body);
         }
-        // Validate only; redeem after upsertUser (see /api/auth/sync).
-        const result = await storage.validateInviteCode(inviteCode, role);
-        if (!result.valid) {
-          return res.status(403).json({ message: result.error, code: 'INVITE_INVALID' });
-        }
-        rolePendingInvite = result.invite;
-        roleRedeemedCode = rolePendingInvite.code;
+        rolePendingInvite = invite.invite;
+        roleRedeemedCode = invite.code;
+        roleSignupSource = invite.source;
       }
 
       // Ensure user exists in local DB before updating role (Supabase Auth doesn't auto-sync)
-      const roleSignupSource = roleRedeemedCode
-        ? roleRedeemedCode.split('-')[0].toLowerCase()
-        : undefined;
       await storage.upsertUser({
         id: req.user.id,
         email: req.user.email || '',
         name: req.user.email || req.user.id,
         emailVerified: true,
-        ...(!existingUser && roleRedeemedCode ? { invite_code_used: roleRedeemedCode, signup_source: roleSignupSource } : {}),
+        ...(!existingUser && roleRedeemedCode ? { invite_code_used: roleRedeemedCode } : {}),
+        ...(!existingUser && roleSignupSource ? { signup_source: roleSignupSource } : {}),
       });
       // Safe to consume now that the user row exists.
       if (rolePendingInvite) {
