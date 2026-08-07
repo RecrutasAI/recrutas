@@ -85,7 +85,13 @@ fi
 # Size alone is a weak check on a small dump, so assert the payload we actually
 # care about is present: a dump that lost auth.users is worthless no matter how
 # many bytes it has.
-if ! zcat "$TMP" | grep -qaE 'COPY "auth"\."users"'; then
+#
+# grep -c, not grep -q: under `set -o pipefail`, grep -q exits on the first match
+# and SIGPIPEs zcat, so the PIPELINE reports failure on a PERFECTLY GOOD dump.
+# That is exactly what happened on the first run of this check. -c consumes the
+# whole stream, so there is no early close to fail on.
+HAS_USERS="$(zcat "$TMP" | grep -acE '^COPY "auth"\."users" ' || true)"
+if [ "${HAS_USERS:-0}" -lt 1 ]; then
   echo "[db-backup] dump is missing auth.users — refusing to publish it" >&2
   mv "$TMP" "$OUT.suspect"
   exit 1
