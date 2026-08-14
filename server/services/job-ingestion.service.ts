@@ -285,7 +285,13 @@ export class JobIngestionService {
       });
       const toUpdate = chunk.filter(existsByKey);
 
-      // Bulk update liveness for existing jobs
+      // Bulk update liveness for existing jobs. Gated on staleness: scrapers
+      // re-see every live job ~6x/day (ATS every 4h + tier runs), and an
+      // unconditional touch rewrote all ~185K rows each pass — 1M+ updates and
+      // ~5GB of WAL per day, which is what kept filling the VPS disk. A row
+      // already marked active and checked in the last 20h carries no new
+      // information, so skip it; the 20h window still guarantees a daily
+      // touch, which is all liveness probing and expiry ever read.
       if (toUpdate.length > 0) {
         await db.execute(sql.raw(`
           UPDATE job_postings SET
@@ -295,6 +301,9 @@ export class JobIngestionService {
           WHERE (external_id, source) IN (${toUpdate.map(j =>
             `('${j.effectiveExternalId.replace(/'/g, "''")}', '${(j.source ?? 'unknown').replace(/'/g, "''")}')`
           ).join(', ')})
+            AND (liveness_status IS DISTINCT FROM 'active'
+              OR last_liveness_check IS NULL
+              OR last_liveness_check < NOW() - INTERVAL '20 hours')
         `));
         stats.duplicates += toUpdate.length;
 
@@ -323,6 +332,11 @@ export class JobIngestionService {
               updated_at = NOW()
             FROM (VALUES ${values}) AS v(external_id, source, description, skills)
             WHERE jp.external_id = v.external_id AND jp.source = v.source
+              -- Only touch rows that actually need healing: without this gate the
+              -- CASEs keep the old values but updated_at = NOW() still rewrites
+              -- every matched row on every scrape pass (WAL amplification).
+              AND (jp.description IS NULL OR jp.description = ''
+                OR jp.skills IS NULL OR jsonb_array_length(jp.skills) = 0)
           `));
         }
       }

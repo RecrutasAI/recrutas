@@ -78,6 +78,8 @@ fi
 mv "$TMP" "$OUT"
 echo "[vps-db-backup] wrote $OUT ($(du -h "$OUT" | cut -f1))"
 
-# Retention: drop dumps older than RETAIN_DAYS.
-find "$BACKUP_DIR" -name 'recrutas-db-*.sql.gz' -type f -mtime +"$RETAIN_DAYS" -delete
+# Retention: keep RETAIN_DAYS daily dumps. `-mtime +N` matches files strictly
+# older than N+1 days, so +RETAIN_DAYS actually kept RETAIN_DAYS+1 dumps —
+# with ~1.2GB dumps that eighth file was a real bite out of the disk budget.
+find "$BACKUP_DIR" -name 'recrutas-db-*.sql.gz' -type f -mtime +"$((RETAIN_DAYS - 1))" -delete
 echo "[vps-db-backup] kept $(ls -1 "$BACKUP_DIR"/recrutas-db-*.sql.gz 2>/dev/null | wc -l) dump(s) in $BACKUP_DIR"
