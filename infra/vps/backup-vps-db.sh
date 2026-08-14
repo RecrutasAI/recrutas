@@ -6,16 +6,32 @@
 # else. Plain SQL so it restores anywhere:
 #   gunzip -c recrutas-db-<ts>.sql.gz | psql "$TARGET"
 #
-# Offsite: while the old Supabase project is kept as a rollback (>=2 weeks
-# post-cutover), Supabase itself is a second copy of this data. A dedicated
-# offsite target (B2 / recrutas-dev storage) should be wired before that
-# window closes — see infra/vps/README.md.
+# Offsite: LIVE since 2026-07. offsite-backup.sh (cron 10:15) GPG-encrypts the
+# newest dump here and pushes it to R2 on a 7-day window, so this directory is
+# the fast-restore copy and R2 is the deep one. That is why RETAIN_DAYS below
+# is 2 — if you ever disable the offsite push, raise it back first.
 #
 # Runs via run-cron.sh (lock + timeout + log), same as the other jobs.
 set -uo pipefail
 
 BACKUP_DIR="${RECRUTAS_VPS_BACKUP_DIR:-/opt/recrutas/backups/vps-db}"
-RETAIN_DAYS="${RECRUTAS_BACKUP_RETAIN_DAYS:-7}"
+# Own retention knob, deliberately NOT the shared RECRUTAS_BACKUP_RETAIN_DAYS
+# that backup-supabase.sh and backup-storage.sh use. Those two produce 194MB and
+# 450MB total; this one produces ~1.3GB PER DAY and grew 36% in the week to
+# 2026-08-14 (959MB → 1.3GB) as the job table grew. It is the only one of the
+# three whose retention is a disk-capacity decision, so it gets its own dial —
+# turning the shared one down to protect this disk would also throw away auth
+# and résumé history that costs almost nothing to keep.
+#
+# 2, not 7, because offsite-backup.sh pushes the newest dump to R2 nightly on a
+# 7-day window (verified 2026-08-14: all 7 local dumps had a .gpg counterpart
+# there). Seven local copies were 7.5GB duplicating a window R2 already holds —
+# on the same volume Postgres runs on, which filled three times in nine days.
+# Local copies exist for a FAST restore, not for depth; depth lives offsite.
+#
+# Raising this is a disk decision: budget ~1.3GB per day and growing.
+# No chained fallback to the shared var on purpose — one dial, one meaning.
+RETAIN_DAYS="${RECRUTAS_VPS_DB_RETAIN_DAYS:-2}"
 PG_DUMP="${PG_DUMP_BIN:-/usr/lib/postgresql/17/bin/pg_dump}"
 # Local session connection to the self-hosted DB. Defaults to the app role over
 # localhost; override with VPS_DB_DUMP_URL if credentials differ.
