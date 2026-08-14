@@ -65,7 +65,11 @@ S3_ENDPOINT="$(r2 endpoint | sed -E 's#^https?://##')"
 CIPHER_PASS="$(printf '%s' "$OFFSITE_GPG_PASSPHRASE" | sha256sum | cut -d' ' -f1)"
 
 install -d -m 0750 -o postgres -g postgres /var/log/pgbackrest /var/lib/pgbackrest
-install -d -m 0750 /etc/pgbackrest
+# Group postgres, not root: pgbackrest runs as postgres and needs to traverse
+# this directory to read the config. 0750 root:root here fails with a bare
+# "[041]: unable to open file ... Permission denied" that reads like a problem
+# with the file rather than the directory above it.
+install -d -m 0750 -o root -g postgres /etc/pgbackrest
 
 # 0640 root:postgres — postgres must read it (archive-push runs as postgres),
 # nothing else should. Written via a temp file so a failure here cannot leave a
@@ -121,8 +125,18 @@ rm -f "$TMP"; trap - EXIT
 echo "[setup-pgbackrest] wrote $CONF (repo s3://${BUCKET}/pgbackrest, encrypted, retention 2 full)"
 
 # stanza-create is idempotent; stanza-upgrade covers a PG major-version bump.
-if sudo -u postgres pgbackrest --stanza="$STANZA" stanza-create 2>&1 | tee /dev/stderr | grep -qi 'already exists'; then
-  sudo -u postgres pgbackrest --stanza="$STANZA" stanza-upgrade || true
+# Capture rather than pipe: piping into grep makes $? the GREP's status, which
+# silently swallowed a hard "Permission denied" here and still printed "ready".
+OUT="$(sudo -u postgres pgbackrest --stanza="$STANZA" stanza-create 2>&1)"; RC=$?
+printf '%s\n' "$OUT"
+if [ "$RC" -ne 0 ]; then
+  if printf '%s' "$OUT" | grep -qiE 'already exists|stanza-upgrade'; then
+    sudo -u postgres pgbackrest --stanza="$STANZA" stanza-upgrade \
+      || { echo "[setup-pgbackrest] stanza-upgrade failed" >&2; exit 1; }
+  else
+    echo "[setup-pgbackrest] stanza-create failed (rc=$RC) — see output above" >&2
+    exit 1
+  fi
 fi
 
 echo "[setup-pgbackrest] stanza '$STANZA' ready"
