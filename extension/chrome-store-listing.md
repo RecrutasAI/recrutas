@@ -39,7 +39,7 @@ PRIVACY:
 • Your data stays in your Recrutas account
 • Screenshots are used only for form analysis and are not stored
 • No tracking, no ads, no data selling
-• Full privacy policy: https://recrutas.ai/privacy
+• Full privacy policy: https://www.recrutas.ai/privacy
 
 Recrutas is free for candidates. No credit card required.
 
@@ -59,10 +59,16 @@ English (United States)
 - **Small promo tile (optional, recommended):** 440×280 PNG — not yet made
 - **Marquee promo tile (optional):** 1400×560 — not needed for launch
 
-### URLs (all verified 200)
-- Homepage: https://recrutas.ai
-- Support: https://recrutas.ai/early-access
-- Privacy policy: https://recrutas.ai/privacy
+### URLs
+Use the **www** host — it is the canonical one (the bare apex 307-redirects to it),
+so a listing pointing at the apex sends reviewers through a redirect.
+
+- Homepage: https://www.recrutas.ai  (200)
+- Support: **support@recrutas.ai**  — Chrome accepts a support email in place of a URL.
+  Use the email, not a page: there is no support page, and the old
+  `/early-access` URL now 308-redirects to `/auth` (waitlist retired, `c5148e4`).
+  This address is the app's real reply-to and receives in-app feedback.
+- Privacy policy: https://www.recrutas.ai/privacy  (200)
 
 ---
 
@@ -100,6 +106,7 @@ Declare the following collected data types:
 
 ## Blockers before submit
 1. **$5 dev account** — register + pay (human; Google login + CAPTCHA can't be automated).
+   This is the ONLY hard blocker.
 2. (Optional) 440×280 small promo tile.
 
 All listing content (copy, privacy answers, 1280×800 screenshots, MV3 zip) is ready — only the
