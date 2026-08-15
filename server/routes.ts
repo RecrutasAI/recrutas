@@ -626,6 +626,21 @@ export async function registerRoutes(app: Express): Promise<Express> {
         ? rawWorkType
         : undefined;
 
+      // `limit` trims the response only — it is deliberately NOT pushed down into
+      // storage.getExternalJobs. That query fetches a 150-row pool ranked by
+      // US-priority + recency and *then* filters by location in JS, so shrinking
+      // the pool would quietly degrade location searches rather than just
+      // returning fewer rows.
+      //
+      // For the same reason the cache still stores the full pool and the slice is
+      // applied on the way out: one entry serves every limit, and a caller asking
+      // for 10 rows can't poison the cache for a caller who wants all of them.
+      const MAX_LIMIT = 150;
+      const rawLimit = Number(req.query.limit);
+      const limit = Number.isFinite(rawLimit) && rawLimit >= 1
+        ? Math.min(Math.floor(rawLimit), MAX_LIMIT)
+        : MAX_LIMIT;
+
       const cacheKey = JSON.stringify({ skills: skills.sort(), jobTitle, location, workType });
       const cached = externalJobsCache.get(cacheKey);
       if (cached && Date.now() - cached.ts < EXTERNAL_JOBS_TTL_MS) {
@@ -633,7 +648,7 @@ export async function registerRoutes(app: Express): Promise<Express> {
         // per-lambda and almost never hits on serverless); stale-while-revalidate
         // is stripped by the edge unless s-maxage is present.
         res.set('Cache-Control', 'public, max-age=60, s-maxage=180, stale-while-revalidate=600');
-        return res.json({ jobs: cached.jobs, cached: true, message: 'External jobs from cache' });
+        return res.json({ jobs: cached.jobs.slice(0, limit), cached: true, message: 'External jobs from cache' });
       }
 
       // Return external jobs from database (no live scraping)
@@ -650,7 +665,7 @@ export async function registerRoutes(app: Express): Promise<Express> {
 
       res.set('Cache-Control', 'public, max-age=60, s-maxage=180, stale-while-revalidate=600');
       res.json({
-        jobs: externalJobs || [],
+        jobs: (externalJobs || []).slice(0, limit),
         cached: false,
         message: 'External jobs from database',
       });
