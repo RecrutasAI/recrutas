@@ -1053,6 +1053,25 @@ Analyze the form and return the actions JSON to fill every field you can.`;
         }
       }
 
+      // Final step of the phase-1 activation funnel (signup → résumé → feed →
+      // ≥1 auto-apply). Recorded here rather than in the extension on purpose:
+      // the extension's own telemetry is written to chrome.storage.local and
+      // never uploaded, and instrumenting it would need a store release per
+      // browser. This fires server-side, so Firefox and Chrome are measured
+      // identically and the event attributes to an authenticated user.
+      //
+      // Emitted only once actions exist — a fill that produced nothing is not
+      // an auto-apply, and counting it would inflate the metric the phase is
+      // gated on.
+      if (actions.length > 0) {
+        serverTrack(req.user.id, 'auto_apply_filled', {
+          field_count: fields.length,
+          action_count: actions.length,
+          resume_attached: actions.some(a => a.action === 'upload_resume') && !!resumeUrl,
+          company: jobContext?.company ?? null,
+        });
+      }
+
       res.json({ actions, resumeUrl });
     } catch (error) {
       console.error('Extension fill-form error:', error);

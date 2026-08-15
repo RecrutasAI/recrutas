@@ -413,13 +413,30 @@ export function registerMetricsRoutes(app: Express) {
     const days = Math.max(1, Math.min(90, parseInt((req.query.days as string) || '7', 10)));
     const since = new Date(Date.now() - days * 86400000).toISOString();
 
-    const steps: Array<{ event: string; label: string }> = [
+    // Phase-1 activation funnel: signup → résumé uploaded → feed viewed →
+    // ≥1 auto-apply. This replaces the exam-gated funnel (application_created →
+    // exam_graded → sla_response_sent), which measured the paused Jul-15 launch
+    // plan and read 0/0 on its last three steps because no employer has posted
+    // an internal job yet — a funnel that cannot move is not a metric.
+    //
+    // Pass ?funnel=exam to get the old steps back; that plan is paused, not
+    // discarded, and it resumes once employers are onboarded.
+    const EXAM_STEPS: Array<{ event: string; label: string }> = [
       { event: '$identify', label: 'signed_in' },
       { event: 'resume_uploaded', label: 'resume_uploaded' },
       { event: 'application_created', label: 'application_created' },
       { event: 'exam_graded', label: 'exam_graded' },
       { event: 'sla_response_sent', label: 'sla_response_sent' },
     ];
+
+    const ACTIVATION_STEPS: Array<{ event: string; label: string }> = [
+      { event: 'signup_completed', label: 'signed_up' },
+      { event: 'resume_uploaded', label: 'resume_uploaded' },
+      { event: 'job_feed_viewed', label: 'feed_viewed' },
+      { event: 'auto_apply_filled', label: 'auto_applied' },
+    ];
+
+    const steps = req.query.funnel === 'exam' ? EXAM_STEPS : ACTIVATION_STEPS;
 
     try {
       const results = await Promise.all(
@@ -459,7 +476,14 @@ export function registerMetricsRoutes(app: Express) {
               : null,
       }));
 
-      res.json({ days, since, steps: withConversion });
+      // Name the funnel in the response — the two have overlapping step labels
+      // and a bare number is easy to attribute to the wrong plan.
+      res.json({
+        funnel: req.query.funnel === 'exam' ? 'exam_gated' : 'activation',
+        days,
+        since,
+        steps: withConversion,
+      });
     } catch (error: any) {
       res.status(500).json({ message: 'Failed to fetch PostHog funnel', error: error.message });
     }
