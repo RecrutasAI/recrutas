@@ -76,6 +76,21 @@ function getUrlLabel(url: string | undefined, careerPageUrl: string | undefined)
   return { label: 'Job Posting', description: 'Direct link to job application' };
 }
 
+// How long ago we last saw this posting live at the source. Deliberately vague
+// past a fortnight — claiming "verified" on a month-old scrape oversells it.
+function formatCheckedAgo(checkedAt?: string | null): string | null {
+  if (!checkedAt) return null;
+  const ms = Date.now() - new Date(checkedAt).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return null;
+
+  const hours = Math.floor(ms / 3_600_000);
+  if (hours < 1) return 'just now';
+  if (hours < 24) return `${hours}h ago`;
+
+  const days = Math.floor(hours / 24);
+  return days <= 14 ? `${days}d ago` : null;
+}
+
 
 type ExperienceLevel = 'entry' | 'mid' | 'senior' | 'lead' | 'executive';
 
@@ -134,6 +149,8 @@ export interface AIJobMatch {
     postedDate?: string;
     trustScore?: number;
     livenessStatus?: 'active' | 'stale' | 'unknown';
+    ghostJobStatus?: 'clean' | 'suspicious' | 'flagged' | 'confirmed';
+    lastLivenessCheck?: string | null;
     hasExam?: boolean;
   };
   matchScore: string;
@@ -711,9 +728,13 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
             {visibleMatches!.map((match, idx) => {
               const isSaved = savedJobIds.has(match.job.id);
               const isApplied = appliedJobIds.has(match.job.id);
-              // Determine trust badges
-              const isVerifiedActive = match.isVerifiedActive || (match.job.trustScore && match.job.trustScore >= 85 && match.job.livenessStatus === 'active');
-              const isDirectFromCompany = match.isDirectFromCompany || match.job.externalSource === 'internal' || match.job.externalSource === 'platform';
+              // Trust badges come from the server (see formatJobMatch). Don't
+              // re-derive them from trustScore here: that gate needed seven
+              // liveness passes to open, so it silently hid both badges on every
+              // real listing.
+              const isVerifiedActive = match.isVerifiedActive;
+              const isDirectFromCompany = match.isDirectFromCompany;
+              const checkedAgo = formatCheckedAgo(match.job.lastLivenessCheck || match.job.postedDate);
               const isInternalJob = (match.job as any).source === 'platform' || match.job.externalSource === 'platform' || !match.job.externalUrl;
               return (
                 <div key={match.id}>
@@ -735,16 +756,21 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
                                 AI Curated
                               </Badge>
                             )}
-                            {isVerifiedActive && (
+                            {/* Requires a recent sighting, not just a clean record.
+                                Re-scrapes refresh lastLivenessCheck (~90K rows/day),
+                                but a row the crawler has stopped reaching keeps its
+                                last date — so without this gate the badge would
+                                vouch for a scrape we haven't actually repeated. */}
+                            {isVerifiedActive && checkedAgo && (
                               <Badge variant="secondary" className="bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300 text-xs">
                                 <BadgeCheck className="h-3 w-3 mr-1" />
-                                Verified Active
+                                Live · checked {checkedAgo}
                               </Badge>
                             )}
                             {isDirectFromCompany && (
                               <Badge variant="secondary" className="bg-purple-100 text-purple-800 dark:bg-purple-900/50 dark:text-purple-300 text-xs">
                                 <Shield className="h-3 w-3 mr-1" />
-                                Direct
+                                Direct from company
                               </Badge>
                             )}
                             {isInternalJob && (
