@@ -406,6 +406,25 @@ export async function registerRoutes(app: Express): Promise<Express> {
     }
   }));
 
+  // Whether a posting came straight from the employer rather than an aggregator.
+  // This is a property of WHERE we scraped it, known the moment we ingest it —
+  // not something a posting earns over time. Allowlist, not denylist: a new
+  // aggregator source must stay un-badged until someone opts it in here.
+  // Older rows predate the "ATS:" prefix and store the bare board name, so match
+  // both spellings — otherwise ~1.4K genuinely direct postings lose the badge.
+  const DIRECT_ATS_BOARDS = new Set([
+    'greenhouse', 'lever', 'ashby', 'smartrecruiters',
+    'breezy', 'recruitee', 'workable',
+  ]);
+
+  function isDirectSource(source?: string | null): boolean {
+    if (!source) return false;
+    const s = source.trim().toLowerCase();
+    if (s.startsWith('ats:')) return true;
+    if (DIRECT_ATS_BOARDS.has(s)) return true;
+    return s === 'career_page' || s === 'platform' || s === 'internal';
+  }
+
   // Helper function to format job match
   function formatJobMatch(job: any, index: number, aiExplanation?: string): any {
     return {
@@ -430,9 +449,17 @@ export async function registerRoutes(app: Express): Promise<Express> {
         postedDate: job.postedDate || job.createdAt,
         trustScore: job.trustScore ?? 0,
         livenessStatus: job.livenessStatus ?? 'unknown',
+        ghostJobStatus: job.ghostJobStatus ?? 'clean',
+        lastLivenessCheck: job.lastLivenessCheck ?? null,
       },
-      isVerifiedActive: job.isVerifiedActive ?? (job.livenessStatus === 'active' && (job.trustScore ?? 0) >= 90),
-      isDirectFromCompany: job.isDirectFromCompany ?? ((job.trustScore ?? 0) >= 85),
+      // Both flags used to key off trustScore, which starts at 50 and only climbs
+      // +5 per successful liveness pass (capped 95). A scraped job therefore needed
+      // seven passes before it could claim to be "direct from company" — so in
+      // practice neither badge ever rendered: every live row is trust 50 /
+      // liveness 'unknown'. Derive them from facts we actually have at ingest.
+      isVerifiedActive: job.isVerifiedActive
+        ?? (job.status === 'active' && (job.ghostJobStatus ?? 'clean') === 'clean'),
+      isDirectFromCompany: job.isDirectFromCompany ?? isDirectSource(job.source),
       matchScore: job.matchScore != null ? `${job.matchScore}%` : 'N/A',
       matchTier: job.matchTier ?? (job.matchScore != null ? (job.matchScore >= 75 ? 'great' : job.matchScore >= 50 ? 'good' : 'worth-a-look') : null),
       confidenceLevel: job.confidenceLevel ?? (job.matchScore != null ? (job.matchScore > 80 ? 90 : job.matchScore > 60 ? 70 : 50) : null),

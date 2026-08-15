@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/favicon.svg" alt="Recrutas Logo" width="80" height="80" />
+  <img src="client/public/favicon.svg" alt="Recrutas Logo" width="80" height="80" />
 </p>
 
 <h1 align="center">Recrutas</h1>
@@ -10,8 +10,9 @@
 
 <p align="center">
   <a href="https://recrutas.ai">recrutas.ai</a> ·
-  Built with React 18 · Express · Supabase (PostgreSQL) · Groq (Llama 3) ·
-  TanStack Query · Tailwind CSS · shadcn/ui · Drizzle ORM · Redis · Stripe
+  Built with React 18 · Express · PostgreSQL 17 + pgvector (self-hosted) ·
+  Supabase Auth &amp; Storage · Gemini / Groq · TanStack Query · Tailwind CSS ·
+  shadcn/ui · Drizzle ORM · Redis · Stripe
 </p>
 
 ---
@@ -26,15 +27,56 @@ Recrutas is a candidate-first hiring platform built around one hard promise: **i
 3. Top scorers are surfaced to the hiring manager automatically
 4. Every candidate sees their status the same day — pass, waitlist, or not a fit
 
-**External jobs** (aggregated from 94+ companies via Greenhouse, Lever, Workday, Ashby, and custom scrapers):
-- Scraped continuously via GitHub Actions (ATS every 4h, external boards + tech companies daily)
-- Ghost jobs and dead links filtered out automatically (daily liveness pass + in-process probes)
+**External jobs** (harvested direct from employer ATS boards — Greenhouse, Lever, SmartRecruiters, Ashby, Breezy, Recruitee, Workable):
+- Scraped continuously by cron **on the Hetzner VPS** (ATS every 4h, external boards + tech companies daily)
+- A closed discovery→harvest loop approves new companies nightly and scrapes them on the next pass
+- Ghost jobs and dead links filtered out automatically (liveness pass + in-process probes + stale-job expiry)
 - Quality-scored and matched to candidate profiles using pgvector embeddings + keyword fallback
+
+Aggregator postings (Adzuna, RemoteOK, JSearch, The Muse) are ingested but never
+carry the "Direct from company" badge — the feed's promise is a real employer URL.
+
+---
+
+## Current Status
+
+Measured on production, **2026-08-15**. Numbers move; the shape of the problem is the point.
+
+| Dimension | State |
+|---|---|
+| **Supply** | 130,128 active jobs · ~7.9K new/24h · 2,316 companies scraped per run |
+| **Infrastructure** | Stable. 21 crons, zero failures over the trailing 3 days; disk 62%, load ~0.03 |
+| **Backups** | pgBackRest → Cloudflare R2 (weekly full + daily incremental), weekly automated restore-verify |
+| **Demand** | 49 total users · 3 in the last 30 days |
+
+**The honest read:** supply and infrastructure are solved. Distribution is not.
+The pipeline ingests ~130K jobs a day into a product with a double-digit user
+count. Work that adds more supply or more uptime is no longer the constraint —
+onboarding real candidates is. Optimise accordingly.
+
+---
+
+## Launch Phases
+
+Launch is deliberately split so each phase can onboard real users before the next
+one starts. Ship in order; do not begin a phase to avoid finishing the one before it.
+
+| Phase | Scope | Ships when |
+|---|---|---|
+| **1. Candidate dashboard** *(current)* | Pure candidate surface — feed, matching, resume upload, profile, saved/applied. No employer side. | Activation rate is real: a stranger signs up, uploads a resume, and gets matches worth returning for. |
+| **2. Employer job board** | Employers post roles; internal jobs begin appearing in the feed alongside scraped ones. Unlocks the exam-gate + direct-chat loop — the actual differentiator. | There are enough active candidates that a posted job gets meaningful applicants. |
+| **3. Browser extension** | Auto-fill / agent-apply. Firefox is live on AMO; **Chrome is unpublished**, so today ~9 of 10 users get nothing. | Phase 2 is steady; Chrome listing approved. |
+| **4. Mobile app** | Native candidate experience. | Web retention justifies it. |
+
+**Phase 1 is the only active phase.** Everything else is maintenance: keep the
+pipeline green, keep the box healthy, don't add surface area.
 
 ---
 
 ## Table of Contents
 
+- [Current Status](#current-status)
+- [Launch Phases](#launch-phases)
 - [Quick Start](#quick-start)
 - [Technical Deep Dive (Deck-Ready)](#technical-deep-dive-deck-ready)
 - [Architecture Overview](#architecture-overview)
@@ -50,7 +92,7 @@ Recrutas is a candidate-first hiring platform built around one hard promise: **i
 - [Exam System](#exam-system)
 - [Chat System](#chat-system)
 - [Agent Apply](#agent-apply)
-- [Background Jobs (GitHub Actions)](#background-jobs-github-actions)
+- [Background Jobs (VPS Cron)](#background-jobs-vps-cron)
 - [Admin Panel](#admin-panel)
 - [Middleware](#middleware)
 - [Rate Limiting](#rate-limiting)
@@ -72,7 +114,7 @@ Recrutas is a candidate-first hiring platform built around one hard promise: **i
 ### Prerequisites
 - Node.js 20+ (CI runs on 22)
 - npm 10+
-- Supabase project (PostgreSQL + Auth + Storage)
+- Supabase project (Auth + Storage). The primary database is PostgreSQL 17 + pgvector — self-hosted on the VPS in production, local Postgres for development.
 - Groq API key (resume parsing via Llama 3) + Gemini API key (embeddings + PDF parse)
 
 ### Install & Run
@@ -121,12 +163,13 @@ and technical stakeholders.
 
 ```
                     ┌─────────────────────────────┐
-                    │      GitHub Actions          │
-                    │  (11 scheduled crons)        │
-                    │  Scrape 6AM/6PM UTC          │
-                    │  Ghost check every 6h        │
-                    │  SLA enforcement daily       │
-                    │  Embedding warmup daily       │
+                    │   Hetzner VPS (cron host)    │
+                    │  (21 scheduled crons)        │
+                    │  ATS scrape every 4h         │
+                    │  Discovery + probe nightly   │
+                    │  SLA enforcement hourly      │
+                    │  Embeddings 4x/day (local)   │
+                    │  Backups → R2 daily          │
                     └──────────┬──────────────────┘
                                │ HTTP POST + CRON_SECRET
                                ▼
@@ -275,7 +318,7 @@ job_postings (1) ──→ (*) chat_rooms        # Exam-gated messaging
 - `request_metrics` — 20% sampled request performance data
 - `match_signals` — candidate×job interaction data for ML feedback loop
 - `scoring_weights` — persisted learned weights from the weight tuner
-- `invite_codes` / `invite_code_redemptions` — invite-only signup gate
+- `invite_codes` / `invite_code_redemptions` — optional signup gate. **Signup is open in production**; set `INVITE_GATE=on` to re-gate.
 - `discovered_companies` — auto-discovered ATS companies
 - `connection_status` — WebSocket connection tracking
 
@@ -387,7 +430,7 @@ Step 6: CAP at 100, paginate 20/page
 
 ### Slide 7: Job Pipeline — Scraping & Ghost Detection
 
-**Tiered scraping architecture (94+ companies):**
+**Tiered scraping architecture (2,300+ approved companies):**
 
 | Tier | ATS | Count | Method |
 |------|-----|-------|--------|
@@ -547,8 +590,8 @@ Browser → Supabase Auth (signUp/signIn) → JWT (HS256)
 4. Return 401 if missing/invalid, 500 if JWT_SECRET not configured
 
 **Invite-only gate:**
-- `POST /api/auth/sync` validates invite code against `invite_codes` table
-- Enforces `max_uses`, records redemption in `invite_code_redemptions`
+- `POST /api/auth/sync` validates an invite code **only when `INVITE_GATE=on`**. Signup is open in production, so this path is normally a no-op.
+- When gated: enforces `max_uses`, records redemption in `invite_code_redemptions`
 - Waitlist (`waitlist_entries`) collects emails for later invitation
 
 **Role-based access:**
@@ -588,13 +631,14 @@ fingerprint = MD5(message + first 3 stack frames)
 
 ---
 
-### Slide 14: Background Jobs (GitHub Actions)
+### Slide 14: Background Jobs (VPS Cron)
 
-**11 scheduled crons run on GitHub Actions (DB-credential'd, not HTTP):**
+**21 scheduled crons run on the Hetzner VPS (DB-credential'd, not HTTP):**
+GitHub Actions is CI-only and deliberately out of the ingestion path.
 
 | Workflow | Schedule (UTC) | Script | What it does |
 |----------|----------------|--------|-------------|
-| `scrape-tech-companies.yml` | 6AM/6PM | `scrape-tier.ts` | Scrape 94+ ATS companies (3 tiers + cleanup) |
+| `scrape-tech-companies.yml` | 6AM/6PM | `scrape-tier.ts` | Scrape Tier-1/Tier-2 ATS companies + stale cleanup |
 | `scrape-ats-jobs.yml` | every 4h | `scrape-all-company-jobs.ts` | Resolve Adzuna URLs → ATS + JSON-LD scrape |
 | `scrape-external-jobs.yml` | daily 6:30 | `scrape-external-jobs.ts` | Adzuna, JSearch, etc. aggregation |
 | `discover-companies.yml` | daily 2AM | `discover-companies.ts` | Discover → probe → Apollo-seed new companies |
@@ -695,11 +739,11 @@ base (node:22-alpine)
 
 ```
 ┌─────────────────────┐     ┌──────────────────────────┐
-│   GitHub Actions     │     │     Vercel (Production)   │
-│  (11 scheduled crons)│     │   Frontend: Vite static   │
-│   Scrape 6AM/6PM     │     │   Backend: Serverless fn  │
-│   Ghost check 6h     │     └────────────┬─────────────┘
-│   SLA enforce daily  │                  │
+│  Hetzner VPS (cron)  │     │     Vercel (Production)   │
+│  (21 scheduled crons)│     │   Frontend: Vite static   │
+│  ATS scrape every 4h │     │   Backend: Serverless fn  │
+│  Discovery nightly   │     └────────────┬─────────────┘
+│  Backups → R2 daily  │                  │
 └─────────┬───────────┘                  │
           │                              │
           ▼                              ▼
@@ -742,12 +786,12 @@ base (node:22-alpine)
 | Backend | Express + TypeScript | API server |
 | ORM | Drizzle ORM (v0.39) | Type-safe SQL queries |
 | Vector DB | pgvector (PostgreSQL extension) | Native 384-dim ANN similarity search |
-| Database | PostgreSQL (Supabase) | Primary data store |
-| Auth | Supabase Auth + JWT | Session management |
+| Database | PostgreSQL 17 + pgvector 0.8.5 (self-hosted, Hetzner VPS) | Primary data store |
+| Auth | Supabase Auth + JWT | Session management (signup is open) |
 | File Storage | Supabase Storage | Resume PDFs |
 | Cache | Upstash Redis | Rate limits, match cache |
-| AI — Parsing | Groq (Llama 3) | Resume → structured data |
-| AI — Embeddings | `@xenova/transformers` (all-MiniLM-L6-v2) | Semantic matching |
+| AI — Parsing | Gemini 2.0 Flash (default) → Groq (Llama 3.3 70B) failover | Resume → structured data |
+| AI — Embeddings | `@xenova/transformers` (all-MiniLM-L6-v2), local ONNX on the VPS | Semantic matching |
 | AI — Fallback | Gemini 2.0 Flash (Google) | PDF multimodal parsing + extension vision-based form fill |
 | AI — Local | Ollama | Local LLM fallback (dev only) |
 | PDF Extraction | unpdf + mammoth | Text extraction from PDF and DOCX files |
@@ -758,10 +802,11 @@ base (node:22-alpine)
 | OCR | Tesseract.js | Resume image text extraction fallback |
 | Email | Resend | Transactional email |
 | Real-time | WebSocket (ws) | Notifications, chat |
-| Background Jobs | GitHub Actions | 11 scheduled crons (ingestion, embeddings, SLA, cleanup) + in-app heartbeat health |
+| Background Jobs | VPS cron (`run-cron.sh`) | 21 scheduled crons (ingestion, embeddings, SLA, backups, cleanup) + `pipeline_runs` heartbeat |
+| Backups | pgBackRest → Cloudflare R2 | Weekly full + daily incremental, weekly automated restore-verify |
 | Dev Environment | Docker Compose | PostgreSQL + Redis + App containers |
 | Testing | Jest + Vitest + Playwright + Supertest | Unit, integration, E2E + API testing |
-| CI/CD | GitHub Actions + Vercel | Build, test, cron, deploy |
+| CI/CD | GitHub Actions (CI only) + Vercel | Build, test, deploy. Crons run on the VPS. |
 
 ---
 
@@ -990,7 +1035,7 @@ Source of truth: `shared/schema.ts` (~985 lines, 36 tables)
 | `subscription_tiers` | Stripe pricing tiers (Starter/Growth/Enterprise) |
 | `user_subscriptions` | User ↔ Stripe subscription mapping |
 | `usage_tracking` | Feature usage metering |
-| `invite_codes` | Invite-only signup codes |
+| `invite_codes` | Optional signup codes (gate off in prod) |
 | `invite_code_redemptions` | Code usage tracking |
 | `daily_usage_limits` | Per-user daily rate limits (3 resumes, 5 jobs, 20 applications) |
 | `error_events` | In-house error monitoring (fingerprint dedup) |
@@ -1187,7 +1232,7 @@ Files: `client/src/components/guided-setup/`
 | Method | Endpoint | Auth | Description |
 |--------|----------|:----:|-------------|
 | GET | `/api/auth/user` | Yes | Current user from JWT |
-| POST | `/api/auth/sync` | Yes | Sync Supabase user → local DB (validates invite code on first sync) |
+| POST | `/api/auth/sync` | Yes | Sync Supabase user → local DB (validates invite code only if `INVITE_GATE=on`) |
 | POST | `/api/auth/role` | Yes | Set user role (candidate / talent_owner) |
 | POST | `/api/auth/extension-login` | No | Chrome extension sign-in (returns JWT) |
 
@@ -1354,7 +1399,7 @@ Browser                    Supabase Auth              Express API
 
 `POST /api/auth/sync` is called on first login. It:
 1. Checks if user exists in local DB
-2. If new user: validates `invite_code` from request body against `invite_codes` table
+2. If new user **and `INVITE_GATE=on`**: validates `invite_code` from request body against `invite_codes` table
 3. Creates user record + records redemption in `invite_code_redemptions`
 4. Enforces `max_uses` on invite codes
 
@@ -1675,31 +1720,46 @@ Tested against 7 real companies: 44-86% of custom questions auto-answered. Commo
 
 ---
 
-## Background Jobs (GitHub Actions)
+## Background Jobs (VPS Cron)
 
-All workflows in `.github/workflows/`:
+**All scheduled work runs on the Hetzner VPS**, not GitHub Actions. Jobs execute
+against the database directly (no HTTP cron endpoints, no `CRON_SECRET` hop), which
+is why an Actions outage no longer stops ingestion.
 
-| Workflow | Schedule | File | What it does |
-|----------|----------|------|-------------|
-| `scrape-tech-companies.yml` | 6AM/6PM UTC | `scripts/scrape-tier.ts` | Scrape 94+ companies across 4 ATS tiers |
-| `scrape-external-jobs.yml` | Twice daily | Cron endpoint | External job aggregation (Adzuna, JSearch, etc.) |
-| `scrape-ats-jobs.yml` | Daily | Cron endpoint | ATS-specific job scraping (Greenhouse, Lever, Ashby) |
-| `auto-hide-ghost-jobs.yml` | Every 6h | Cron endpoint | HTTP probe external job URLs, mark stale |
-| `purge-old-jobs.yml` | Daily | Cron endpoint | Delete external jobs > 60 days old |
-| `discover-companies.yml` | Daily 2AM | Cron endpoint | Discover + ATS-probe 10 new companies |
-| `batch-embeddings.yml` | Daily | Cron endpoint | Generate embeddings for new jobs |
-| `enforce-response-sla.yml` | Daily | Cron endpoint | Auto-reject 24h+ unreviewed applications |
-| `warm-candidate-matches.yml` | Daily | Cron endpoint | Pre-compute matches for active users |
-| `retry-failed-parses.yml` | Daily | Cron endpoint | Re-parse resumes that failed AI extraction |
-| `cleanup-errors.yml` | Weekly Sun 6AM | Cron endpoint | Purge error_events > 30 days |
-| `resolve-adzuna-searxng.yml` | Weekly | Cron endpoint | Fix Adzuna broken search links |
-| `resolve-adzuna-links.yml` | Weekly | Cron endpoint | Resolve Adzuna redirect links |
-| `run-migration.yml` | On demand | Drizzle | Run database migrations |
-| `agent-apply.yml` | On demand | Agent apply tasks | Process queued agent apply jobs |
-| `ci.yml` | On push/PR | | Type check + lint + test |
-| `push-schema-dev.yml` | Manual | `drizzle-kit push` | Push schema changes to DB |
+Every entry is wrapped in `infra/vps/run-cron.sh <name> <timeout-min> <cmd>`, which
+enforces the timeout, applies systemd memory caps, writes a `pipeline_runs`
+heartbeat, and emails on failure.
 
-All cron endpoints authenticate with `CRON_SECRET` header.
+| Cron | Schedule (UTC) | What it does |
+|---|---|---|
+| `vps-db-health` | every 15 min | DB size, disk %, WAL backlog — alerts before a disk fills |
+| `enforce-response-sla` | hourly | Auto-reject applications unreviewed past the SLA |
+| `embed-candidates` | every 10 min | Embed new candidate profiles (local ONNX) |
+| `scrape-ats-jobs` | every 4h | Harvest every approved company's ATS board |
+| `batch-embeddings` | 4×/day | Embed new job postings (`BATCH_LIMIT=20000`) |
+| `discover-companies` | 02:00 | Discover → Apollo enrich → ATS-probe (1,500/run) |
+| `retry-failed-parses` | 03:00 | Re-parse resumes that failed AI extraction |
+| `auto-hide-ghost-jobs` | 04:00 | Expire postings stale for 30+ days |
+| `warm-candidate-matches` | 04:30 | Pre-compute matches for active users |
+| `purge-old-jobs` | 05:00 | Delete postings older than 45 days |
+| `scrape-tech-companies` | 06:00 / 18:00 | Tier-1 + Tier-2 scrape, then stale cleanup |
+| `scrape-external-jobs` | 06:30 | Aggregator ingestion (Adzuna, JSearch, …) |
+| `supply-health` | 08:00 | Alert if new jobs or approvals fall below floor |
+| `db-backup` | 09:00 | Independent `pg_dump` of the Supabase project |
+| `vps-db-backup` | 09:30 | Independent `pg_dump` of the primary VPS database |
+| `storage-backup` | 09:45 | Back up Supabase Storage objects (resumes) |
+| `offsite-backup` | 10:15 | Encrypted push to Cloudflare R2 (GPG, sha256-verified) |
+| `pgbackrest-full` | Sun 14:00 | Full physical backup → R2 |
+| `pgbackrest-incr` | Mon–Sat 14:00 | Incremental physical backup → R2 |
+| `verify-restore` | Sun 11:00 | Automated restore test against a scratch cluster |
+| `cleanup-errors` | Sun 06:00 | Purge `error_events` older than 30 days |
+
+GitHub Actions still runs CI (type check + lint + test) and on-demand workflows
+(migrations, schema push). It is deliberately **not** in the ingestion path.
+
+**Deploying to the VPS:** `infra/vps/push-deploy.sh` is the only supported path —
+the repo is private and the box has no GitHub credentials, so code is pushed to it
+over SSH as a git bundle. `git pull` on the VPS does not work.
 
 ---
 
@@ -1884,7 +1944,7 @@ const { isConnected, lastMessage } = useWebSocketNotifications(userId);
 | `SUPABASE_SERVICE_ROLE_KEY` | Server | Admin operations (user management, storage) |
 | `SUPABASE_JWT_SECRET` | `middleware/auth.ts` | JWT signature verification |
 | `FRONTEND_URL` | `server/index.ts` | CORS origin |
-| `CRON_SECRET` | `routes.ts` | Authenticate GitHub Actions cron calls |
+| `CRON_SECRET` | `routes.ts` | Authenticate legacy HTTP cron calls (VPS crons hit the DB directly) |
 | `ADMIN_SECRET` | `routes.ts` | Admin panel password |
 | `ADMIN_EMAILS` | `routes.ts` | Comma-separated admin emails (bypass daily limits) |
 
@@ -2169,18 +2229,18 @@ An honest assessment of what it takes to bring a new engineer onto this codebase
 
 ## Scaling on the Current Stack
 
-The architecture (Vercel serverless + Supabase Postgres + GitHub Actions crons + Upstash Redis + pgvector) was deliberately chosen to run at **$0 → ~$65/mo** and is well-matched to the **0–low-thousands of users** range. Below is what scales as-is, the bottlenecks **in the order they'll actually bite**, and when to graduate off the current design.
+The architecture (Vercel serverless + self-hosted Postgres/pgvector on a Hetzner VPS + VPS crons + Upstash Redis) was deliberately chosen to run at **$0 → ~$65/mo** and is well-matched to the **0–low-thousands of users** range. Below is what scales as-is, the bottlenecks **in the order they'll actually bite**, and when to graduate off the current design.
 
 **Scales comfortably as-is:**
 - **Read-heavy serving** — Vercel static frontend + serverless API + Redis match cache + Postgres handles low-thousands of users without architectural change. `/api/ai-matches` was already tuned **81s → ~15s cold / ~2.6s warm** (PR #13).
-- **Background work** — correctly offloaded to GitHub Actions crons (serverless can't hold long jobs), now observable via the `pipeline_runs` heartbeat panel.
+- **Background work** — correctly offloaded to VPS cron (serverless can't hold long jobs), observable via the `pipeline_runs` heartbeat panel.
 - **Vector search** — pgvector + HNSW is fine into the millions of rows; *retrieval* is not the ceiling.
 
 **Bottlenecks, in the order they bite:**
 1. **Embedding throughput (already biting).** Gemini free tier ≈ 1K embeds/day vs. an inventory that grows faster → only ~16% of jobs are ANN-eligible; the rest fall to the keyword lane. **Fix:** enable Gemini billing + one `--force` drain, or `batchEmbedContents` (multi-text/request). Cheap, unblocks match *quality* immediately.
 2. **DB connection pool.** Concurrent serverless invocations against the Supabase **pgBouncer pooler** (`:6543`) already surface `CONNECT_TIMEOUT`s under load. **Fix:** Supabase Pro (bigger pool), push hot reads to Redis, keep migrations on the direct URL.
 3. **Matching cost/latency at scale.** Scoring hundreds of jobs per request doesn't fan out to 10K+ active candidates. **Fix:** lean harder on precompute (`warm-candidate-matches` already exists) and move to a **dedicated vector DB (Pinecone/Weaviate)** once candidate×job volume grows.
-4. **Ingestion throughput.** Scrapers are concurrency-capped (`BATCH_SIZE=10`; undici drops connections past ~10 concurrent) and GitHub Actions jobs cap at 30 min. Fine for ~94 companies; not for thousands. **Fix:** a real worker queue (e.g. Inngest/QStash) + dedicated runners.
+4. **Ingestion throughput.** Scrapers are concurrency-capped (`BATCH_SIZE=10`; undici drops connections past ~10 concurrent) and each cron carries a hard timeout. Currently sustaining ~2,300 companies and ~7.9K new jobs/day on one box. **Fix when it bites:** a real worker queue (e.g. Inngest/QStash) + dedicated runners.
 5. **Serverless model limits.** Long-running and stateful work can't live in the request path. Real-time chat in particular wants a **persistent process** — verify the WebSocket path before relying on it under serverless; it's the most likely thing to force an architecture change.
 
 **When to graduate off the current architecture (~10K+ users):**
