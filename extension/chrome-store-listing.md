@@ -56,7 +56,8 @@ English (United States)
   - `screenshots/chrome/2-floating-button.png` — center-cropped + scaled from 2560×1720
   - `screenshots/chrome/3-mid-fill.png` — center-cropped + scaled from 2560×1720
   - (Originals preserved in `screenshots/`. Regenerate via the Pillow snippet in this repo's history, or re-shoot at a 1280×800 viewport.)
-- **Small promo tile (optional, recommended):** 440×280 PNG — not yet made
+- **Small promo tile (optional, recommended):** 440×280 PNG ✓ READY — `extension/promo-tile-440x280.png`
+  (regenerate with `python3 extension/make-promo-tile.py`; composites the shipped `icons/icon128.png`, so it stays in sync with the real mark)
 - **Marquee promo tile (optional):** 1400×560 — not needed for launch
 
 ### URLs
@@ -106,8 +107,7 @@ Declare the following collected data types:
 
 ## Blockers before submit
 1. **$5 dev account** — register + pay (human; Google login + CAPTCHA can't be automated).
-   This is the ONLY hard blocker.
-2. (Optional) 440×280 small promo tile.
+   This is now the ONLY remaining blocker — every asset and field is prepared.
 
 All listing content (copy, privacy answers, 1280×800 screenshots, MV3 zip) is ready — only the
 human dev-account step remains.
