@@ -806,7 +806,7 @@ base (node:22-alpine)
 | Backups | pgBackRest → Cloudflare R2 | Weekly full + daily incremental, weekly automated restore-verify |
 | Dev Environment | Docker Compose | PostgreSQL + Redis + App containers |
 | Testing | Jest + Vitest + Playwright + Supertest | Unit, integration, E2E + API testing |
-| CI/CD | GitHub Actions (CI only) + Vercel | Build, test, deploy. Crons run on the VPS. |
+| CI/CD | GitHub Actions (CI + off-box watchdog) + Vercel | Build, test, deploy. Ingestion crons run on the VPS. |
 
 ---
 
@@ -973,7 +973,7 @@ recrutas/
 │   ├── robots.txt / sitemap.xml        # SEO
 │   └── manifest.json                   # PWA manifest
 │
-├── .github/workflows/                  # 12 GitHub Actions workflows
+├── .github/workflows/                  # 17 workflows (CI + watchdog + manual; crons commented out)
 ├── standalone-server.js                # Dev entry point
 ├── api/index.js                        # Vercel serverless entry point
 ├── vercel.json                         # Vercel routing config
@@ -1139,7 +1139,7 @@ Defined in `client/src/App.tsx`:
 | `/signup/talent-owner` | Talent owner registration | No |
 | `/forgot-password` | Password reset request | No |
 | `/reset-password` | New password entry | No |
-| `/early-access` | Early access signup | No |
+| `/early-access` | Redirects to `/auth` (waitlist retired, `c5148e4`) | No |
 | `/role-selection` | Role picker after signup | Yes |
 | `/guided-setup` | Multi-step onboarding wizard | Yes |
 | `/candidate-dashboard` | Candidate main page | Yes (candidate) |
@@ -1754,8 +1754,16 @@ heartbeat, and emails on failure.
 | `verify-restore` | Sun 11:00 | Automated restore test against a scratch cluster |
 | `cleanup-errors` | Sun 06:00 | Purge `error_events` older than 30 days |
 
-GitHub Actions still runs CI (type check + lint + test) and on-demand workflows
-(migrations, schema push). It is deliberately **not** in the ingestion path.
+GitHub Actions still runs CI (type check + lint + test), the **off-box watchdog**
+(`watchdog.yml` — the one workflow with a live `schedule:`, deliberately off-box so
+it can detect the VPS being down), and on-demand workflows (migrations, schema
+push). It is deliberately **not** in the ingestion path.
+
+⚠️ The old ingestion workflows still exist but their `schedule:` blocks are
+**commented out**, each carrying a "do NOT re-add without removing it from the VPS
+crontab first (double-runs)" warning. They remain as manual `workflow_dispatch`
+escape hatches. Re-enabling one without retiring its VPS counterpart double-runs
+that job.
 
 **Deploying to the VPS:** `infra/vps/push-deploy.sh` is the only supported path —
 the repo is private and the box has no GitHub credentials, so code is pushed to it
@@ -2082,6 +2090,37 @@ docker run -p 3000:3000 --env-file .env recrutas
 
 These are non-obvious issues that have caused production bugs. Read before making changes.
 
+### Static Assets Must Live in `client/public/`
+The build runs `cd client && vite build`, so Vite resolves `publicDir` from that cwd —
+**`client/public/`**, not the repo-root `public/`. Assets placed at the root are silently
+never copied into `dist/public/`.
+
+This shipped a site with no favicon and no social preview image for months, and it never
+showed up as an error: `vercel.json` rewrites `/(.*)` → `/index.html`, so a missing asset
+returns **HTTP 200 with the SPA shell and `content-type: text/html`** — never a 404.
+
+Never verify a static asset by status code. Check the content type:
+```bash
+curl -sL -o /dev/null -w '%{content_type} %{size_download}\n' https://www.recrutas.ai/favicon.svg
+# image/svg+xml 571   ✓        text/html 6053   ✗ (falling through to the SPA)
+```
+Better still, check `ls dist/public/` after a build.
+
+### `www.recrutas.ai` Is the Canonical Host
+The bare apex 307-redirects to `www`. All metadata (canonical, `og:url`, JSON-LD,
+`sitemap.xml`, the robots `Sitemap:` line) must use `www` — a canonical URL that itself
+redirects splits crawl signals between the two hosts.
+
+This also matters functionally: the **browser extension must call `www` directly**. An
+apex call gets a 307, and a redirected CORS preflight can fail.
+
+### GitHub Actions Cron Schedules Are Commented Out On Purpose
+The ingestion workflows in `.github/workflows/` still exist, but their `schedule:` blocks
+are commented out — those jobs moved to the VPS crontab on 2026-06-12. They remain as
+manual `workflow_dispatch` escape hatches. **Re-enabling a schedule without removing the
+VPS counterpart double-runs that job.** `watchdog.yml` is the one intentional exception:
+it must run off-box to detect the VPS being down.
+
 ### Drizzle ORM 0.39 Nested Join Bug
 Drizzle returns garbled/nested objects when doing joins with `leftJoin`. Chat messages and applicant queries use **raw SQL** as a workaround. If you see `db.execute(sql`...)`, don't refactor to Drizzle joins — it will break.
 
@@ -2197,7 +2236,7 @@ Programs to apply for as the platform scales. Sorted by estimated value.
 
 An honest assessment of what it takes to bring a new engineer onto this codebase.
 
-**Size & shape:** ~78K lines of TypeScript/TSX — `server/` (87 files), `client/src/` (18 pages), `shared/schema.ts` (the contract), plus **76 operational scripts** and 16 GitHub Actions workflows. It is a **single-author codebase**, so the main risk is tribal knowledge — partly mitigated by an unusually thorough README, a "Gotchas" section, and `docs/`, but not by tests or types alone.
+**Size & shape:** ~78K lines of TypeScript/TSX — `server/` (87 files), `client/src/` (18 pages), `shared/schema.ts` (the contract), plus **76 operational scripts** and 17 GitHub Actions workflows. It is a **single-author codebase**, so the main risk is tribal knowledge — partly mitigated by an unusually thorough README, a "Gotchas" section, and `docs/`, but not by tests or types alone.
 
 **What makes onboarding *easy* (accelerators):**
 - **Conventional, popular stack** — React 18 + Vite + TanStack Query + Tailwind/shadcn on the front, Express + Drizzle + Postgres on the back. No bespoke framework; a mid-level full-stack dev already knows 80% of it.
