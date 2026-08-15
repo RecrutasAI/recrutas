@@ -218,9 +218,13 @@ export default function CandidateStreamlinedDashboard() {
         }
 
         try {
-          const response = await apiRequest("GET", '/api/candidate/profile');
-          const data = await response.json();
-          if (data.resumeProcessingStatus !== 'processing') {
+          // Same unwrapping trap as the guided-setup poll: the endpoint answers
+          // `{ exists, profile }`. Reading status off the raw body gave undefined,
+          // which is `!== 'processing'`, so this fired on the FIRST tick and told
+          // the user "there was an issue processing your resume" while it was
+          // still parsing normally.
+          const data = await fetchProfileWithCache();
+          if (data?.resumeProcessingStatus && data.resumeProcessingStatus !== 'processing') {
             clearInterval(pollInterval);
             queryClient.invalidateQueries({ queryKey: ['/api/candidate/profile'] });
             queryClient.invalidateQueries({ queryKey: ['/api/ai-matches'] });

@@ -3,7 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
-import { apiRequest, queryClient } from '@/lib/queryClient';
+import { apiRequest, queryClient, fetchProfileWithCache } from '@/lib/queryClient';
 import { useGuidedSetup } from '@/contexts/GuidedSetupContext';
 import { Progress } from '@/components/ui/progress';
 import { Loader2, Upload, CheckCircle, AlertCircle, FileText, Sparkles } from 'lucide-react';
@@ -62,13 +62,17 @@ export default function ResumeUploadStep() {
 
     pollingIntervalRef.current = setInterval(async () => {
       try {
-        const response = await apiRequest('GET', '/api/candidate/profile');
-        const profile = await response.json();
+        // fetchProfileWithCache, not a raw fetch: /api/candidate/profile answers
+        // `{ exists, profile }`, so reading status off the raw body always gave
+        // undefined. The 'completed' and 'failed' branches below could never
+        // fire, and every successful upload sat here until the 60s timeout and
+        // was then reported as "taking longer than expected".
+        const profile = await fetchProfileWithCache();
 
         const elapsed = Date.now() - pollingStartRef.current;
         const seconds = Math.floor(elapsed / 1000);
 
-        if (profile.resumeProcessingStatus === 'completed') {
+        if (profile?.resumeProcessingStatus === 'completed') {
           // Success! Stop polling and refresh data
           if (pollingIntervalRef.current) {
             clearInterval(pollingIntervalRef.current);
@@ -91,7 +95,7 @@ export default function ResumeUploadStep() {
             setStep((prev) => prev + 1);
           }, 1500);
 
-        } else if (profile.resumeProcessingStatus === 'failed') {
+        } else if (profile?.resumeProcessingStatus === 'failed') {
           // Processing failed
           if (pollingIntervalRef.current) {
             clearInterval(pollingIntervalRef.current);
