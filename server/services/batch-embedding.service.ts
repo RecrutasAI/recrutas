@@ -254,16 +254,22 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   (async () => {
     const { recordPipelineRun } = await import('./pipeline-run.service.js');
     try {
+      // Candidates FIRST, deliberately. These two phases are not equally urgent:
+      // a candidate with no embedding is a live user staring at an unranked feed
+      // right after uploading a résumé, while an unembedded job is invisible to
+      // nobody in particular. Running jobs first meant that during a 90-minute
+      // backfill — which holds the shared 'embed' lock, so the every-minute
+      // candidate cron is skipping throughout — a new signup could wait the whole
+      // window. Same total work, ordered by who is waiting on it.
+      const { backfillCandidateEmbeddings } = await import('./candidate-embedding.service.js');
+      const candidateResult = await backfillCandidateEmbeddings(100);
+      console.log('[BatchEmbed] Candidates done:', candidateResult);
+
       // Job embeddings
       const jobResult = candidatesOnly
         ? { processed: 0, errors: 0, rateLimited: 0 }
         : await batchComputeEmbeddings(limit, force, staleBefore);
       if (!candidatesOnly) console.log('[BatchEmbed] Jobs done:', jobResult);
-
-      // Candidate embeddings backfill
-      const { backfillCandidateEmbeddings } = await import('./candidate-embedding.service.js');
-      const candidateResult = await backfillCandidateEmbeddings(100);
-      console.log('[BatchEmbed] Candidates done:', candidateResult);
 
       const processed = jobResult.processed + candidateResult.processed;
       const failed = jobResult.errors + candidateResult.errors;

@@ -16,9 +16,18 @@ LOG="$LOG_DIR/$JOB.log"
 
 # GHA used cancel-in-progress; here we skip the new run instead, which is
 # safer for scrapers mid-write.
-exec 9>"/tmp/recrutas-cron-$JOB.lock"
+#
+# The lock is per-job by default. CRON_LOCK_GROUP (set in the crontab line, not
+# .env — this runs before .env is sourced) lets several jobs share one lock so
+# they serialise against EACH OTHER. Needed by the two embedding passes: they
+# each load a ~600MB ONNX model, and the box has 1.9GB with swap off, so a
+# candidate pass starting inside a 90-minute job pass put two copies in memory
+# at once. The per-job lock never caught that — different job names, different
+# lock files. Skipping is the right outcome: the next tick picks the work up.
+LOCK_NAME="${CRON_LOCK_GROUP:-$JOB}"
+exec 9>"/tmp/recrutas-cron-$LOCK_NAME.lock"
 if ! flock -n 9; then
-  echo "$(date -u +%FT%TZ) [$JOB] previous run still active, skipping" >>"$LOG"
+  echo "$(date -u +%FT%TZ) [$JOB] lock '$LOCK_NAME' held, skipping" >>"$LOG"
   exit 0
 fi
 
