@@ -70,6 +70,9 @@
       ]
     }
   ],
+  "redirects": [
+    { "source": "/early-access", "destination": "/auth", "permanent": true }
+  ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index.js" },
     { "source": "/(.*)",    "destination": "/index.html" }

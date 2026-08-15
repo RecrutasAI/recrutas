@@ -1,5 +1,5 @@
 import React from "react";
-import { Switch, Route } from "wouter";
+import { Switch, Route, Redirect } from "wouter";
 import { SessionContextProvider } from "@supabase/auth-helpers-react";
 import { supabase } from "@/lib/supabase-client";
 import AppProviders from '@/components/AppProviders';
@@ -24,7 +24,6 @@ import { RoleGuard } from '@/components/role-guard';
 import { AuthGuard } from '@/components/auth-guard';
 import AdminDashboard from "@/pages/admin-dashboard";
 import MetricsDashboard from "@/pages/metrics-dashboard";
-import EarlyAccessPage from "@/pages/early-access";
 import PageMeta from '@/components/page-meta';
 import { IdleWatcher } from '@/components/idle-watcher';
 
@@ -65,7 +64,11 @@ function App() {
           </Route>
           <Route path="/admin" component={AdminDashboard} />
           <Route path="/admin/metrics" component={MetricsDashboard} />
-          <Route path="/early-access" component={EarlyAccessPage} />
+          {/* The waitlist is retired: signup has been open since e1b549e, and the
+              page still promised an invite code that no longer exists. It captured
+              zero entries in its lifetime. Production redirects at the edge
+              (see vercel.json); this keeps dev and client-side nav consistent. */}
+          <Route path="/early-access"><Redirect to="/auth" /></Route>
           <Route path="/pricing" component={PricingPage} />
           <Route path="/privacy" component={PrivacyPolicy} />
           <Route path="/terms" component={TermsOfService} />
