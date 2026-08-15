@@ -23,20 +23,12 @@ import {
   Sparkles,
 } from "lucide-react";
 import { AIJobMatch } from "./ai-job-feed";
+import { stripHtml } from "@/utils/string.utils";
 
 // Strip HTML tags from requirement strings
-function stripHtml(html: string): string {
-  if (!html) {return "";}
-  return html
-    .replace(/<[^>]*>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .trim();
-}
+// stripHtml lives in utils/string.utils — this file used to carry its own copy
+// that stripped tags before decoding entities, which rendered raw markup to
+// candidates on entity-escaped postings.
 
 // SVG donut ring for the score
 function ScoreRing({ score }: { score: number }) {

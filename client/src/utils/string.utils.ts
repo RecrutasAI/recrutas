@@ -62,10 +62,56 @@ export function getInitials(name: string): string {
 }
 
 /**
- * Remove HTML tags from string
+ * Decode HTML entities. `&amp;` is decoded last so a single pass turns
+ * `&amp;lt;` into `&lt;` rather than collapsing straight to `<`; stripHtml
+ * re-runs this to finish the job.
+ */
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'")
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(parseInt(n, 10)))
+    .replace(/&amp;/gi, '&');
+}
+
+/**
+ * Reduce scraped job HTML to readable plain text.
+ *
+ * Entities are decoded BEFORE tags are stripped, which is the whole point of
+ * this function: ~55K active postings store their description HTML-escaped
+ * (`&lt;p&gt;…`), so stripping tags first matches nothing and any later decode
+ * *reveals* the markup instead of removing it. That ordering bug shipped
+ * `<p data-pm-slice="1 1 []">In the journey…` to candidates in the match modal.
+ *
+ * The loop handles double-encoded input (`&amp;lt;p&amp;gt;`); it is bounded
+ * because decoding is only re-run while it still changes the string.
+ *
+ * Tags become a space rather than nothing so `<p>one</p><p>two</p>` does not
+ * become "onetwo".
  */
 export function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, '');
+  if (!html) { return ''; }
+
+  let out = html;
+  for (let i = 0; i < 3; i++) {
+    const decoded = decodeEntities(out);
+    if (decoded === out) { break; }
+    out = decoded;
+  }
+
+  // Require a real tag name after the "<". A bare /<[^>]*>/ would treat the
+  // "< 100k and >" in "salary < 100k and > 50k" as a tag and delete the text
+  // between — decoding entities first makes that prose reachable, so the
+  // stricter pattern is what keeps this safe.
+  return out
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<\/?[a-zA-Z][^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /**

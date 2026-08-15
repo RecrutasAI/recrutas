@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { stripHtml } from "@/utils/string.utils";
 import { Building, MapPin, DollarSign, ExternalLink, MessageSquare, BookOpen, Star, Briefcase, Clock, CheckCircle, XCircle, Clock3, AlertCircle } from "lucide-react";
 
 const getStatusColor = (status: string): string => {
@@ -87,9 +88,12 @@ export function JobMatchCard({ match, onTakeExam, onApply, onStartChat, onMarkAp
           
           <JobMatchDetails match={match} formatSalary={formatSalary} />
           
-          {match.job?.description && (
+          {/* stripHtml first: scraped descriptions are HTML-escaped, so slicing
+              the raw string renders "&lt;p data-pm-slice=..." to the candidate.
+              Slice after stripping, or the budget is spent on markup. */}
+          {stripHtml(match.job?.description ?? '') && (
             <p className="text-sm text-slate-600 mb-4 line-clamp-2">
-              {match.job.description.substring(0, 150)}...
+              {stripHtml(match.job!.description!).slice(0, 150)}…
             </p>
           )}
         </div>
