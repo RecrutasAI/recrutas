@@ -35,9 +35,12 @@
     <meta name="twitter:image" content="https://recrutas.ai/og-image.png" />
     <meta name="twitter:image:alt" content="Recrutas — AI-Driven Hiring Platform" />
 
-    <!-- Favicons & PWA -->
+    <!-- Favicons & PWA. These files live in client/public/ — Vite's publicDir is
+         resolved from the build cwd (client/), so assets kept at the repo root
+         are silently never copied and the SPA rewrite serves index.html for them. -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
+    <link rel="icon" type="image/x-icon" sizes="any" href="/favicon.ico" />
     <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png" />
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#10B981" />
