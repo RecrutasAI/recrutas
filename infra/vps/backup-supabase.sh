@@ -49,8 +49,31 @@ if [ -z "$URL" ]; then
   exit 1
 fi
 
+# Heartbeat into pipeline_runs so the admin Pipeline Health panel can tell that
+# this backup actually ran. Without it the job was invisible there, and a silent
+# stop looked identical to a healthy history — a row that never appears can
+# never go stale. Best-effort: never fail the backup on a heartbeat write.
+#
+# NOTE the two different databases. $URL is the SUPABASE dump source; pipeline_runs
+# lives on the self-hosted VPS Postgres, which is what POSTGRES_URL_NON_POOLING
+# points at post-migration. Reusing $URL here would file the heartbeat in the
+# database being backed up, where nothing reads it.
+PSQL="${PSQL_BIN:-/usr/lib/postgresql/17/bin/psql}"
+DB_URL="${POSTGRES_URL_NON_POOLING:-${POSTGRES_URL:-}}"
+STARTED="$(date -u +%FT%TZ)"
+heartbeat() { # status, message, bytes
+  [ -z "$DB_URL" ] && return 0
+  "$PSQL" "$DB_URL" -v ON_ERROR_STOP=0 -q >/dev/null 2>&1 <<SQL || true
+INSERT INTO pipeline_runs (pipeline, status, started_at, finished_at, items_processed, message, stats)
+VALUES ('db-backup', '$1', '${STARTED}', now(), ${3:-0},
+        '$(printf '%s' "$2" | sed "s/'/''/g")',
+        jsonb_build_object('bytes', ${3:-0}, 'retainDays', ${RETAIN_DAYS}));
+SQL
+}
+
 if [ ! -x "$PG_DUMP" ]; then
   echo "[db-backup] pg_dump 17 not found at $PG_DUMP" >&2
+  heartbeat failed "pg_dump 17 not found at $PG_DUMP"
   exit 1
 fi
 
@@ -69,6 +92,7 @@ rc=${PIPESTATUS[0]}
 
 if [ "$rc" -ne 0 ]; then
   echo "[db-backup] pg_dump failed (rc=$rc) — see $ERR" >&2
+  heartbeat failed "pg_dump failed (rc=$rc); see $ERR"
   rm -f "$TMP"
   exit "$rc"
 fi
@@ -79,6 +103,7 @@ fi
 SZ="$(stat -c%s "$TMP" 2>/dev/null || echo 0)"
 if [ "$SZ" -lt 65536 ]; then
   echo "[db-backup] dump suspiciously small ($SZ bytes); keeping $TMP for inspection" >&2
+  heartbeat failed "dump suspiciously small ($SZ bytes) — kept as .partial" "$SZ"
   exit 1
 fi
 
@@ -93,6 +118,7 @@ fi
 HAS_USERS="$(zcat "$TMP" | grep -acE '^COPY "auth"\."users" ' || true)"
 if [ "${HAS_USERS:-0}" -lt 1 ]; then
   echo "[db-backup] dump is missing auth.users — refusing to publish it" >&2
+  heartbeat failed "dump missing auth.users — refused to publish, kept as .suspect" "$SZ"
   mv "$TMP" "$OUT.suspect"
   exit 1
 fi
@@ -100,6 +126,7 @@ fi
 # Integrity: gzip must decompress cleanly.
 if ! gzip -t "$TMP"; then
   echo "[db-backup] gzip integrity check failed" >&2
+  heartbeat failed "gzip integrity check failed — kept as .corrupt" "$SZ"
   mv "$TMP" "$OUT.corrupt"
   exit 1
 fi
@@ -109,4 +136,6 @@ echo "[db-backup] wrote $OUT ($(du -h "$OUT" | cut -f1))"
 
 # Retention: drop dumps older than RETAIN_DAYS.
 find "$BACKUP_DIR" -name 'supabase-*.sql.gz' -type f -mtime +"$RETAIN_DAYS" -delete
-echo "[db-backup] kept $(ls -1 "$BACKUP_DIR"/supabase-*.sql.gz 2>/dev/null | wc -l) dump(s) in $BACKUP_DIR"
+KEPT="$(ls -1 "$BACKUP_DIR"/supabase-*.sql.gz 2>/dev/null | wc -l)"
+echo "[db-backup] kept $KEPT dump(s) in $BACKUP_DIR"
+heartbeat ok "dump $(du -h "$OUT" | cut -f1), $KEPT kept, retain ${RETAIN_DAYS}d" "$SZ"

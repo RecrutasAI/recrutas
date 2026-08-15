@@ -53,8 +53,25 @@ if [ -z "$URL" ]; then
   exit 1
 fi
 
+# Heartbeat into pipeline_runs so the admin Pipeline Health panel can tell that
+# this backup actually ran. Without it the job was invisible there: a silent
+# stop looked identical to a healthy history, because a row that never appears
+# can never go stale. Best-effort — a heartbeat write must never fail the backup.
+PSQL="${PSQL_BIN:-/usr/lib/postgresql/17/bin/psql}"
+STARTED="$(date -u +%FT%TZ)"
+heartbeat() { # status, message, bytes
+  [ -z "$URL" ] && return 0
+  "$PSQL" "$URL" -v ON_ERROR_STOP=0 -q >/dev/null 2>&1 <<SQL || true
+INSERT INTO pipeline_runs (pipeline, status, started_at, finished_at, items_processed, message, stats)
+VALUES ('vps-db-backup', '$1', '${STARTED}', now(), ${3:-0},
+        '$(printf '%s' "$2" | sed "s/'/''/g")',
+        jsonb_build_object('bytes', ${3:-0}, 'retainDays', ${RETAIN_DAYS}));
+SQL
+}
+
 if [ ! -x "$PG_DUMP" ]; then
   echo "[vps-db-backup] pg_dump 17 not found at $PG_DUMP" >&2
+  heartbeat failed "pg_dump 17 not found at $PG_DUMP"
   exit 1
 fi
 
@@ -73,6 +90,7 @@ rc=${PIPESTATUS[0]}
 
 if [ "$rc" -ne 0 ]; then
   echo "[vps-db-backup] pg_dump failed (rc=$rc) — see $ERR" >&2
+  heartbeat failed "pg_dump failed (rc=$rc); see $ERR"
   rm -f "$TMP"
   exit "$rc"
 fi
@@ -81,12 +99,14 @@ fi
 SZ="$(stat -c%s "$TMP" 2>/dev/null || echo 0)"
 if [ "$SZ" -lt 1048576 ]; then
   echo "[vps-db-backup] dump suspiciously small ($SZ bytes); keeping $TMP for inspection" >&2
+  heartbeat failed "dump suspiciously small ($SZ bytes) — kept as .partial for inspection" "$SZ"
   exit 1
 fi
 
 # Integrity: gzip must decompress cleanly.
 if ! gzip -t "$TMP"; then
   echo "[vps-db-backup] gzip integrity check failed" >&2
+  heartbeat failed "gzip integrity check failed — kept as .corrupt" "$SZ"
   mv "$TMP" "$OUT.corrupt"
   exit 1
 fi
@@ -98,4 +118,6 @@ echo "[vps-db-backup] wrote $OUT ($(du -h "$OUT" | cut -f1))"
 # older than N+1 days, so +RETAIN_DAYS actually kept RETAIN_DAYS+1 dumps —
 # with ~1.2GB dumps that eighth file was a real bite out of the disk budget.
 find "$BACKUP_DIR" -name 'recrutas-db-*.sql.gz' -type f -mtime +"$((RETAIN_DAYS - 1))" -delete
-echo "[vps-db-backup] kept $(ls -1 "$BACKUP_DIR"/recrutas-db-*.sql.gz 2>/dev/null | wc -l) dump(s) in $BACKUP_DIR"
+KEPT="$(ls -1 "$BACKUP_DIR"/recrutas-db-*.sql.gz 2>/dev/null | wc -l)"
+echo "[vps-db-backup] kept $KEPT dump(s) in $BACKUP_DIR"
+heartbeat ok "dump $(du -h "$OUT" | cut -f1), $KEPT kept, retain ${RETAIN_DAYS}d" "$SZ"

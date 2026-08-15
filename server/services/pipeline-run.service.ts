@@ -43,6 +43,27 @@ export const PIPELINE_MAX_AGE_MIN: Record<string, number> = {
   'warm-candidate-matches': 24 * 60 + 180,// daily
   'cleanup-errors': 7 * 24 * 60 + 24 * 60,// weekly (+1d slack)
   'vps-db-health': 15 + 30,               // every 15 min — self-hosted DB liveness
+
+  // Backup / safety net. These were reporting to pipeline_runs but were absent
+  // from this map, and `stale` is only computed when an expected age exists —
+  // so a backup that silently STOPPED running kept showing its last run as a
+  // green "OK" forever. Failures already page via cron email; this closes the
+  // other half, where nothing fails because nothing runs. That is the exact
+  // shape of the backup degradation behind three past disk outages.
+  'db-backup': 24 * 60 + 180,             // daily 09:00 — Supabase pg_dump
+  'vps-db-backup': 24 * 60 + 180,         // daily 09:30 — primary VPS pg_dump
+  'storage-backup': 24 * 60 + 180,        // daily 09:45 — Supabase Storage objects
+  'offsite-backup': 24 * 60 + 180,        // daily 10:15 — encrypted push to R2
+  'pgbackrest-backup': 24 * 60 + 180,     // full Sun 14:00, incr Mon-Sat 14:00 —
+                                          // both report under this one name, so
+                                          // the effective cadence is daily
+  'verify-restore': 7 * 24 * 60 + 24 * 60,// weekly Sun 11:00 (+1d slack)
+  'supply-health': 24 * 60 + 180,         // daily 08:00 — new-jobs/approvals floor
+
+  // Deliberately NOT registered: 'basebackup' and 'prune-wal-cap'. Both were
+  // retired in the pgBackRest cutover (75a6e20) and are no longer in the
+  // crontab, so giving them an expected age would leave two permanently red
+  // rows — the fastest way to teach yourself to ignore this panel.
 };
 
 export async function recordPipelineRun(input: {
