@@ -7,4 +7,4 @@ Disallow: /exam/
 Disallow: /chat/
 Disallow: /role-selection
 
-Sitemap: https://recrutas.ai/sitemap.xml
+Sitemap: https://www.recrutas.ai/sitemap.xml
