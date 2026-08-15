@@ -574,6 +574,36 @@ function splitAllCapsCompany(s: string): { company: string; rest: string } | nul
 // or company name). Used to disambiguate when scanning for title candidates.
 const ROLE_WORDS_RE = /\b(engineer|developer|manager|analyst|designer|consultant|director|architect|intern|associate|lead|senior|junior|staff|specialist|coordinator|administrator|admin|technician|support|representative|officer|advisor|scientist|researcher|programmer|tester|product\s+(owner|manager)|principal|head|vp|vice\s+president|chief|cto|ceo|coo|cfo|cmo|cpo|founder|co[\s-]?founder|president|sde|sre|attorney|accountant|nurse|teacher|instructor|writer|editor|recruiter|operator|assistant|clerk|cashier|driver|chef|cook)\b/i;
 
+// True when a line carries only a location — "Everett, WA", "San Francisco, CA",
+// "Remote", "London, United Kingdom". Résumés routinely put one of these between
+// the company and the date, which is what pushed the real title outside the old
+// two-line lookback and left the company stored as the job title.
+function isLocationLine(s: string): boolean {
+  const t = s.trim().replace(/[,.]+$/, '');
+  if (!t || t.length > 60) return false;
+  if (/^(remote|onsite|on-site|hybrid|in[\s-]office)$/i.test(t)) return true;
+  // Reject anything with role words — "Support Engineer, Seattle" is a title.
+  if (ROLE_WORDS_RE.test(t)) return false;
+  const chunks = t.split(/,\s*/).map(c => c.trim()).filter(Boolean);
+  if (chunks.length === 0 || chunks.length > 3) return false;
+  const tail = chunks[chunks.length - 1];
+  const tailIsPlace =
+    /^[A-Z]{2}$/.test(tail) ||
+    US_STATE_NAME_TOKEN_RE.test(tail) ||
+    COUNTRY_NAMES_RE.test(tail) ||
+    MAJOR_US_CITIES_RE.test(tail) ||
+    /^(remote|onsite|on-site|hybrid)$/i.test(tail);
+  if (!tailIsPlace) return false;
+  // Every chunk must look like a place name, not a company (no Inc/LLC/&).
+  return chunks.every(c =>
+    !/\b(inc|llc|corp|ltd|co|group|holdings|systems|labs|technologies|solutions|university|hospital)\b/i.test(c) &&
+    c.split(/\s+/).length <= 4,
+  );
+}
+
+// A title that is really just a date fragment ("Present", "Feb 2022", "2019").
+const DATE_FRAGMENT_RE = /^(present|currently|current|now|\d{4}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?(?:\s+\d{4})?)[,.\s]*$/i;
+
 function looksLikeTitle(s: string): boolean {
   if (!s || s.length < 3 || s.length > 100) return false;
   if (/^[•●■▪\-*]/.test(s)) return false;
@@ -699,7 +729,10 @@ export function reflowResumeText(text: string): string {
 
 function parsePositions(text: string): ExperienceResult['positions'] {
   const positions: ExperienceResult['positions'] = [];
-  const dateRe = /(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+|\d{1,2}\/)?\d{4}\s*[–—‐-]\s*(?:present|currently?|now|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+|\d{1,2}\/)?\d{0,4}/gi;
+  // Separator accepts dashes AND the word forms ("2019 to 2022", "2019 until
+  // 2022"). Word-separated ranges previously matched nothing, so those résumés
+  // produced zero positions rather than a wrong one — a silent total loss.
+  const dateRe = /(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+|\d{1,2}\/)?\d{4}\s*(?:[–—‐-]|\bto\b|\buntil\b)\s*(?:present|currently?|now|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+|\d{1,2}\/)?\d{0,4}/gi;
 
   const reflowed = reflowResumeText(text);
   const lines = reflowed.split('\n').map(l => l.trim()).filter(Boolean);
@@ -749,10 +782,13 @@ function parsePositions(text: string): ExperienceResult['positions'] {
       }
     }
 
-    // Look UP 1-2 lines for legacy title-above-date layout
+    // Look UP for the title-above-date layout. Four lines, not two: the common
+    // "Title / Company / Location / Date" block puts the title three lines up, so
+    // a two-line window could only ever see [Company, Location] — which is how a
+    // company name ended up stored as somebody's job title in prod.
     const contextLines: string[] = [];
     if (beforeOnLine) contextLines.push(beforeOnLine);
-    for (let back = 1; back <= 2 && i - back >= 0; back++) {
+    for (let back = 1; back <= 4 && i - back >= 0; back++) {
       const prev = lines[i - back].trim();
       if (!prev) continue;
       if (dateRe.test(prev)) { dateRe.lastIndex = 0; break; }
@@ -781,16 +817,35 @@ function parsePositions(text: string): ExperienceResult['positions'] {
         company = stripLocation(prev);
         break;
       }
+    } else if (!beforeOnLine && contextLines.length >= 2 && contextLines.some(looksLikeTitle)) {
+      // Assign by what each line IS, not by where it sits. Position is not a
+      // reliable signal: the line directly above a date is the title in
+      // "Title / Date" but the location in "Title / Company / Location / Date".
+      // Taking contextLines[0] on faith is what stored "Amazon" as a job title.
+      //
+      // The title is the topmost line that reads as a role — companies and
+      // locations rarely contain role words, so looksLikeTitle is the
+      // discriminator. Everything else is joined and handed to stripLocation,
+      // which peels trailing place tokens: ["Amazon", "Everett, WA"] becomes
+      // "Amazon, Everett, WA" → "Amazon". Deliberately NOT filtering location
+      // lines out first — "Stripe, San Francisco, CA" is one line carrying both
+      // company and location, and dropping it loses the employer entirely.
+      const titleIdx = contextLines.findIndex(looksLikeTitle);
+      title = contextLines[titleIdx];
+      const rest = contextLines.filter((_, idx) => idx !== titleIdx);
+      company = rest.length ? stripLocation(rest.join(', ')) : '';
     } else if (contextLines.length >= 2 && !beforeOnLine) {
-      // "Title \n Company \n Date"
+      // "Title \n Company \n Date" — no line read as a role, so fall back to
+      // the positional assumption rather than emitting nothing.
       title = contextLines[0];
       company = stripLocation(contextLines.slice(1).join(', '));
     } else {
-      // Use the pipe-preserving form for the single-line case so a
-      // "Title | Company | Date" layout splits cleanly.
-      const combinedSource = (contextLines.length === 1 && contextLines[0] === beforeOnLine)
-        ? [beforeOnLineRaw]
-        : contextLines;
+      // When the date line carries its own text, that text IS this entry —
+      // lines above belong to the previous job or to a section header. Use the
+      // pipe-preserving form so "Title | Company | Date" splits cleanly.
+      // Keyed on beforeOnLine rather than contextLines.length: the lookback
+      // reaches four lines now, so a length check silently stopped matching.
+      const combinedSource = beforeOnLine ? [beforeOnLineRaw] : contextLines;
       const combined = combinedSource.join('\n');
       ({ company, title } = extractCompanyTitle(combined));
       company = stripLocation(company);
@@ -812,6 +867,11 @@ function parsePositions(text: string): ExperienceResult['positions'] {
     if (title === 'Unknown Role' || title.length < 3) continue;
     if (/[.;]\s*$/.test(title)) continue;
     if (title.split(/\s+/).length > 12) continue;
+    // A date fragment is never a job title. Reflowed PDF blobs can leave
+    // "Present" or "Feb 2022" sitting where a title should be, and positions[0]
+    // becomes the profile headline — so drop it rather than show it.
+    if (DATE_FRAGMENT_RE.test(title.trim())) continue;
+    if (isLocationLine(title)) continue;
 
     positions.push({ title, company, duration: dateMatch[0], responsibilities });
   }

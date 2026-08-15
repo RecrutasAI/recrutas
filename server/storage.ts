@@ -581,7 +581,21 @@ export class DatabaseStorage implements IStorage {
       return await db.select().from(candidateProfiles)
         .where(
           and(
-            eq(candidateProfiles.resumeProcessingStatus, 'failed'),
+            // 'failed' is not the only broken state. A résumé that was uploaded
+            // but never parsed sits at 'idle' with parsed_at NULL — it never
+            // errored, so it was invisible to this retry and stayed unparsed
+            // indefinitely (three prod profiles sat that way from 2026-06-16).
+            // Treat "has a résumé but no parse result" as retryable too.
+            or(
+              eq(candidateProfiles.resumeProcessingStatus, 'failed'),
+              and(
+                sql`${candidateProfiles.parsedAt} IS NULL`,
+                or(
+                  eq(candidateProfiles.resumeProcessingStatus, 'idle'),
+                  sql`${candidateProfiles.resumeProcessingStatus} IS NULL`,
+                ),
+              ),
+            ),
             sql`${candidateProfiles.resumeUrl} IS NOT NULL`,
             sql`(${candidateProfiles.parseAttempts} < 3 OR ${candidateProfiles.parseAttempts} IS NULL)`
           )
