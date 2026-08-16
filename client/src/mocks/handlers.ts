@@ -95,10 +95,28 @@ const mockHiddenJobs: number[] = [];
 
 export const handlers = [
   http.get('/api/candidate/profile', () => {
+    // Shape matches the real endpoint: `{ exists, profile }`, not a bare profile.
+    // Mocking the flattened shape meant tests could not catch callers reading the
+    // wrong level of the response — a mistake that shipped twice, in the
+    // guided-setup poll and the dashboard poll, where an always-undefined status
+    // made a finished parse look like a timeout or a failure.
+    //
+    // resumeUrl is load-bearing for the dashboard: its welcome strip renders only
+    // under `activeTab === 'jobs' && hasResume`, and hasResume reads resumeUrl.
+    // Without it the greeting is correctly absent, which is why four
+    // CandidateDashboard tests failed on a fixture gap rather than on anything
+    // they actually assert.
     return HttpResponse.json({
-      name: 'John Doe',
-      skills: ['React', 'TypeScript'],
-      experience: '5 years',
+      exists: true,
+      profile: {
+        userId: '123',
+        firstName: 'John',
+        name: 'John Doe',
+        skills: ['React', 'TypeScript'],
+        experience: '5 years',
+        resumeUrl: 'https://example.com/resume.pdf',
+        resumeProcessingStatus: 'completed',
+      },
     });
   }),
 

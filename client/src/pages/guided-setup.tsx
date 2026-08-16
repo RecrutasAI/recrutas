@@ -1,4 +1,3 @@
-import { useLocation } from 'wouter';
 import { useEffect } from 'react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -7,20 +6,39 @@ import SkillsStep from '@/components/guided-setup/SkillsStep';
 import CompanyProfileStep from '@/components/guided-setup/CompanyProfileStep';
 import ResumeUploadStep from '@/components/guided-setup/ResumeUploadStep';
 import JobPostStep from '@/components/guided-setup/JobPostStep';
+import RoleSelectionStep from '@/components/guided-setup/RoleSelectionStep';
 
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, Loader2 } from 'lucide-react';
 import { SignOutButton } from '@/components/SignOutButton';
 import { ThemeToggleButton } from '@/components/theme-toggle-button';
 import { Button } from '@/components/ui/button';
-import { useMutation } from '@tanstack/react-query';
-import { apiRequest } from '@/lib/queryClient';
-import { useToast } from '@/hooks/use-toast';
 import { useSessionContext } from '@supabase/auth-helpers-react';
 
+/** Shared page chrome, so the loading and role-gate states don't lose the header. */
+function SetupShell({ children, title, subtitle }: { children: React.ReactNode; title: string; subtitle: string }) {
+  return (
+    <div className="min-h-screen bg-background flex flex-col items-center p-4">
+      <div className="w-full max-w-2xl flex justify-end items-center mb-8 pt-4">
+        <div className="flex gap-2">
+          <ThemeToggleButton />
+          <SignOutButton />
+        </div>
+      </div>
+      <div className="w-full max-w-2xl space-y-8">
+        <div className="text-center">
+          <h1 className="text-4xl font-bold text-foreground">{title}</h1>
+          <p className="text-lg text-muted-foreground">{subtitle}</p>
+        </div>
+        <Card>
+          <CardContent className="pt-6">{children}</CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 function GuidedSetupContent() {
-  const { step, role, setRole, setStep } = useGuidedSetup();
-  const [, setLocation] = useLocation();
-  const { toast } = useToast();
+  const { step, role, setRole, setStep, isLoading } = useGuidedSetup();
   const { session } = useSessionContext();
 
   // Initialize role from signup metadata if available
@@ -33,33 +51,6 @@ function GuidedSetupContent() {
     }
   }, [session, setRole]);
 
-  const setRoleMutation = useMutation({
-    mutationFn: async (role: 'candidate' | 'talent_owner') => {
-      await apiRequest('POST', '/api/auth/role', { role });
-    },
-    onSuccess: () => {
-      toast({
-        title: 'Role selected!',
-        description: 'Your profile has been updated.',
-      });
-      setStep(2);
-    },
-    onError: (error) => {
-      console.error('❌ Mutation Error:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to save your role. Please try again.',
-        variant: 'destructive',
-      });
-    },
-  });
-
-  const handleRoleSelect = (selectedRole: 'candidate' | 'talent_owner') => {
-    setRole(selectedRole);
-    setRoleMutation.mutate(selectedRole);
-  };
-
-  // Role is determined at signup - no need for role selection step
   const candidateSteps = [
     { name: 'Resume', component: <ResumeUploadStep /> },
     { name: 'Profile', component: <SkillsStep /> },
@@ -70,7 +61,35 @@ function GuidedSetupContent() {
     { name: 'Post Job', component: <JobPostStep /> },
   ];
 
-  const steps = role === 'candidate' ? candidateSteps : talentOwnerSteps;
+  // The role is resolved from the session asynchronously, so it is null on the
+  // first render of every visit. Never guess a flow from an unresolved role:
+  // this component used to fall through to the talent-owner steps whenever role
+  // wasn't exactly 'candidate', which meant every candidate entering onboarding
+  // was shown "Company / Post a Job" until the session hydrated.
+  if (isLoading) {
+    return (
+      <SetupShell title="Welcome to Recrutas" subtitle="Getting your account ready…">
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </SetupShell>
+    );
+  }
+
+  // Role resolved but absent — the account has no role metadata at all. `/auth`
+  // routes exactly these users here (via /role-selection), and with no gate they
+  // landed in the employer flow with no way out, because RoleSelectionStep was
+  // never wired in. Ask instead of assuming.
+  if (role === null) {
+    return (
+      <SetupShell title="Welcome to Recrutas" subtitle="First, tell us how you'll be using Recrutas.">
+        <RoleSelectionStep />
+      </SetupShell>
+    );
+  }
+
+  const isCandidate = role === 'candidate';
+  const steps = isCandidate ? candidateSteps : talentOwnerSteps;
   const clampedStep = Math.max(1, Math.min(step, steps.length));
   if (clampedStep !== step) {setStep(clampedStep);}
   const currentStep = steps[clampedStep - 1];
@@ -82,9 +101,9 @@ function GuidedSetupContent() {
       <div className="w-full max-w-2xl flex justify-between items-center mb-8 pt-4">
         <Button
           variant="ghost"
-          onClick={() => setStep(step - 1)}
-          disabled={step <= 1}
-          className={step <= 1 ? 'invisible' : ''}
+          onClick={() => setStep(clampedStep - 1)}
+          disabled={clampedStep <= 1}
+          className={clampedStep <= 1 ? 'invisible' : ''}
         >
           <ChevronLeft className="mr-2 h-4 w-4" /> Back
         </Button>
@@ -97,10 +116,16 @@ function GuidedSetupContent() {
       <div className="w-full max-w-2xl space-y-8">
         <div className="text-center">
           <h1 className="text-4xl font-bold text-foreground">
-            {step === 1 ? 'Welcome to Recrutas' : 'Complete Your Profile'}
+            {clampedStep === 1 ? 'Welcome to Recrutas' : 'Complete Your Profile'}
           </h1>
           <p className="text-lg text-muted-foreground">
-            {step === 1 ? "Let's get your profile set up." : "Tell us about your company to get started."}
+            {clampedStep === 1
+              ? "Let's get your profile set up."
+              // Was hardcoded to the company line, so candidates were asked about
+              // "your company" on the skills step of a candidate-only flow.
+              : isCandidate
+                ? 'Add your skills so we can match you to jobs.'
+                : 'Tell us about your company to get started.'}
           </p>
         </div>
         <Card>
@@ -108,8 +133,8 @@ function GuidedSetupContent() {
             <div className="flex justify-between items-center mb-6">
               {steps.map((s, idx) => {
                 const stepNum = idx + 1;
-                const isActive = stepNum === step;
-                const isCompleted = stepNum < step;
+                const isActive = stepNum === clampedStep;
+                const isCompleted = stepNum < clampedStep;
 
                 return (
                   <button

@@ -56,11 +56,36 @@ interface AIExtractedData {
   languages: string[];
 }
 
+/**
+ * Which engine actually produced the stored result.
+ *
+ * This exists because a dead provider and a healthy one were indistinguishable
+ * in the output: `gemini-2.0-flash` had been retired and 404'd on every call for
+ * an unknown period, and the only trace was a console.warn before the next
+ * fallback quietly took over. A parse that "succeeded" said nothing about which
+ * of four very different engines produced it.
+ *
+ * Quality is NOT uniform across these — measured on a real 3-page PDF résumé:
+ * gemini-multimodal and ai-text both got 7/7 positions; `rules` got 0/7, because
+ * PDF text extraction emits no line breaks and the rule engine parses by line.
+ */
+export type ResumeExtractor =
+  | 'gemini-multimodal'  // raw PDF bytes → multimodal model; sees true layout
+  | 'ai-text'            // extracted text → LLM (Groq/Ollama/HF); no layout, still accurate
+  | 'rules'              // deterministic engine; skills OK, positions unreliable on PDFs
+  | 'none';              // nothing produced usable output
+
 interface ParsedResume {
   text: string;
   aiExtracted: AIExtractedData;
   confidence: number;
   processingTime: number;
+  /** Engine that produced `aiExtracted`. Persisted so bad data is attributable. */
+  extractor: ResumeExtractor;
+  /** True when a preferred engine failed and something weaker answered instead. */
+  degraded: boolean;
+  /** Why the preferred engine failed — the detail that turns an alert into a diagnosis. */
+  primaryError?: string;
 }
 
 const RESUME_EXTRACTION_PROMPT = `Extract the following information from this resume and return as JSON:
@@ -123,6 +148,9 @@ export class AIResumeParser {
 
     const doParseFile = async (): Promise<ParsedResume> => {
       const startTime = Date.now();
+      // Recorded when the multimodal path is attempted and fails, so the stored
+      // result carries WHY it was downgraded rather than just that it was.
+      let primaryError: string | undefined;
 
       // Path 1: PDF — try Gemini multimodal FIRST (reads raw bytes, handles all PDF types)
       if (typeof fileContent !== 'string' || fileContent !== 'text-input') {
@@ -147,8 +175,13 @@ export class AIResumeParser {
               const extracted = await this.extractText(fileContent as Buffer, mimeType);
               if (extracted && extracted.trim().length >= 50) text = extracted;
             } catch { /* text extraction is optional here */ }
-            return { text, aiExtracted, confidence, processingTime: Date.now() - startTime };
+            return {
+              text, aiExtracted, confidence,
+              processingTime: Date.now() - startTime,
+              extractor: 'gemini-multimodal', degraded: false,
+            };
           } catch (geminiErr) {
+            primaryError = (geminiErr as Error).message.slice(0, 300);
             console.warn('[AIResumeParser] Gemini multimodal failed, falling back to text extraction:', (geminiErr as Error).message);
           }
         }
@@ -162,17 +195,30 @@ export class AIResumeParser {
           console.warn('[AIResumeParser] Text extraction failed, trying rules anyway:', (extractErr as Error).message);
           text = ''; // Will use rules on empty text
         }
-        const aiExtracted = await this.extractWithAI(text || ' ');
+        const { data: aiExtracted, extractor } = await this.extractWithAI(text || ' ');
         const confidence = this.calculateConfidence(aiExtracted);
-        return { text: text || '[no text extracted - using rule-based parsing]', aiExtracted, confidence, processingTime: Date.now() - startTime };
+        return {
+          text: text || '[no text extracted - using rule-based parsing]',
+          aiExtracted, confidence,
+          processingTime: Date.now() - startTime,
+          extractor,
+          // A PDF reaching here already lost its best engine; anything the rule
+          // engine answers is degraded regardless of input type.
+          degraded: primaryError !== undefined || extractor !== 'ai-text',
+          primaryError,
+        };
       }
 
       // Sample/demo path
       try {
         const text = this.getSampleResumeText();
-        const aiExtracted = await this.extractWithAI(text);
+        const { data: aiExtracted, extractor } = await this.extractWithAI(text);
         const confidence = this.calculateConfidence(aiExtracted);
-        return { text, aiExtracted, confidence, processingTime: Date.now() - startTime };
+        return {
+          text, aiExtracted, confidence,
+          processingTime: Date.now() - startTime,
+          extractor, degraded: extractor !== 'ai-text',
+        };
       } catch (error) {
         console.error('AI Resume parsing error:', error);
         throw new Error(`Failed to parse resume with AI: ${(error as Error).message}`);
@@ -187,7 +233,7 @@ export class AIResumeParser {
 
     try {
       // Use AI-powered extraction on provided text
-      const aiExtracted = await this.extractWithAI(resumeText);
+      const { data: aiExtracted, extractor } = await this.extractWithAI(resumeText);
 
       // Calculate confidence based on extracted data completeness
       const confidence = this.calculateConfidence(aiExtracted);
@@ -198,7 +244,9 @@ export class AIResumeParser {
         text: resumeText,
         aiExtracted,
         confidence,
-        processingTime
+        processingTime,
+        extractor,
+        degraded: extractor !== 'ai-text',
       };
     } catch (error) {
       console.error('AI Resume parsing error:', error);
@@ -345,7 +393,12 @@ Languages
 English (Native), Spanish (Conversational)`;
   }
 
-  private async extractWithAI(text: string): Promise<AIExtractedData> {
+  /**
+   * Returns the winning extraction AND which engine won. The caller needs the
+   * provenance: `rules` and `ai-text` are not interchangeable in quality, and
+   * without a label a degraded parse is indistinguishable from a good one.
+   */
+  private async extractWithAI(text: string): Promise<{ data: AIExtractedData; extractor: ResumeExtractor }> {
     // Balanced approach: run rules and AI in parallel, use whichever succeeds
     // AI gets 15s max — if circuit breaker is open or provider is slow, rules win fast
     const rulePromise = this.extractWithFallback(text);
@@ -359,6 +412,7 @@ English (Native), Spanish (Conversational)`;
     const aiResult = results[1];
 
     let winner: AIExtractedData;
+    let extractor: ResumeExtractor;
 
     const isMeaningful = (d: AIExtractedData | undefined): boolean => {
       if (!d) return false;
@@ -371,27 +425,39 @@ English (Native), Spanish (Conversational)`;
     if (aiResult.status === 'fulfilled' && isMeaningful(aiResult.value)) {
       console.log('[AIResumeParser] AI enrichment succeeded, using AI result');
       winner = aiResult.value;
+      extractor = 'ai-text';
     } else if (ruleResult.status === 'fulfilled' && isMeaningful(ruleResult.value)) {
       // AI failed or returned empty; rules have content — use rules.
-      console.log('[AIResumeParser] AI returned empty or failed, using rule-based result');
+      // Loud, not a debug line: this is the degraded path, and it was invisible
+      // for the entire period gemini-2.0-flash was returning 404.
+      console.warn(
+        '[AIResumeParser] DEGRADED — AI unavailable, falling back to the rule engine. ' +
+        `Reason: ${aiResult.status === 'rejected' ? (aiResult as PromiseRejectedResult).reason?.message ?? 'unknown' : 'empty result'}`,
+      );
       winner = ruleResult.value;
+      extractor = 'rules';
     } else if (aiResult.status === 'fulfilled') {
       // Both empty but AI structurally valid — fall back to it.
       winner = aiResult.value;
+      extractor = 'ai-text';
     } else if (ruleResult.status === 'fulfilled') {
       winner = ruleResult.value;
+      extractor = 'rules';
     } else {
       // Both failed - return a minimal valid structure
       console.error('[AIResumeParser] Both rules and AI failed:', ruleResult.reason, aiResult.reason);
       return {
-        personalInfo: {},
-        summary: '',
-        skills: { technical: [], soft: [], tools: [] },
-        experience: { totalYears: 0, level: 'entry', positions: [] },
-        education: [],
-        certifications: [],
-        projects: [],
-        languages: []
+        data: {
+          personalInfo: {},
+          summary: '',
+          skills: { technical: [], soft: [], tools: [] },
+          experience: { totalYears: 0, level: 'entry', positions: [] },
+          education: [],
+          certifications: [],
+          projects: [],
+          languages: []
+        },
+        extractor: 'none',
       };
     }
 
@@ -399,7 +465,7 @@ English (Native), Spanish (Conversational)`;
     // If this looks like a CS/tech resume (>= 2 CS languages), strip
     // healthcare skills that LLMs hallucinate from noisy OCR text or
     // that rules infer from substring matches.
-    return this.applyDomainCoherenceFilter(winner);
+    return { data: this.applyDomainCoherenceFilter(winner), extractor };
   }
 
   private applyDomainCoherenceFilter(result: AIExtractedData): AIExtractedData {

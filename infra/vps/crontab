@@ -26,15 +26,26 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # measured 2026-07-31T18:00 with both live: 806MB + 395MB and only 280MB free,
 # with the embedding pass visibly slowed by CPU contention on 2 vCPUs.
 # 1/7/13/19 collide with nothing else in this file — keep it that way.
-0 1,7,13,19 * * * $RUN batch-embeddings 90 env BATCH_LIMIT=20000 npx tsx server/services/batch-embedding.service.ts
+0 1,7,13,19 * * * CRON_LOCK_GROUP=embed $RUN batch-embeddings 90 env BATCH_LIMIT=20000 npx tsx server/services/batch-embedding.service.ts
 
-# Candidate Embeddings — every 10 min, offset off the hour so it does not load a
-# second copy of the ONNX model alongside the heavy top-of-hour crons (the box has
-# 1.9GB and swap is disabled). Split out from the job pass because a candidate who
-# just uploaded a résumé has NO embedding until this runs — their feed is
-# keyword-only in the meantime — and waiting behind an hour-long job backfill would
-# make that window unacceptable. Résumé upload only invalidates; this recomputes.
-5-55/10 * * * * $RUN embed-candidates 10 npx tsx server/services/batch-embedding.service.ts --candidates-only
+# Candidate Embeddings — EVERY MINUTE. This is an activation-latency path, not a
+# housekeeping one: a candidate who just uploaded a résumé has NO embedding until
+# this runs, and semantic similarity is weighted 0.35 of the match score, so until
+# it lands their feed cannot clear the 30% floor and they are served an UNRANKED
+# discovery list showing 0% on every row — measured end-to-end, 500/500 jobs below
+# the floor. That is the first thing a new user ever sees, so the old 10-minute
+# worst case was far too slow.
+#
+# Every minute is affordable because the pass is lazy: it queries for candidates
+# with a NULL embedding and returns before touching the model when there are none
+# (the ONNX pipeline is a lazy singleton in ml-matching.ts). A no-work tick is a
+# node boot and one indexed query.
+#
+# CRON_LOCK_GROUP=embed makes this share a lock with the job pass above, so the
+# minute ticks quietly skip while a long backfill holds it instead of loading a
+# second ONNX model on a 1.9GB box. The candidate phase runs FIRST inside the
+# combined pass, so candidates are still picked up promptly during those windows.
+* * * * * CRON_LOCK_GROUP=embed $RUN embed-candidates 10 npx tsx server/services/batch-embedding.service.ts --candidates-only
 
 # Discover Companies — daily 02:00 (phases continue on error, like GHA)
 0 2 * * * $RUN discover-companies 90 bash -c 'npx tsx scripts/discover-companies.ts --phase=discover; npx tsx scripts/discover-companies.ts --phase=apollo; npx tsx scripts/discover-companies.ts --phase=probe --limit=1500'

@@ -14,8 +14,10 @@ export interface CallAIOptions {
  * Unified generative-AI client with provider failover.
  *
  * Provider is selected by AI_PROVIDER (read at call time, like EMBED_PROVIDER):
- *   - gemini (default): Google `gemini-2.0-flash`. Metered — free tier caps
- *     requests/day (429 when exhausted). Supports text + image + PDF.
+ *   - gemini (default): Google, model pinned by GEMINI_MODEL (see below).
+ *     Metered — free tier caps requests/day (429 when exhausted). A retired
+ *     model returns 404, which is NOT a quota error and never recovers on its
+ *     own. Supports text + image + PDF.
  *   - groq: open-weights `llama-3.3-70b-versatile` on Groq's free tier, rate-
  *     limited via groq-limiter. Text only.
  *   - openrouter: OpenAI-compatible gateway over open-weights models (Llama 3.x/4,
@@ -66,6 +68,23 @@ function providerChain(modality: Modality): Provider[] {
   return ordered.filter(providerHasKey);
 }
 
+// An HTTP-shaped provider failure. `status` is what separates "this model is
+// busy" (retry) from "this model is gone" (fail over) — a distinction the
+// message text alone does not reliably carry.
+type ApiError = Error & { status?: number };
+function apiError(message: string, status: number): ApiError {
+  return Object.assign(new Error(message), { status });
+}
+
+// 429 = rate limited, 5xx = provider-side. All recover on their own; a retired
+// model (404) or a bad key (401/403) never does, so those fail over immediately.
+const TRANSIENT_STATUS = new Set([429, 500, 502, 503, 504]);
+const RETRY_BASE_MS = 600;
+// Tries per provider, bounded by what the caller's own budget can absorb.
+// PDF gets 2 because its attempts are the slowest and the résumé parser caps
+// the entire operation at 60s; text is cheap enough to afford 3.
+const TRIES_BY_MODALITY: Record<Modality, number> = { text: 3, image: 2, pdf: 2 };
+
 // Run an attempt across the provider chain, falling back on failure.
 async function withFallback(
   modality: Modality,
@@ -79,21 +98,54 @@ async function withFallback(
     );
   }
   const errors: string[] = [];
+  const maxTries = TRIES_BY_MODALITY[modality];
   for (const p of chain) {
-    try {
-      return await attempt(p);
-    } catch (err) {
-      const msg = (err as Error).message;
-      errors.push(`${p}: ${msg}`);
-      console.warn(`[AIClient] ${modality} via ${p} failed (${msg})${chain.indexOf(p) < chain.length - 1 ? ' — trying next provider' : ''}`);
+    for (let tryN = 1; tryN <= maxTries; tryN++) {
+      try {
+        return await attempt(p);
+      } catch (err) {
+        const msg = (err as Error).message;
+        const status = (err as ApiError).status;
+        // Retry the SAME provider on transient failures before moving on: a 503
+        // is the model being busy, not the model being wrong, and giving up on
+        // the first one silently demotes the whole call to a weaker fallback.
+        // Measured on the free tier, PDF calls 503 on roughly half of attempts.
+        const transient = status !== undefined && TRANSIENT_STATUS.has(status);
+        if (transient && tryN < maxTries) {
+          const backoffMs = RETRY_BASE_MS * 2 ** (tryN - 1) + Math.random() * RETRY_BASE_MS;
+          console.warn(`[AIClient] ${modality} via ${p} transient ${status} (try ${tryN}/${maxTries}) — retrying in ${Math.round(backoffMs)}ms`);
+          await new Promise(r => setTimeout(r, backoffMs));
+          continue;
+        }
+        errors.push(`${p}: ${msg}`);
+        console.warn(`[AIClient] ${modality} via ${p} failed (${msg})${chain.indexOf(p) < chain.length - 1 ? ' — trying next provider' : ''}`);
+        break;
+      }
     }
   }
   throw new Error(`All AI providers failed for ${modality} — ${errors.join(' | ')}`);
 }
 
 // ── Gemini ──────────────────────────────────────────────────────────────────
-const GEMINI_URL =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+// Pin an explicit version, never a floating `-latest` alias: this model parses
+// résumés and scraped job pages into fixed JSON shapes, and a silent model swap
+// under us changes extraction behaviour with no deploy and no signal.
+// gemini-2.0-flash was retired by Google and returned 404 on EVERY call — the
+// PDF résumé path and all four scraper callers had been failing over to their
+// fallbacks unnoticed. Override with GEMINI_MODEL when this one is retired too.
+//
+// ⚠️ ListModels is NOT authoritative for what a given key may call: it happily
+// lists gemini-2.5-flash, which 404s for this project with "no longer available
+// to NEW users". Probe a candidate with a real generateContent call before
+// pinning it. Verified callable on this key: gemini-3.5-flash / -3.6-flash /
+// gemini-flash-latest; 3.7-flash returns 503 under load.
+// Read at CALL time, not module load — same convention as AI_PROVIDER and
+// EMBED_PROVIDER. Resolving once at import made GEMINI_MODEL unusable as an
+// operational lever: swapping the model would have needed a redeploy, which is
+// precisely the slow path you do NOT want when Google retires a model under you.
+const geminiModel = () => process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+const geminiUrl = () =>
+  `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel()}:generateContent`;
 
 async function geminiRequest(parts: unknown[], systemPrompt: string, opts: CallAIOptions, timeoutMs: number): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -107,7 +159,7 @@ async function geminiRequest(parts: unknown[], systemPrompt: string, opts: CallA
       ...(opts.maxOutputTokens ? { maxOutputTokens: opts.maxOutputTokens } : {}),
     },
   };
-  const res = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
+  const res = await fetch(`${geminiUrl()}?key=${apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -115,7 +167,7 @@ async function geminiRequest(parts: unknown[], systemPrompt: string, opts: CallA
   });
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Gemini API error ${res.status}: ${errText.slice(0, 200)}`);
+    throw apiError(`Gemini API error ${res.status}: ${errText.slice(0, 200)}`, res.status);
   }
   type GeminiResponse = { candidates?: Array<{ content: { parts: Array<{ text: string }> } }> };
   const data = await res.json() as GeminiResponse;
@@ -130,8 +182,11 @@ const callGeminiText = (system: string, user: string, opts: CallAIOptions) =>
 const callGeminiImage = (system: string, user: string, imageBase64: string, mimeType: string, opts: CallAIOptions) =>
   geminiRequest([{ inlineData: { mimeType, data: imageBase64 } }, { text: user }], system, opts, 30_000);
 
+// 20s, not 45s: the résumé path that calls this caps the WHOLE parse at 60s, so
+// a 45s attempt left no room for a second try or for the text+Groq fallback
+// behind it. Two 20s tries plus backoff still fits inside the caller's budget.
 const callGeminiPDF = (system: string, user: string, pdfBuffer: Buffer, opts: CallAIOptions) =>
-  geminiRequest([{ inlineData: { mimeType: 'application/pdf', data: pdfBuffer.toString('base64') } }, { text: user }], system, opts, 45_000);
+  geminiRequest([{ inlineData: { mimeType: 'application/pdf', data: pdfBuffer.toString('base64') } }, { text: user }], system, opts, 20_000);
 
 // ── Groq (text only) ──────────────────────────────────────────────────────────
 async function callGroqText(systemPrompt: string, userPrompt: string, opts: CallAIOptions): Promise<string> {
@@ -202,7 +257,7 @@ async function openRouterRequest(
   });
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`OpenRouter API error ${res.status}: ${errText.slice(0, 200)}`);
+    throw apiError(`OpenRouter API error ${res.status}: ${errText.slice(0, 200)}`, res.status);
   }
   type ORResponse = { choices?: Array<{ message?: { content?: string } }> };
   const data = await res.json() as ORResponse;

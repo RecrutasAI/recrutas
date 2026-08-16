@@ -5,6 +5,7 @@ import { normalizeSkills } from '../skill-normalizer';
 import { sendInngestEvent } from '../inngest-service.js';
 import { captureException } from '../error-monitoring';
 import { invalidateCandidateEmbedding } from './candidate-embedding.service';
+import { track } from '../lib/analytics';
 
 /** Recursively strip PostgreSQL-illegal null bytes (\0) from all strings in a value. */
 function stripNullBytes<T>(val: T): T {
@@ -14,6 +15,32 @@ function stripNullBytes<T>(val: T): T {
     for (const k of Object.keys(val)) (val as any)[k] = stripNullBytes((val as any)[k]);
   }
   return val;
+}
+
+/**
+ * Collapse a provider's raw error text into a small, stable set of causes.
+ *
+ * These are not interchangeable and the distinction is the whole point:
+ * `model_retired` never recovers on its own and needs a human to change a
+ * pinned model id, while `quota` and `overloaded` clear by themselves. Treating
+ * the first as if it were the second is exactly what hid a dead
+ * `gemini-2.0-flash` behind "the free tier must be exhausted again".
+ */
+/** Total skills across all three buckets — the usual "did we get anything" measure. */
+function extractedSkillsCount(aiExtracted: any): number {
+  return (aiExtracted?.skills?.technical?.length || 0) +
+    (aiExtracted?.skills?.soft?.length || 0) +
+    (aiExtracted?.skills?.tools?.length || 0);
+}
+
+export function classifyPrimaryError(msg: string): string {
+  const m = msg.toLowerCase();
+  if (m.includes('404') || m.includes('no longer available') || m.includes('not found')) return 'model_retired';
+  if (m.includes('429') || m.includes('quota') || m.includes('rate limit')) return 'quota';
+  if (m.includes('503') || m.includes('overloaded') || m.includes('high demand') || m.includes('unavailable')) return 'overloaded';
+  if (m.includes('timeout') || m.includes('aborted')) return 'timeout';
+  if (m.includes('401') || m.includes('403') || m.includes('api key')) return 'auth';
+  return 'other';
 }
 
 /**
@@ -96,6 +123,43 @@ export class ResumeService {
   ) {}
 
   /**
+   * Surface WHICH engine parsed a résumé, and shout when it wasn't the good one.
+   *
+   * Motivation: `gemini-2.0-flash` was retired by Google and returned 404 on
+   * every call. The pipeline dutifully fell through to its fallbacks and kept
+   * reporting success, so the outage was invisible until someone read a wrong
+   * job title on a profile. A degraded parse is not an error — it is a silently
+   * lower-quality result, which is exactly the kind nothing catches.
+   *
+   * Two channels on purpose: a PostHog event (aggregate — "what fraction of
+   * parses are degraded this week") and a `console.error` (per-incident — shows
+   * up in Vercel logs with the provider's own reason attached).
+   */
+  private reportParseProvenance(userId: string, parseResult: any, totalSkills: number) {
+    if (!parseResult) return;
+    const { extractor, degraded, primaryError, confidence } = parseResult;
+
+    track(userId, 'resume_parsed', {
+      extractor,
+      degraded: !!degraded,
+      confidence: confidence ?? 0,
+      total_skills: totalSkills,
+      positions: parseResult.aiExtracted?.experience?.positions?.length ?? 0,
+      // Bucketed, not raw: the raw string is unbounded provider text and would
+      // shred the cardinality of any PostHog breakdown built on it.
+      primary_failure: primaryError ? classifyPrimaryError(primaryError) : undefined,
+    });
+
+    if (degraded) {
+      console.error(
+        `[ResumeService] DEGRADED PARSE user=${userId} extractor=${extractor} ` +
+        `skills=${totalSkills} — preferred engine unavailable` +
+        (primaryError ? `: ${primaryError}` : ''),
+      );
+    }
+  }
+
+  /**
    * Upload and process resume synchronously.
    * Upload always succeeds; AI parsing failures are handled gracefully.
    */
@@ -173,8 +237,11 @@ export class ResumeService {
         toolSkills: aiExtracted.skills?.tools?.length || 0,
         totalSkills,
         confidence: parseResult?.confidence || 0,
+        extractor: parseResult?.extractor,
+        degraded: parseResult?.degraded,
         parsingSuccess
       });
+      this.reportParseProvenance(userId, parseResult, totalSkills);
     } catch (parseError: any) {
       console.error(`[ResumeService] AI parsing failed (non-fatal):`, {
         error: parseError?.message,
@@ -195,6 +262,13 @@ export class ResumeService {
         resumeParsingData: {
           confidence: parseResult?.confidence || 0,
           processingTime,
+          // Provenance: which engine produced this, and whether a better one
+          // was tried and failed. Without it, a parse from the rule engine
+          // (0/7 positions on a PDF) is indistinguishable from a clean one.
+          extractor: parseResult?.extractor ?? 'none',
+          degraded: parseResult?.degraded ?? true,
+          ...(parseResult?.primaryError ? { primaryError: parseResult.primaryError } : {}),
+          parsedWithModel: process.env.GEMINI_MODEL || 'gemini-3.5-flash',
           extractedSkillsCount: (aiExtracted.skills?.technical?.length || 0) +
             (aiExtracted.skills?.soft?.length || 0) +
             (aiExtracted.skills?.tools?.length || 0),
@@ -402,6 +476,7 @@ export class ResumeService {
         (aiExtracted.education?.length > 0)
       );
       const parsingSuccess = hasAnyData;
+      this.reportParseProvenance(userId, parseResult, extractedSkillsCount(aiExtracted));
 
       const extractedSkills = [
         ...(aiExtracted.skills?.technical || []),
@@ -418,6 +493,10 @@ export class ResumeService {
           confidence: parseResult?.confidence || 0,
           processingTime: 0,
           extractedSkillsCount: extractedSkills.length,
+          extractor: parseResult?.extractor ?? 'none',
+          degraded: parseResult?.degraded ?? true,
+          ...(parseResult?.primaryError ? { primaryError: parseResult.primaryError } : {}),
+          parsedWithModel: process.env.GEMINI_MODEL || 'gemini-3.5-flash',
           parsingError: parsingSuccess ? null : 'AI parsing failed on retry',
           positions: (aiExtracted.experience?.positions || []).slice(0, 6).map((p: any) => ({
             title: p.title || '',

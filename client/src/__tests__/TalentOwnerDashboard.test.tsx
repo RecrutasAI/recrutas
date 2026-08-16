@@ -147,9 +147,14 @@ describe('TalentOwnerDashboard', () => {
       expect(screen.getByText(/Welcome back/i)).toBeInTheDocument();
     });
 
-    // Find and click the create job button
-    const createButton = await screen.findByRole('button', { name: /Create Job/i });
-    await user.click(createButton);
+    // The button is labelled "Post a Job" / "Post Job" / "Post New Job" depending
+    // on which surface renders it; this test still looked for "Create Job", a
+    // label the UI no longer uses anywhere. Match the variants, and take the
+    // first — several are on screen at once (header plus tab content) and an
+    // exact-single lookup would fail on ambiguity rather than on the behaviour
+    // under test, which is that the wizard opens.
+    const createButtons = await screen.findAllByRole('button', { name: /Post\s+(a\s+|New\s+)?Job/i });
+    await user.click(createButtons[0]);
     
     // Wait for wizard to open - verify the step loads
     await waitFor(() => {
