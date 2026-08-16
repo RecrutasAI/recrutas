@@ -8,7 +8,26 @@ import { describe, it, expect, beforeAll, afterEach, afterAll, vi } from 'vitest
 
 const server = setupServer(
   http.get('/api/candidate/profile', () => {
-    return HttpResponse.json({ name: 'John Doe', skills: ['React'] });
+    // Mirrors the real endpoint, which answers `{ exists, profile }` — the raw
+    // `{ name, skills }` this used to return is a shape the API never produces,
+    // and hand-rolled callers reading the wrong level of it have been a real
+    // source of bugs.
+    //
+    // resumeUrl is load-bearing: the welcome strip renders only under
+    // `activeTab === 'jobs' && hasResume`, and hasResume reads resumeUrl. Without
+    // it the greeting these tests wait for is correctly absent, so all four
+    // failed on one missing fixture field rather than on anything they assert.
+    return HttpResponse.json({
+      exists: true,
+      profile: {
+        userId: '123',
+        firstName: 'John',
+        name: 'John Doe',
+        skills: ['React'],
+        resumeUrl: 'https://example.com/resume.pdf',
+        resumeProcessingStatus: 'completed',
+      },
+    });
   }),
   http.get('/api/candidate/applications', () => {
     // Return valid date string that date-fns can parse
