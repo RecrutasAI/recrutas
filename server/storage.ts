@@ -220,19 +220,25 @@ export interface IStorage {
   incrementDailyUsage(userId: string, action: string): Promise<void>;
 }
 
-// Sources that publish directly from company ATSs (not aggregators)
 // Sources that represent a direct-from-company scrape (deep link to the
-// company's actual ATS posting). The scrape-all-company-jobs script emits
-// `ATS:<atsType>` while the older adzuna-migration scripts emit the bare
-// `<atsType>` — both forms accepted here. `isFromAts()` does the matching.
+// company's actual ATS posting), as opposed to an aggregator.
+//
+// The scrape-all-company-jobs script emits `ATS:<atsType>` while the older
+// adzuna-migration scripts emit the bare `<atsType>`. Both forms are accepted,
+// but by normalising the prefix away rather than listing both spellings: the
+// previous dual-listing silently omitted ATS:smartrecruiters, which is 23.8K
+// live jobs and the second-largest source, so that whole employer board went
+// unbadged in the feed.
 const ATS_SOURCES = new Set([
   'greenhouse', 'lever', 'ashby', 'workable', 'recruitee', 'workday',
-  'ATS:greenhouse', 'ATS:lever', 'ATS:ashby', 'ATS:workable', 'ATS:recruitee',
-  'company-api', 'platform',
+  'smartrecruiters', 'breezy', 'company-api', 'platform',
 ]);
+function normalizeSource(source: string): string {
+  return source.toLowerCase().replace(/^ats:/, '');
+}
 function isFromAts(source: string | null | undefined): boolean {
   if (!source) return false;
-  return ATS_SOURCES.has(source) || ATS_SOURCES.has(source.toLowerCase());
+  return ATS_SOURCES.has(normalizeSource(source));
 }
 
 // Escape regex metacharacters so a user-supplied skill (e.g. ".NET", "C++") can be
@@ -835,9 +841,16 @@ export class DatabaseStorage implements IStorage {
         conditions.push(or(...skillConditions)!);
       }
 
-      // Query external jobs (source = 'external' or externalUrl is set)
+      // Query external jobs (source = 'external' or externalUrl is set).
+      // Skip the two embedding columns — the feed renders title/company/location
+      // and nothing downstream of this call reads them, but SELECT * shipped
+      // them all the way to the browser (a 384-dim vector per row was ~25% of
+      // the /api/external-jobs response body).
+      const { embedding: _omitEmbedding, vectorEmbedding: _omitVectorEmbedding, ...slimColumns } =
+        getTableColumns(jobPostings);
+
       const query = db
-        .select()
+        .select(slimColumns)
         .from(jobPostings)
         .where(and(...conditions))
         .orderBy(usPriorityOrder, sql`${jobPostings.createdAt} DESC`)

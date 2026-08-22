@@ -25,6 +25,7 @@
     "test:integration:backend": "NODE_ENV=test node --experimental-vm-modules node_modules/jest/bin/jest --testMatch='**/test/*-integration.test.js'",
     "test:backend": "node --experimental-vm-modules node_modules/jest/bin/jest",
     "test:frontend": "vitest",
+    "test:server": "vitest run --config vitest.server.config.ts",
     "test:e2e": "node run-e2e-tests.js",
     "test:playwright": "npx playwright test",
     "test:playwright:ui": "npx playwright test --ui",
