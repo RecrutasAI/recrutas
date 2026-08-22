@@ -867,9 +867,65 @@ ${truncatedText}`;
     };
   }
 
-  private async extractWithFallback(text: string): Promise<AIExtractedData> {
+  /**
+   * PDF text extraction (`unpdf` with `mergePages: true`) returns the whole
+   * document as ONE line — zero newlines, single spaces between every token.
+   * Every rule in the deterministic path splits on '\n', so without this the
+   * fallback sees a single 3000-character line and section detection finds
+   * nothing (measured: education 0 of 2 on a real résumé PDF).
+   *
+   * Two things have to be undone. Headings are letter-spaced by the PDF
+   * ("E D U C A T I O N"), so keyword matching misses them; and the line
+   * breaks themselves are gone, so they get reconstructed from the structural
+   * signals that survive — bullet glyphs, multi-space runs, ALL-CAPS employer
+   * lines, and year ranges.
+   *
+   * Text that already has real line structure is returned untouched, so this
+   * cannot regress DOCX/TXT input or the role-extraction corpus.
+   */
+  private normalizeFlattenedText(text: string): string {
+    const newlines = (text.match(/\n/g) || []).length;
+    if (newlines >= Math.max(5, text.length / 200)) {return text;}
+
+    let t = text.replace(/\r/g, ' ');
+
+    // Letter-spaced headings -> own line, despaced. Anchored on both sides so
+    // it cannot swallow the first letter of the following word
+    // ("E D U C A T I O N UNIVERSITY" must not yield "EDUCATIONU").
+    t = t.replace(/(?<![A-Za-z])(?:[A-Z] ){3,}[A-Z](?![A-Za-z])/g,
+      m => '\n' + m.replace(/ /g, '') + '\n');
+
+    // Bullet glyphs survive the flattening even when the line break does not.
+    t = t.replace(/[\u2022\u25CF\u25AA\u25E6\u00B7\u2023]\s*/g, '\n• ');
+
+    // A run of 2+ spaces is a dropped layout boundary.
+    t = t.replace(/ {2,}/g, '\n');
+
+    // ALL-CAPS employer lines ("WALMART, INC., Bentonville").
+    t = t.replace(/(?<=[a-z\d)\].])\s+(?=[A-Z][A-Z&.\-]+[,.] )/g, '\n');
+
+    // A job title followed by a year in the same run: splits
+    // "…Arkansas Programmer Analyst, …, 2011-2016" into company / title.
+    // The negative lookbehind keeps multi-word titles intact ("Programmer
+    // Analyst" must not split between its own two words).
+    t = t.replace(
+      /(?<=[a-z])(?<!\b(?:Senior|Junior|Lead|Principal|Staff|Chief|Software|Systems|Data|Web|Frontend|Backend|Full|Stack|Programmer|Product|Project|Business|Quality))\s+(?=(?:Senior |Junior |Lead |Principal |Staff |Chief )?(?:Software |Systems |Data |Web |Frontend |Backend |Full[- ]?Stack |Programmer |Product |Project |Business |Quality )?(?:Engineer|Developer|Analyst|Manager|Designer|Consultant|Director|Architect|Scientist|Administrator|Intern)\b[^\n]{0,90}?(?:19|20)\d{2})/g,
+      '\n');
+
+    // A year/year-range that closes a segment.
+    t = t.replace(/((?:19|20)\d{2}\s*(?:[-\u2013\u2014\u2010]\s*(?:(?:19|20)\d{2}|[Pp]resent|[Cc]urrent))?)\s+(?=[A-Z])/g, '$1\n');
+
+    return t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  private async extractWithFallback(rawText: string): Promise<AIExtractedData> {
     console.log('[AIResumeParser] Using Skill Intelligence Engine (deterministic fallback)');
-    console.log(`[AIResumeParser] Text length: ${text.length} characters`);
+    console.log(`[AIResumeParser] Text length: ${rawText.length} characters`);
+
+    const text = this.normalizeFlattenedText(rawText);
+    if (text !== rawText) {
+      console.log(`[AIResumeParser] Flattened PDF text detected — reconstructed ${(text.match(/\n/g) || []).length} line breaks`);
+    }
 
     const result = parseResumeWithIntelligence(text);
 

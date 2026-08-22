@@ -74,18 +74,31 @@ export interface ExternalJobInput {
 
 function getSourceTrustScore(source: string): number {
   const trustScores: Record<string, number> = {
+    // Employer-owned ATS boards — the posting is the company's own.
     'greenhouse': 95,
     'lever': 95,
-    'workday': 90,
+    'ashby': 95,
+    'smartrecruiters': 95,
     'company-api': 95,
-    'jsearch': 70,
+    'workday': 90,
+    'workable': 90,
+    'recruitee': 90,
+    'breezy': 90,
+    // Aggregators and job boards.
+    'usajobs': 85,
     'remoteok': 75,
+    'jsearch': 70,
     'themuse': 70,
     'arbeitnow': 65,
-    'usajobs': 85,
     'default': 50
   };
-  return trustScores[source.toLowerCase()] || trustScores.default;
+  // Ingestion stores ATS rows as "ATS:greenhouse" but the keys above are bare
+  // vendor names, so every ATS row used to miss and take `default` (50). That
+  // is what made the feed's trust badges invisible: "Verified Active" needs
+  // >= 90, and 99.3% of live jobs were sitting at 50 — including 41.9K
+  // Greenhouse and 19.7K Lever postings that should score 95.
+  const key = source.toLowerCase().replace(/^ats:/, '');
+  return trustScores[key] ?? trustScores.default;
 }
 
 /**
