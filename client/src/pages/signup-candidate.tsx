@@ -2,6 +2,7 @@
 import SignUpForm from "@/components/SignUpForm";
 import { GoogleSignInButton, OrDivider } from "@/components/google-sign-in-button";
 import SmartLogo from "@/components/smart-logo";
+import { UsOnlyGate } from "@/components/us-only-gate";
 import { Briefcase } from "lucide-react";
 
 export default function SignUpCandidatePage() {
@@ -19,9 +20,11 @@ export default function SignUpCandidatePage() {
           <p className="text-muted-foreground">Find your next job opportunity.</p>
         </div>
         <div className="bg-card border border-border rounded-xl p-6 shadow-lg">
-          <GoogleSignInButton label="Sign up with Google" />
-          <OrDivider />
-          <SignUpForm role="candidate" />
+          <UsOnlyGate>
+            <GoogleSignInButton label="Sign up with Google" />
+            <OrDivider />
+            <SignUpForm role="candidate" />
+          </UsOnlyGate>
         </div>
         <div className="text-center mt-4">
           <a href="/auth" className="text-sm font-medium text-primary hover:text-primary/90">

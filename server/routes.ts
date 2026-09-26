@@ -36,6 +36,7 @@ import { ExamService } from './services/exam.service';
 import { aiResumeParser } from './ai-resume-parser';
 import { applicationIntelligence } from "./application-intelligence";
 import { supabaseAdmin } from "./lib/supabase-admin";
+import { passwordGrant } from "./lib/password-grant";
 import { CompanyJob } from '../server/company-jobs-aggregator';
 import { externalJobsScheduler } from './services/external-jobs-scheduler';
 import { jobIngestionService } from './services/job-ingestion.service';
@@ -315,6 +316,15 @@ export async function registerRoutes(app: Express): Promise<Express> {
       res.status(500).json({ message: "Failed to seed database" });
     }
   }));
+
+  // Visitor country from Vercel's edge header (null locally / off Vercel).
+  // Recrutas lists US jobs only; signup uses this to warn non-US visitors
+  // before they create an account whose feed would be empty for them.
+  app.get('/api/geo', (req, res) => {
+    const country = req.headers['x-vercel-ip-country'];
+    res.set('Cache-Control', 'private, no-store');
+    res.json({ country: typeof country === 'string' && country ? country.toUpperCase() : null });
+  });
 
   // Health check endpoint
   app.get('/api/health', asyncHandler(async (req, res) => {
@@ -745,27 +755,14 @@ export async function registerRoutes(app: Express): Promise<Express> {
         return res.status(400).json({ message: 'email and password are required' });
       }
 
-      const supabaseUrl  = process.env.SUPABASE_URL;
-      const supabaseAnon = process.env.SUPABASE_ANON_KEY;
-      if (!supabaseUrl || !supabaseAnon) {
-        return res.status(503).json({ message: 'Auth service not configured' });
+      // Service-role password grant: exempt from Supabase CAPTCHA, which the
+      // extension (no browser widget) could never pass. Rate-limited by
+      // authLimiter on /api/auth/.
+      const grant = await passwordGrant(email, password);
+      if (!grant.ok) {
+        return res.status(grant.status).json({ message: grant.message });
       }
-
-      const sbRes = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': supabaseAnon,
-        },
-        body: JSON.stringify({ email, password }),
-      });
-
-      const sbBody = await sbRes.json() as any;
-
-      if (!sbRes.ok) {
-        const msg = sbBody?.error_description || sbBody?.message || 'Invalid credentials';
-        return res.status(401).json({ message: msg });
-      }
+      const sbBody = grant.session;
 
       return res.json({
         accessToken:  sbBody.access_token,
@@ -1351,6 +1348,25 @@ Analyze the form and return the actions JSON to fill every field you can.`;
   // users.email (what notification emails are sent to) still has the old one.
   // The client calls this on USER_UPDATED; the verified token is the source of
   // truth. Touches only email — /api/auth/sync would also overwrite `name`.
+  // Re-verify the signed-in user's current password before a password change.
+  // Server-side so it's CAPTCHA-exempt (see lib/password-grant); the email is
+  // taken from the verified token, so this can only test the caller's own
+  // password. Tight rate limit: it's a password oracle otherwise.
+  app.post('/api/account/verify-password',
+    rateLimit({ windowMs: 15 * 60 * 1000, max: 5 }),
+    isAuthenticated,
+    asyncHandler(async (req: any, res) => {
+      const password = req.body?.password;
+      if (!password || typeof password !== 'string' || !req.user?.email) {
+        return res.status(400).json({ message: 'Current password is required' });
+      }
+      const grant = await passwordGrant(req.user.email, password);
+      if (!grant.ok) {
+        return res.status(grant.status === 503 ? 503 : 401).json({ message: 'Your current password is incorrect.' });
+      }
+      res.json({ success: true });
+    }));
+
   app.post('/api/account/sync-email', isAuthenticated, asyncHandler(async (req: any, res) => {
     const email: string | undefined = req.user?.email;
     if (!email) {return res.status(400).json({ message: 'No email on this account' });}
@@ -3364,12 +3380,22 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       source: typeof source === 'string' ? source.trim().slice(0, 50) : 'early-access-page',
     });
 
-    // Send confirmation email
+    // Send confirmation email. Non-US visitors join from the signup page's
+    // US-only notice (source "non-us:<CC>"); promising them an invite would be
+    // wrong — they're waiting for coverage, not for a spot.
+    const nonUs = typeof source === 'string' && source.startsWith('non-us:');
     await sendEmail({
       to: normalizedEmail,
       from: 'noreply@recrutas.ai',
-      subject: "You're on the Recrutas early access list!",
-      html: `
+      subject: nonUs ? "We'll let you know when Recrutas expands" : "You're on the Recrutas early access list!",
+      html: nonUs
+        ? `
+        <p>Hi,</p>
+        <p>Thanks for your interest in <strong>Recrutas</strong>. Right now every job we list comes from a US employer, so we can't match you with roles where you are yet.</p>
+        <p>We'll email you once Recrutas covers your country. No other emails in the meantime.</p>
+        <p>— The Recrutas Team</p>
+      `
+        : `
         <p>Hey${firstName ? ` ${firstName.trim()}` : ''},</p>
         <p>Thanks for signing up for early access to <strong>Recrutas</strong>.</p>
         <p>We're letting people in on a rolling basis. You'll get an invite code in your inbox as soon as a spot opens up.</p>

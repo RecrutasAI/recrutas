@@ -52,7 +52,7 @@ export function AccountSettings() {
         onAction={() => toggle("password")}
       />
       {panel === "password" && (
-        <ChangePassword email={user.email ?? ""} requireCurrent={hasPassword} onDone={() => setPanel(null)} />
+        <ChangePassword requireCurrent={hasPassword} onDone={() => setPanel(null)} />
       )}
 
       <Row
@@ -137,7 +137,7 @@ function ChangeEmail({ currentEmail, onDone }: { currentEmail: string; onDone: (
   );
 }
 
-function ChangePassword({ email, requireCurrent, onDone }: { email: string; requireCurrent: boolean; onDone: () => void }) {
+function ChangePassword({ requireCurrent, onDone }: { requireCurrent: boolean; onDone: () => void }) {
   const { toast } = useToast();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
@@ -149,9 +149,10 @@ function ChangePassword({ email, requireCurrent, onDone }: { email: string; requ
       if (next !== confirm) {throw new Error("The new passwords don't match.");}
       if (requireCurrent) {
         // Re-verify before changing, so an unattended signed-in session can't
-        // be used to take over the account.
-        const { error } = await supabase.auth.signInWithPassword({ email, password: current });
-        if (error) {throw new Error("Your current password is incorrect.");}
+        // be used to take over the account. Server-side, because a browser
+        // signInWithPassword would need a CAPTCHA token once CAPTCHA is on.
+        const res = await apiRequest("POST", "/api/account/verify-password", { password: current });
+        if (!res.ok) {throw new Error("Your current password is incorrect.");}
       }
       const { error } = await supabase.auth.updateUser({ password: next });
       if (error) {throw error;}
