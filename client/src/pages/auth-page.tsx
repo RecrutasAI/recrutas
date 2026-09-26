@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useSupabaseClient, useSession } from "@supabase/auth-helpers-react";
 import { useLocation } from "wouter";
-import { useToast } from "@/hooks/use-toast";
 import SmartLogo from "@/components/smart-logo";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { GoogleSignInButton, OrDivider } from "@/components/google-sign-in-button";
@@ -15,8 +14,9 @@ export default function AuthPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [signInLoading, setSignInLoading] = useState(false);
+  // Shown inline (not a toast) so it stays until the user edits a field.
+  const [signInError, setSignInError] = useState<null | { credentials: boolean; message: string }>(null);
 
-  const { toast } = useToast();
 
   // Forward ?code= param to signup links
   const codeParam = new URLSearchParams(window.location.search).get('code');
@@ -38,6 +38,7 @@ export default function AuthPage() {
   const handleSignIn = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSignInLoading(true);
+    setSignInError(null);
     try {
       const { error } = await supabase.auth.signInWithPassword({
         email,
@@ -47,14 +48,7 @@ export default function AuthPage() {
     } catch (error: unknown) {
       console.error("Sign-in error:", error);
       const message = (error as Error).message;
-      toast({
-        title: "Couldn't sign you in",
-        // Supabase's "Invalid login credentials" doesn't say what to do next.
-        description: /invalid login credentials/i.test(message)
-          ? "That email and password don't match. Check for typos, use \"Forgot password?\", or continue with Google if that's how you signed up."
-          : message,
-        variant: "destructive",
-      });
+      setSignInError({ credentials: /invalid login credentials/i.test(message), message });
     } finally {
       setSignInLoading(false);
     }
@@ -100,7 +94,7 @@ export default function AuthPage() {
                   autoComplete="email"
                   required
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => { setEmail(e.target.value); setSignInError(null); }}
                   className="appearance-none block w-full px-3 py-2 border border-input rounded-md shadow-sm placeholder-muted-foreground focus:outline-none focus:ring-ring focus:border-ring sm:text-sm bg-input text-foreground"
                 />
               </div>
@@ -121,7 +115,7 @@ export default function AuthPage() {
                   autoComplete="current-password"
                   required
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => { setPassword(e.target.value); setSignInError(null); }}
                   className="appearance-none block w-full px-3 py-2 pr-10 border border-input rounded-md shadow-sm placeholder-muted-foreground focus:outline-none focus:ring-ring focus:border-ring sm:text-sm bg-input text-foreground"
                 />
                 <button
@@ -150,10 +144,22 @@ export default function AuthPage() {
                 </a>
               </div>
             </div>
-            <p className="text-xs text-muted-foreground -mt-3">
-              Forgot which email you used? Try the addresses you use for job hunting, or email{" "}
-              <a href="mailto:support@recrutas.ai" className="underline">support@recrutas.ai</a>.
-            </p>
+            {signInError && (
+              <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-foreground">
+                {signInError.credentials ? (
+                  <>
+                    <p className="font-medium">That email and password don't match.</p>
+                    <p className="mt-1 text-muted-foreground">
+                      Check for typos, reset it with "Forgot password?", or use Google if that's how you signed up.
+                      Not sure which email you used? Try the one you job-hunt with, or email{" "}
+                      <a href="mailto:support@recrutas.ai" className="underline">support@recrutas.ai</a>.
+                    </p>
+                  </>
+                ) : (
+                  <p>{signInError.message}</p>
+                )}
+              </div>
+            )}
 
             <div className="flex flex-col items-center space-y-4">
               <button
