@@ -63,6 +63,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { useTheme } from "@/components/theme-provider";
+import { AccountSettings } from "@/components/account-settings";
 
 interface DashboardStats {
   newMatches: number;
@@ -793,7 +794,7 @@ function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[460px]">
+      <DialogContent className="sm:max-w-[460px] max-h-[90vh] overflow-y-auto">
         <div className="px-6 pt-6 pb-2">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-lg">
@@ -801,7 +802,7 @@ function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
               Settings
             </DialogTitle>
             <DialogDescription>
-              Preferences and notifications
+              Preferences, notifications and account
             </DialogDescription>
           </DialogHeader>
         </div>
@@ -873,6 +874,12 @@ function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
               )}
             </div>
           </div>
+        </div>
+
+        {/* Account actions apply immediately; "Save Changes" covers only the
+            preferences above. */}
+        <div className="px-6 pt-5 mt-5 border-t border-slate-200 dark:border-slate-700">
+          <AccountSettings />
         </div>
 
         <div className="flex justify-end gap-3 px-6 py-4 mt-2 border-t border-slate-200 dark:border-slate-700">

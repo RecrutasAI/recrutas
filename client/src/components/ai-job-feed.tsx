@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
@@ -207,6 +207,8 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
   const cachedProfile = queryClient.getQueryData<any>(['/api/candidate/profile']);
   const hasSkills = Array.isArray(cachedProfile?.skills) && cachedProfile.skills.length > 0;
 
+  const feedVisitStamped = useRef(false);
+
   // Single fetch of the full (≤100) match set. All six filters below run
   // client-side over this COMPLETE set — previously filtering only saw the pages
   // an infinite scroll had loaded, which silently hid matching jobs on unfetched
@@ -220,7 +222,12 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
   } = useQuery<PaginatedResponse>({
     queryKey: ['/api/ai-matches'],
     queryFn: async () => {
-      const response = await apiRequest("GET", `/api/ai-matches?page=1&limit=${FEED_FETCH_LIMIT}`);
+      // Only the first load of this mount counts as a visit. Background
+      // refetches (every 5 min, after hide/apply) would otherwise re-stamp
+      // last_feed_visit and clear the "New" badges while the user is reading.
+      const visit = feedVisitStamped.current ? '0' : '1';
+      feedVisitStamped.current = true;
+      const response = await apiRequest("GET", `/api/ai-matches?page=1&limit=${FEED_FETCH_LIMIT}&visit=${visit}`);
       return response.json();
     },
     refetchInterval: 300000,

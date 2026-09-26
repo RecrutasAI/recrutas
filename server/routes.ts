@@ -509,18 +509,21 @@ export async function registerRoutes(app: Express): Promise<Express> {
       finish();
       console.log(`[ai-matches] getJobRecommendations done in ${Date.now() - startedAt}ms (total=${result.total})`);
 
-      // Track last feed visit on page 1 only (for "new" badges)
-      if (page === 1) {
-        db.execute(sql`UPDATE candidate_users SET last_feed_visit = NOW() WHERE user_id = ${userId}`)
-          .catch(() => {});
-      }
-
-      // Get lastFeedVisit for "new" badge
+      // Read the PREVIOUS visit before stamping this one. The stamp used to be
+      // fired first without awaiting, so the read usually saw NOW() and no job
+      // was ever newer than it — "New" badges almost never rendered.
       const [candidate] = await db.select({ lastFeedVisit: candidateProfiles.lastFeedVisit })
         .from(candidateProfiles)
         .where(eq(candidateProfiles.userId, userId))
         .limit(1);
       const lastVisit = candidate?.lastFeedVisit;
+
+      // Track last feed visit on page 1 only (for "new" badges). The client
+      // sends visit=0 on background refetches so they don't count as a visit.
+      if (page === 1 && req.query.visit !== '0') {
+        db.execute(sql`UPDATE candidate_users SET last_feed_visit = NOW() WHERE user_id = ${userId}`)
+          .catch(() => {});
+      }
 
       const jobs = result.jobs.map((job: any, index: number) => {
         const match = formatJobMatch(job, (page - 1) * limit + index);
@@ -1295,6 +1298,66 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       console.error("Error syncing user:", error);
       res.status(500).json({ message: "Failed to sync user" });
     }
+  }));
+
+  // Delete the signed-in user's account and everything tied to it. The privacy
+  // policy promises this; there was no way to do it.
+  //
+  // Order matters. App data goes first, in one transaction: every table that
+  // references users.id cascades from the users row, so either all of it goes
+  // or — if some FK blocks the delete — none of it does and the login is left
+  // intact so the user can retry or contact support. Only after the data is
+  // gone do we remove the résumé file and, last, the Supabase login itself.
+  app.delete('/api/account', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const userId: string = req.user.id;
+    if (req.body?.confirm !== 'DELETE') {
+      return res.status(400).json({ message: 'Type DELETE to confirm account deletion.' });
+    }
+
+    const [profile] = await db.select({ resumeUrl: candidateProfiles.resumeUrl })
+      .from(candidateProfiles)
+      .where(eq(candidateProfiles.userId, userId))
+      .limit(1);
+
+    try {
+      await db.transaction(async (tx) => {
+        await tx.delete(users).where(eq(users.id, userId));
+      });
+    } catch (error: any) {
+      console.error(`[account-delete] DB delete failed for ${userId}:`, error?.message);
+      return res.status(500).json({
+        message: 'We could not delete your account. Nothing was removed — please try again or email support@recrutas.ai.',
+      });
+    }
+
+    const resumePath = profile?.resumeUrl as string | undefined;
+    if (resumePath && !resumePath.startsWith('http')) {
+      const { error } = await supabaseAdmin.storage.from('resumes').remove([resumePath]);
+      if (error) {console.warn(`[account-delete] résumé file not removed for ${userId}:`, error.message);}
+    }
+
+    const { error: authError } = await supabaseAdmin.auth.admin.deleteUser(userId);
+    if (authError) {
+      // Data is already gone; a leftover login can only re-create an empty
+      // profile. Log loudly so it can be removed by hand.
+      console.error(`[account-delete] auth user NOT deleted for ${userId}:`, authError.message);
+    }
+
+    serverTrack(userId, 'account_deleted', {});
+    res.json({ success: true });
+  }));
+
+  // After a confirmed email change, Supabase Auth holds the new address but
+  // users.email (what notification emails are sent to) still has the old one.
+  // The client calls this on USER_UPDATED; the verified token is the source of
+  // truth. Touches only email — /api/auth/sync would also overwrite `name`.
+  app.post('/api/account/sync-email', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const email: string | undefined = req.user?.email;
+    if (!email) {return res.status(400).json({ message: 'No email on this account' });}
+    await db.update(users)
+      .set({ email, updatedAt: new Date() })
+      .where(sql`${users.id} = ${req.user.id} AND ${users.email} IS DISTINCT FROM ${email}`);
+    res.json({ success: true });
   }));
 
   app.post('/api/auth/role', isAuthenticated, asyncHandler(async (req: any, res) => {

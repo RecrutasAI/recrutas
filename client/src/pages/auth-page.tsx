@@ -4,6 +4,7 @@ import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import SmartLogo from "@/components/smart-logo";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { GoogleSignInButton, OrDivider } from "@/components/google-sign-in-button";
 import { LoadingHype, SIGN_IN_MESSAGES } from "@/components/loading-hype";
 
 export default function AuthPage() {
@@ -45,9 +46,13 @@ export default function AuthPage() {
       if (error) {throw error;}
     } catch (error: unknown) {
       console.error("Sign-in error:", error);
+      const message = (error as Error).message;
       toast({
-        title: "Error signing in",
-        description: (error as Error).message,
+        title: "Couldn't sign you in",
+        // Supabase's "Invalid login credentials" doesn't say what to do next.
+        description: /invalid login credentials/i.test(message)
+          ? "That email and password don't match. Check for typos, use \"Forgot password?\", or continue with Google if that's how you signed up."
+          : message,
         variant: "destructive",
       });
     } finally {
@@ -77,6 +82,8 @@ export default function AuthPage() {
           <p className="text-sm text-muted-foreground">Sign in to your account</p>
         </div>
         <div className="bg-card border border-border rounded-xl p-8 shadow-lg">
+          <GoogleSignInButton />
+          <OrDivider />
           <form className="space-y-6" onSubmit={handleSignIn}>
             <div>
               <label
@@ -143,6 +150,10 @@ export default function AuthPage() {
                 </a>
               </div>
             </div>
+            <p className="text-xs text-muted-foreground -mt-3">
+              Forgot which email you used? Try the addresses you use for job hunting, or email{" "}
+              <a href="mailto:support@recrutas.ai" className="underline">support@recrutas.ai</a>.
+            </p>
 
             <div className="flex flex-col items-center space-y-4">
               <button

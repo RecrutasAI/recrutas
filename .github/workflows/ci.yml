@@ -85,33 +85,24 @@ jobs:
           NODE_ENV: test
           # No GROQ_API_KEY — unit tests must not call external AI APIs
 
-  # Phase 2: Integration Tests
-  integration-tests:
-    name: Integration Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-      
-      - name: Install dependencies
-        # --ignore-scripts skips the flaky `supabase` CLI binary download
-        # (postinstall fetches from GitHub releases and intermittently fails with
-        # "incorrect header check"). The CLI isn't needed for CI; esbuild resolves
-        # its binary from the @esbuild/* optional dep, not a postinstall.
-        run: npm ci --ignore-scripts
-      
-      - name: Run integration tests
-        run: npm run test:integration:backend
-        continue-on-error: true  # Requires live Supabase; skipped gracefully when creds absent
+      # The regression guards (résumé role extraction, flattened PDFs, parse
+      # provenance, ingestion salvage, extension file guard) live here. They
+      # were covered by no CI step, which is how the role-extraction guard
+      # stopped running unnoticed.
+      - name: Run server tests
+        run: npm run test:server
         env:
           NODE_ENV: test
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+      - name: Run frontend tests
+        run: npx vitest run
+        env:
+          NODE_ENV: test
+          # supabase-client.ts calls createClient() at import time and throws on
+          # an empty URL. The tests mock every request, so placeholders suffice.
+          VITE_SUPABASE_URL: https://placeholder.supabase.co
+          VITE_SUPABASE_ANON_KEY: placeholder-anon-key
+
 
   # Phase 3: Build
   build:
@@ -140,7 +131,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
-  # Phase 4: Security Scan (non-blocking)
+  # Phase 4: Security Scan (blocks on high/critical advisories)
   security-scan:
     name: Security Analysis
     runs-on: ubuntu-latest
@@ -160,13 +151,12 @@ jobs:
       
       - name: Run security audit
         run: npm audit --audit-level=high
-        continue-on-error: true
 
   # Quality Gate Summary
   quality-gate:
     name: Quality Gate Status
     runs-on: ubuntu-latest
-    needs: [type-check, unit-tests, integration-tests, build]
+    needs: [type-check, unit-tests, build, security-scan]
     if: always()
     steps:
       - name: Check job status
@@ -190,10 +180,11 @@ jobs:
             echo "✅ Unit Tests: PASSED" >> $GITHUB_STEP_SUMMARY
           fi
           
-          if [ "${{ needs.integration-tests.result }}" != "success" ]; then
-            echo "⚠️  Integration Tests: SKIPPED (requires live Supabase)" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.security-scan.result }}" != "success" ]; then
+            echo "❌ Security Audit: FAILED" >> $GITHUB_STEP_SUMMARY
+            FAILED=1
           else
-            echo "✅ Integration Tests: PASSED" >> $GITHUB_STEP_SUMMARY
+            echo "✅ Security Audit: PASSED" >> $GITHUB_STEP_SUMMARY
           fi
           
           if [ "${{ needs.build.result }}" != "success" ]; then
