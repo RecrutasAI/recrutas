@@ -4,8 +4,7 @@
  * jobs that hadn't been seen in over 48h — including jobs already taken down.
  */
 import { describe, it, expect } from 'vitest';
-import { isRecentlyVerifiedLive, hoursSinceLivenessCheck, LIVE_BADGE_MAX_AGE_HOURS } from '../shared/liveness';
-import { formatCheckedAgo } from '../client/src/components/ai-job-feed';
+import { isRecentlyVerifiedLive, hoursSinceLivenessCheck, formatCheckedAgo, LIVE_BADGE_MAX_AGE_HOURS } from '../shared/liveness';
 
 const NOW = Date.parse('2026-09-26T12:00:00Z');
 const hoursAgo = (h: number) => new Date(NOW - h * 3_600_000).toISOString();

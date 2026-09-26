@@ -12,7 +12,7 @@ import AIMatchBreakdownModal from "./AIMatchBreakdownModal";
 import { LoadingHype } from "./loading-hype";
 import { useToast } from "@/hooks/use-toast";
 import { track } from "@/lib/analytics";
-import { LIVE_BADGE_MAX_AGE_HOURS, hoursSinceLivenessCheck } from "@shared/liveness";
+import { formatCheckedAgo } from "@shared/liveness";
 
 function isCareerPageLink(url: string | undefined, careerPageUrl: string | undefined): boolean {
   if (!url) return false;
@@ -77,15 +77,6 @@ function getUrlLabel(url: string | undefined, careerPageUrl: string | undefined)
   return { label: 'Job Posting', description: 'Direct link to job application' };
 }
 
-// How long ago we last saw this posting live on the employer's board. Null
-// past LIVE_BADGE_MAX_AGE_HOURS: a job missing from its board for days is not
-// "live", however clean its record (see shared/liveness.ts).
-export function formatCheckedAgo(checkedAt?: string | null, now: number = Date.now()): string | null {
-  const hours = hoursSinceLivenessCheck({ lastLivenessCheck: checkedAt }, now);
-  if (hours === null || hours > LIVE_BADGE_MAX_AGE_HOURS) return null;
-  if (hours < 1) return 'just now';
-  return `${Math.floor(hours)}h ago`;
-}
 
 
 type ExperienceLevel = 'entry' | 'mid' | 'senior' | 'lead' | 'executive';

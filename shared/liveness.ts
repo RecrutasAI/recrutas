@@ -28,3 +28,14 @@ export function isRecentlyVerifiedLive(job: LivenessFields, now: number = Date.n
   const hours = hoursSinceLivenessCheck(job, now);
   return hours !== null && hours <= LIVE_BADGE_MAX_AGE_HOURS;
 }
+
+/**
+ * Badge label: how long ago the job was last seen on its board. Null past the
+ * badge window — a job missing for days is not "live", however clean its record.
+ */
+export function formatCheckedAgo(checkedAt?: Date | string | null, now: number = Date.now()): string | null {
+  const hours = hoursSinceLivenessCheck({ lastLivenessCheck: checkedAt }, now);
+  if (hours === null || hours > LIVE_BADGE_MAX_AGE_HOURS) {return null;}
+  if (hours < 1) {return 'just now';}
+  return `${Math.floor(hours)}h ago`;
+}
