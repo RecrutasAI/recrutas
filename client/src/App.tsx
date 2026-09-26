@@ -26,7 +26,23 @@ import AdminDashboard from "@/pages/admin-dashboard";
 import MetricsDashboard from "@/pages/metrics-dashboard";
 import PageMeta from '@/components/page-meta';
 import { IdleWatcher } from '@/components/idle-watcher';
+import { apiRequest } from '@/lib/queryClient';
 
+
+// Supabase fires USER_UPDATED when a confirmed email change (or password
+// change) lands. Mirror the new email into the app's users row, which is where
+// notification emails are addressed.
+function AccountEmailSync(): null {
+  React.useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'USER_UPDATED') {
+        apiRequest('POST', '/api/account/sync-email').catch(() => {});
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+  return null;
+}
 
 function App() {
   // ...
@@ -34,6 +50,7 @@ function App() {
     <AppProviders>
       <SessionContextProvider supabaseClient={supabase}>
         <PageMeta />
+        <AccountEmailSync />
         <Switch>
           <Route path="/" component={Landing} />
           <Route path="/auth" component={AuthPage} />

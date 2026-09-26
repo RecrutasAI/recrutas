@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast"
 import { Link, useLocation } from "wouter"
 import { Loader2, ArrowLeft, CheckCircle2 } from "lucide-react"
 import { supabase } from "@/lib/supabase-client"
+import { MIN_PASSWORD_LENGTH } from "@/components/account-settings"
 
 export default function ResetPasswordPage() {
   const [password, setPassword] = useState("")
@@ -64,10 +65,10 @@ export default function ResetPasswordPage() {
       })
       return
     }
-    if (password.length < 6) {
+    if (password.length < MIN_PASSWORD_LENGTH) {
       toast({
         title: "Password too short",
-        description: "Password must be at least 6 characters.",
+        description: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
         variant: "destructive",
       })
       return
@@ -160,7 +161,7 @@ export default function ResetPasswordPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  minLength={6}
+                  minLength={MIN_PASSWORD_LENGTH}
                   className="border-input focus:border-ring h-11"
                 />
               </div>
@@ -174,7 +175,7 @@ export default function ResetPasswordPage() {
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   required
-                  minLength={6}
+                  minLength={MIN_PASSWORD_LENGTH}
                   className="border-input focus:border-ring h-11"
                 />
               </div>

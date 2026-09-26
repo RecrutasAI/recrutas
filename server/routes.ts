@@ -1300,6 +1300,66 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     }
   }));
 
+  // Delete the signed-in user's account and everything tied to it. The privacy
+  // policy promises this; there was no way to do it.
+  //
+  // Order matters. App data goes first, in one transaction: every table that
+  // references users.id cascades from the users row, so either all of it goes
+  // or — if some FK blocks the delete — none of it does and the login is left
+  // intact so the user can retry or contact support. Only after the data is
+  // gone do we remove the résumé file and, last, the Supabase login itself.
+  app.delete('/api/account', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const userId: string = req.user.id;
+    if (req.body?.confirm !== 'DELETE') {
+      return res.status(400).json({ message: 'Type DELETE to confirm account deletion.' });
+    }
+
+    const [profile] = await db.select({ resumeUrl: candidateProfiles.resumeUrl })
+      .from(candidateProfiles)
+      .where(eq(candidateProfiles.userId, userId))
+      .limit(1);
+
+    try {
+      await db.transaction(async (tx) => {
+        await tx.delete(users).where(eq(users.id, userId));
+      });
+    } catch (error: any) {
+      console.error(`[account-delete] DB delete failed for ${userId}:`, error?.message);
+      return res.status(500).json({
+        message: 'We could not delete your account. Nothing was removed — please try again or email support@recrutas.ai.',
+      });
+    }
+
+    const resumePath = profile?.resumeUrl as string | undefined;
+    if (resumePath && !resumePath.startsWith('http')) {
+      const { error } = await supabaseAdmin.storage.from('resumes').remove([resumePath]);
+      if (error) {console.warn(`[account-delete] résumé file not removed for ${userId}:`, error.message);}
+    }
+
+    const { error: authError } = await supabaseAdmin.auth.admin.deleteUser(userId);
+    if (authError) {
+      // Data is already gone; a leftover login can only re-create an empty
+      // profile. Log loudly so it can be removed by hand.
+      console.error(`[account-delete] auth user NOT deleted for ${userId}:`, authError.message);
+    }
+
+    serverTrack(userId, 'account_deleted', {});
+    res.json({ success: true });
+  }));
+
+  // After a confirmed email change, Supabase Auth holds the new address but
+  // users.email (what notification emails are sent to) still has the old one.
+  // The client calls this on USER_UPDATED; the verified token is the source of
+  // truth. Touches only email — /api/auth/sync would also overwrite `name`.
+  app.post('/api/account/sync-email', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const email: string | undefined = req.user?.email;
+    if (!email) {return res.status(400).json({ message: 'No email on this account' });}
+    await db.update(users)
+      .set({ email, updatedAt: new Date() })
+      .where(sql`${users.id} = ${req.user.id} AND ${users.email} IS DISTINCT FROM ${email}`);
+    res.json({ success: true });
+  }));
+
   app.post('/api/auth/role', isAuthenticated, asyncHandler(async (req: any, res) => {
     try {
       if (!req.user) {return res.status(401).json({ message: "Unauthorized" });}
