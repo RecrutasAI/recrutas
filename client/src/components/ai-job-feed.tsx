@@ -12,6 +12,7 @@ import AIMatchBreakdownModal from "./AIMatchBreakdownModal";
 import { LoadingHype } from "./loading-hype";
 import { useToast } from "@/hooks/use-toast";
 import { track } from "@/lib/analytics";
+import { LIVE_BADGE_MAX_AGE_HOURS, hoursSinceLivenessCheck } from "@shared/liveness";
 
 function isCareerPageLink(url: string | undefined, careerPageUrl: string | undefined): boolean {
   if (!url) return false;
@@ -76,19 +77,14 @@ function getUrlLabel(url: string | undefined, careerPageUrl: string | undefined)
   return { label: 'Job Posting', description: 'Direct link to job application' };
 }
 
-// How long ago we last saw this posting live at the source. Deliberately vague
-// past a fortnight — claiming "verified" on a month-old scrape oversells it.
-function formatCheckedAgo(checkedAt?: string | null): string | null {
-  if (!checkedAt) return null;
-  const ms = Date.now() - new Date(checkedAt).getTime();
-  if (!Number.isFinite(ms) || ms < 0) return null;
-
-  const hours = Math.floor(ms / 3_600_000);
+// How long ago we last saw this posting live on the employer's board. Null
+// past LIVE_BADGE_MAX_AGE_HOURS: a job missing from its board for days is not
+// "live", however clean its record (see shared/liveness.ts).
+export function formatCheckedAgo(checkedAt?: string | null, now: number = Date.now()): string | null {
+  const hours = hoursSinceLivenessCheck({ lastLivenessCheck: checkedAt }, now);
+  if (hours === null || hours > LIVE_BADGE_MAX_AGE_HOURS) return null;
   if (hours < 1) return 'just now';
-  if (hours < 24) return `${hours}h ago`;
-
-  const days = Math.floor(hours / 24);
-  return days <= 14 ? `${days}d ago` : null;
+  return `${Math.floor(hours)}h ago`;
 }
 
 
@@ -741,7 +737,8 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
               // real listing.
               const isVerifiedActive = match.isVerifiedActive;
               const isDirectFromCompany = match.isDirectFromCompany;
-              const checkedAgo = formatCheckedAgo(match.job.lastLivenessCheck || match.job.postedDate);
+              // Only a real board check counts — a posting date is not a liveness check.
+              const checkedAgo = formatCheckedAgo(match.job.lastLivenessCheck);
               const isInternalJob = (match.job as any).source === 'platform' || match.job.externalSource === 'platform' || !match.job.externalUrl;
               return (
                 <div key={match.id}>

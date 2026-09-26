@@ -58,6 +58,7 @@ import {
   inviteCodeRedemptions,
   dailyUsageLimits,
 } from "../shared/schema.js";
+import { isRecentlyVerifiedLive } from "../shared/liveness.js";
 import { db, client } from "./db";
 import { eq, desc, asc, and, or } from "drizzle-orm";
 import { getTableColumns } from "drizzle-orm/utils";
@@ -1183,7 +1184,7 @@ export class DatabaseStorage implements IStorage {
         matchTier: 'discovery' as const,
         skillMatches: [],
         aiExplanation: explanation,
-        isVerifiedActive: job.livenessStatus === 'active' && (job.trustScore || 0) >= 90,
+        isVerifiedActive: isRecentlyVerifiedLive(job),
         isDirectFromCompany: isFromAts(job.source),
         freshness,
         daysOld,
@@ -1595,7 +1596,7 @@ export class DatabaseStorage implements IStorage {
           aiExplanation: score.aiExplanation,
           scoreComponents: score.components,
           confidenceLevel: score.confidenceLevel,
-          isVerifiedActive: job.livenessStatus === 'active' && (job.trustScore ?? 0) >= 90,
+          isVerifiedActive: isRecentlyVerifiedLive(job),
           isDirectFromCompany: isFromAts(job.source),
           freshness,
           daysOld,
