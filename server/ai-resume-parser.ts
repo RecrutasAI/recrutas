@@ -902,7 +902,7 @@ ${truncatedText}`;
     t = t.replace(/ {2,}/g, '\n');
 
     // ALL-CAPS employer lines ("WALMART, INC., Bentonville").
-    t = t.replace(/(?<=[a-z\d)\].])\s+(?=[A-Z][A-Z&.\-]+[,.] )/g, '\n');
+    t = t.replace(/(?<=[a-z\d)\].])\s+(?=[A-Z][A-Z&.-]+[,.] )/g, '\n');
 
     // A job title followed by a year in the same run: splits
     // "…Arkansas Programmer Analyst, …, 2011-2016" into company / title.
