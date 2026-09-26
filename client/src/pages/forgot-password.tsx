@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useRef } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -8,16 +8,20 @@ import { useToast } from "@/hooks/use-toast"
 import { Link } from "wouter"
 import { Loader2, ArrowLeft, Mail } from "lucide-react"
 import { supabase } from "@/lib/supabase-client"
+import { Turnstile, captchaEnabled, type TurnstileHandle } from "@/components/turnstile"
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("")
   const [isSubmitted, setIsSubmitted] = useState(false)
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const captchaRef = useRef<TurnstileHandle>(null)
   const { toast } = useToast()
 
   const resetPasswordMutation = useMutation({
     mutationFn: async (email: string) => {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: `${window.location.origin}/reset-password`,
+        ...(captchaToken ? { captchaToken } : {}),
       })
       if (error) {throw error}
     },
@@ -28,6 +32,7 @@ export default function ForgotPasswordPage() {
         description: "Check your email for password reset instructions.",
       })
     },
+    onSettled: () => captchaRef.current?.reset(), // tokens are single-use
     onError: (error: any) => {
       toast({
         title: "Error",
@@ -124,10 +129,12 @@ export default function ForgotPasswordPage() {
                 />
               </div>
 
+              <Turnstile ref={captchaRef} onToken={setCaptchaToken} />
+
               <Button
                 type="submit"
                 className="w-full bg-primary text-primary-foreground hover:bg-primary/90 transition-colors duration-200 h-11"
-                disabled={resetPasswordMutation.isPending || !email}
+                disabled={resetPasswordMutation.isPending || !email || (captchaEnabled && !captchaToken)}
               >
                 {resetPasswordMutation.isPending ? (
                   <>

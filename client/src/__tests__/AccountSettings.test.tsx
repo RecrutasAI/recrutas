@@ -53,6 +53,7 @@ beforeEach(() => {
   auth.updateUser.mockResolvedValue({ error: null });
   auth.signInWithPassword.mockResolvedValue({ error: null });
   auth.signOut.mockResolvedValue({ error: null });
+  apiRequest.mockResolvedValue({ ok: true, json: async () => ({ success: true }) });
 });
 
 describe('AccountSettings — email', () => {
@@ -95,13 +96,15 @@ describe('AccountSettings — password', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Change password' }));
 
     await waitFor(() => expect(auth.updateUser).toHaveBeenCalledWith({ password: 'new-secret-1' }));
-    expect(auth.signInWithPassword).toHaveBeenCalledWith({ email: 'jane@example.com', password: 'old-secret' });
-    expect(auth.signInWithPassword.mock.invocationCallOrder[0])
+    expect(apiRequest).toHaveBeenCalledWith('POST', '/api/account/verify-password', { password: 'old-secret' });
+    expect(apiRequest.mock.invocationCallOrder[0])
       .toBeLessThan(auth.updateUser.mock.invocationCallOrder[0]);
+    // Browser sign-in would need a CAPTCHA token; the check must go via the server.
+    expect(auth.signInWithPassword).not.toHaveBeenCalled();
   });
 
   it('does not change the password when the current one is wrong', async () => {
-    auth.signInWithPassword.mockResolvedValue({ error: { message: 'Invalid login credentials' } });
+    apiRequest.mockResolvedValue({ ok: false, json: async () => ({}) });
     renderAccount(emailUser);
     await openPassword();
     await userEvent.type(screen.getByLabelText('Current password'), 'wrong');
@@ -124,7 +127,7 @@ describe('AccountSettings — password', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Change password' }));
 
     await waitFor(() => expect(toast).toHaveBeenCalled());
-    expect(auth.signInWithPassword).not.toHaveBeenCalled();
+    expect(apiRequest).not.toHaveBeenCalled();
     expect(auth.updateUser).not.toHaveBeenCalled();
   });
 
@@ -139,7 +142,7 @@ describe('AccountSettings — password', () => {
     await userEvent.click(screen.getAllByRole('button', { name: 'Set password' }).at(-1)!);
 
     await waitFor(() => expect(auth.updateUser).toHaveBeenCalledWith({ password: 'first-pass-1' }));
-    expect(auth.signInWithPassword).not.toHaveBeenCalled();
+    expect(apiRequest).not.toHaveBeenCalled();
   });
 });
 

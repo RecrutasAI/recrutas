@@ -1,10 +1,11 @@
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useSupabaseClient } from "@supabase/auth-helpers-react";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { Eye, EyeOff, Check, X, Loader2 } from "lucide-react";
 import { track } from "@/lib/analytics";
+import { Turnstile, captchaEnabled, type TurnstileHandle } from "@/components/turnstile";
 
 /** Read ?code= from URL query params (e.g. recrutas.ai/signup/candidate?code=REDDIT-A1B2C3) */
 function getCodeFromURL(): string {
@@ -44,6 +45,8 @@ export default function SignUpForm({ role }: SignUpFormProps) {
   const [inviteCode, setInviteCode] = useState(getCodeFromURL);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const captchaRef = useRef<TurnstileHandle>(null);
 
   // Also pick up code if user navigates with ?code= after initial render
   useEffect(() => {
@@ -68,6 +71,7 @@ export default function SignUpForm({ role }: SignUpFormProps) {
             full_name: `${firstName} ${lastName}`.trim(),
           },
           emailRedirectTo: `${window.location.origin}/`,
+          ...(captchaToken ? { captchaToken } : {}),
         },
       });
       if (error) {throw error;}
@@ -109,6 +113,7 @@ export default function SignUpForm({ role }: SignUpFormProps) {
         variant: "destructive",
       });
     } finally {
+      captchaRef.current?.reset(); // tokens are single-use
       setLoading(false);
     }
   };
@@ -258,10 +263,12 @@ export default function SignUpForm({ role }: SignUpFormProps) {
         )}
       </div>
 
+      <Turnstile ref={captchaRef} onToken={setCaptchaToken} />
+
       <div>
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || (captchaEnabled && !captchaToken)}
           className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-primary-foreground bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring"
         >
           {loading ? (

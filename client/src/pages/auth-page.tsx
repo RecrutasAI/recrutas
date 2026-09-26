@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSupabaseClient, useSession } from "@supabase/auth-helpers-react";
 import { useLocation } from "wouter";
 import SmartLogo from "@/components/smart-logo";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { GoogleSignInButton, OrDivider } from "@/components/google-sign-in-button";
 import { LoadingHype, SIGN_IN_MESSAGES } from "@/components/loading-hype";
+import { Turnstile, captchaEnabled, type TurnstileHandle } from "@/components/turnstile";
 
 export default function AuthPage() {
   const supabase = useSupabaseClient();
@@ -14,6 +15,8 @@ export default function AuthPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [signInLoading, setSignInLoading] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const captchaRef = useRef<TurnstileHandle>(null);
   // Shown inline (not a toast) so it stays until the user edits a field.
   const [signInError, setSignInError] = useState<null | { credentials: boolean; message: string }>(null);
 
@@ -43,6 +46,7 @@ export default function AuthPage() {
       const { error } = await supabase.auth.signInWithPassword({
         email,
         password,
+        ...(captchaToken ? { options: { captchaToken } } : {}),
       });
       if (error) {throw error;}
     } catch (error: unknown) {
@@ -50,6 +54,7 @@ export default function AuthPage() {
       const message = (error as Error).message;
       setSignInError({ credentials: /invalid login credentials/i.test(message), message });
     } finally {
+      captchaRef.current?.reset(); // tokens are single-use
       setSignInLoading(false);
     }
   };
@@ -161,10 +166,12 @@ export default function AuthPage() {
               </div>
             )}
 
+            <Turnstile ref={captchaRef} onToken={setCaptchaToken} />
+
             <div className="flex flex-col items-center space-y-4">
               <button
                 type="submit"
-                disabled={signInLoading}
+                disabled={signInLoading || (captchaEnabled && !captchaToken)}
                 className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-primary-foreground bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring"
               >
                 {signInLoading ? (
