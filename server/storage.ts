@@ -1398,8 +1398,15 @@ export class DatabaseStorage implements IStorage {
         conditionals += ` AND LOWER(title) LIKE $${params.length}`;
       }
       if (filters?.location) {
+        // Must mirror the keyword path's location filter in baseFilters: a city
+        // search keeps remote and location-less roles. A strict LIKE here made
+        // "Seattle" silently drop the best semantic matches for remote roles.
         params.push('%' + filters.location.toLowerCase() + '%');
-        conditionals += ` AND LOWER(location) LIKE $${params.length}`;
+        conditionals += ` AND (LOWER(location) LIKE $${params.length}
+          OR LOWER(location) LIKE '%remote%'
+          OR LOWER(work_type) = 'remote'
+          OR location IS NULL
+          OR location = '')`;
       }
       if (filters?.workType) {
         params.push(filters.workType.toLowerCase());

@@ -509,18 +509,21 @@ export async function registerRoutes(app: Express): Promise<Express> {
       finish();
       console.log(`[ai-matches] getJobRecommendations done in ${Date.now() - startedAt}ms (total=${result.total})`);
 
-      // Track last feed visit on page 1 only (for "new" badges)
-      if (page === 1) {
-        db.execute(sql`UPDATE candidate_users SET last_feed_visit = NOW() WHERE user_id = ${userId}`)
-          .catch(() => {});
-      }
-
-      // Get lastFeedVisit for "new" badge
+      // Read the PREVIOUS visit before stamping this one. The stamp used to be
+      // fired first without awaiting, so the read usually saw NOW() and no job
+      // was ever newer than it — "New" badges almost never rendered.
       const [candidate] = await db.select({ lastFeedVisit: candidateProfiles.lastFeedVisit })
         .from(candidateProfiles)
         .where(eq(candidateProfiles.userId, userId))
         .limit(1);
       const lastVisit = candidate?.lastFeedVisit;
+
+      // Track last feed visit on page 1 only (for "new" badges). The client
+      // sends visit=0 on background refetches so they don't count as a visit.
+      if (page === 1 && req.query.visit !== '0') {
+        db.execute(sql`UPDATE candidate_users SET last_feed_visit = NOW() WHERE user_id = ${userId}`)
+          .catch(() => {});
+      }
 
       const jobs = result.jobs.map((job: any, index: number) => {
         const match = formatJobMatch(job, (page - 1) * limit + index);
