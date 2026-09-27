@@ -2864,8 +2864,9 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     }
   }));
 
-  // Purge old external jobs — called daily by GitHub Actions cron
-  // Deletes external jobs older than 90 days to prevent unbounded table growth.
+  // Purge old external jobs — the VPS cron runs scripts/purge-old-jobs.ts; this
+  // endpoint is the manual/legacy trigger for the same service (closed external
+  // jobs unseen for retainDays, never ones a user applied to or saved).
   // Internal/platform jobs are never purged (recruiters own them).
   app.post('/api/cron/purge-old-jobs', asyncHandler(async (req, res) => {
     if (!db) return res.status(503).json({ message: 'Database not available' });
@@ -2874,27 +2875,12 @@ Analyze the form and return the actions JSON to fill every field you can.`;
 
       const retainDays = Math.max(30, Math.min(365, parseInt((req.query.retainDays as string) || '90', 10) || 90));
 
-      // First, find old external jobs eligible for purge
-      const candidates = await db.execute(sql`
-        SELECT jp.id FROM job_postings jp
-        WHERE (jp.source != 'platform' OR jp.source IS NULL)
-          AND jp.external_url IS NOT NULL
-          AND jp.created_at < NOW() - (${retainDays} || ' days')::interval
-      `);
-      const candidateIds = ((candidates as any).rows ?? (candidates as any)).map((r: any) => r.id);
-
-      if (candidateIds.length === 0) {
+      const { purgeOldExternalJobs } = await import('./services/job-purge.service');
+      const deleted = await purgeOldExternalJobs(retainDays);
+      if (deleted === 0) {
         return res.json({ message: 'No jobs to purge', deleted: 0, retainDays });
       }
-
-      // Delete dependent rows first, then the job postings
-      for (const table of ['job_applications', 'job_matches', 'exam_attempts', 'job_exams', 'chat_rooms', 'notifications', 'interviews', 'saved_jobs', 'hidden_jobs']) {
-        const col = table === 'notifications' ? 'related_job_id' : 'job_id';
-        await db.execute(sql.raw(`DELETE FROM ${table} WHERE ${col} IN (${candidateIds.join(',')})`));
-      }
-      const result = await db.execute(sql.raw(`DELETE FROM job_postings WHERE id IN (${candidateIds.join(',')}) RETURNING id`));
-      const deleted = ((result as any).rows ?? (result as any)).length;
-      console.log(`[Purge] Deleted ${deleted} external jobs older than ${retainDays} days`);
+      console.log(`[Purge] Deleted ${deleted} closed external jobs unseen for ${retainDays}+ days`);
       res.json({ message: 'Purge complete', deleted, retainDays });
     } catch (error: any) {
       console.error('[Purge] Failed:', error?.message);

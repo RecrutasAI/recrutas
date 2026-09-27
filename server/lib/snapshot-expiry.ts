@@ -1,8 +1,9 @@
 /**
  * Snapshot expiry: close a job once its employer's board stops listing it.
  *
- * Age-based expiry (expireStaleJobs) keys on created_at, so a posting taken
- * down two days after we ingested it stayed in the feed for ~13 more days.
+ * The unseen-cutoff (expireStaleJobs) only closes a job after ~15 days without
+ * a sighting, so on its own a posting taken down today would stay in the feed
+ * for two more weeks.
  * Each ATS scrape already reads the whole board, so after a clean read the
  * set of URLs the board lists IS the set of live postings — anything we hold
  * as active for that board and didn't see is gone.
