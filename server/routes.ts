@@ -483,6 +483,8 @@ export async function registerRoutes(app: Express): Promise<Express> {
     };
   }
 
+  const POSTED_WITHIN_DAYS = new Set([1, 3, 7, 14, 30]);
+
   // AI-powered job matching — single DB query, scored in application code
   app.get('/api/ai-matches', isAuthenticated, asyncHandler(async (req: any, res) => {
     // 45s timeout — under Vercel's 60s maxDuration but well above prod cold-start observations.
@@ -509,6 +511,10 @@ export async function registerRoutes(app: Express): Promise<Express> {
         jobTitle: (req.query.jobTitle as string) || undefined,
         location: (req.query.location as string) || undefined,
         workType: (req.query.workType as string) || undefined,
+        // Mirrors the feed's "Date posted" options; anything else is ignored.
+        postedWithinDays: POSTED_WITHIN_DAYS.has(Number(req.query.postedWithin))
+          ? Number(req.query.postedWithin)
+          : undefined,
       };
 
       const result = await Promise.race([

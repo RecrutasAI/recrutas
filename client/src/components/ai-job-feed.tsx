@@ -196,7 +196,12 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
 
   const feedVisitStamped = useRef(false);
 
-  // Single fetch of the full (≤100) match set. All six filters below run
+  // "Date posted" is applied by the server, before the 100-job cut. Filtering
+  // the unfiltered top 100 here could only ever show new jobs that had already
+  // out-ranked 90 days of supply — usually none.
+  const postedWithinDays = DATE_FILTER_OPTIONS.find(o => o.value === datePostedFilter)?.days;
+
+  // Single fetch of the full (≤100) match set. The other filters below run
   // client-side over this COMPLETE set — previously filtering only saw the pages
   // an infinite scroll had loaded, which silently hid matching jobs on unfetched
   // pages, left the filter dropdowns incomplete, and could show a false "no
@@ -207,14 +212,15 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
     isFetching,
     refetch,
   } = useQuery<PaginatedResponse>({
-    queryKey: ['/api/ai-matches'],
+    queryKey: ['/api/ai-matches', postedWithinDays ?? 'all'],
     queryFn: async () => {
       // Only the first load of this mount counts as a visit. Background
       // refetches (every 5 min, after hide/apply) would otherwise re-stamp
       // last_feed_visit and clear the "New" badges while the user is reading.
       const visit = feedVisitStamped.current ? '0' : '1';
       feedVisitStamped.current = true;
-      const response = await apiRequest("GET", `/api/ai-matches?page=1&limit=${FEED_FETCH_LIMIT}&visit=${visit}`);
+      const posted = postedWithinDays ? `&postedWithin=${postedWithinDays}` : '';
+      const response = await apiRequest("GET", `/api/ai-matches?page=1&limit=${FEED_FETCH_LIMIT}&visit=${visit}${posted}`);
       return response.json();
     },
     refetchInterval: 300000,
@@ -389,8 +395,9 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
     mutationFn: (jobId: number) => apiRequest("POST", '/api/candidate/hidden-jobs', { jobId }),
     onMutate: async (jobId: number) => {
       await queryClient.cancelQueries({ queryKey: ['/api/ai-matches'] });
-      const previousMatches = queryClient.getQueryData(['/api/ai-matches']);
-      queryClient.setQueryData(['/api/ai-matches'], (oldData: any) => {
+      // One cache entry per "Date posted" option — hide the job in all of them.
+      const previousMatches = queryClient.getQueriesData({ queryKey: ['/api/ai-matches'] });
+      queryClient.setQueriesData({ queryKey: ['/api/ai-matches'] }, (oldData: any) => {
         if (!oldData?.jobs) return oldData;
         const jobs = oldData.jobs.filter((match: AIJobMatch) => match.job.id !== jobId);
         return { ...oldData, jobs, total: Math.max(0, (oldData.total ?? jobs.length) - 1) };
@@ -401,8 +408,8 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
       toast({ title: "Job Hidden", description: "You won't see this job in your feed anymore." });
     },
     onError: (err, variables, context) => {
-      if (context?.previousMatches) {
-        queryClient.setQueryData(['/api/ai-matches'], context.previousMatches);
+      for (const [queryKey, previous] of context?.previousMatches ?? []) {
+        queryClient.setQueryData(queryKey, previous);
       }
       toast({ title: "Error", description: "Failed to hide job.", variant: "destructive" });
     },
