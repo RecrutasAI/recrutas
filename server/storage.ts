@@ -59,10 +59,10 @@ import {
   dailyUsageLimits,
 } from "../shared/schema.js";
 import { isRecentlyVerifiedLive } from "../shared/liveness.js";
-import { db, client } from "./db";
+import { db } from "./db";
 import { eq, desc, asc, and, or } from "drizzle-orm";
 import { getTableColumns } from "drizzle-orm/utils";
-import { sql } from "drizzle-orm/sql";
+import { sql, isNotNull, type SQL } from "drizzle-orm/sql";
 import { inArray } from "drizzle-orm/sql/expressions";
 import { jobPostUrlSqlCondition } from "./lib/job-post-url";
 import { supabaseAdmin } from "./lib/supabase-admin";
@@ -101,7 +101,7 @@ export interface IStorage {
   createJobPosting(job: InsertJobPosting): Promise<JobPosting>;
   getJobPostings(recruiterId: string): Promise<JobPosting[]>;
   getJobPosting(id: number): Promise<JobPosting | undefined>;
-  getJobRecommendations(candidateId: string, filters?: { jobTitle?: string; location?: string; workType?: string }, pagination?: { page: number; limit: number }): Promise<{ jobs: any[]; total: number; page: number; hasMore: boolean }>;
+  getJobRecommendations(candidateId: string, filters?: FeedFilters, pagination?: { page: number; limit: number }, retrieval?: FeedRetrievalOptions): Promise<{ jobs: any[]; total: number; page: number; hasMore: boolean }>;
   getDiscoveryFeedForCandidate(candidateId: string): Promise<any[]>;
   updateJobPosting(id: number, talentOwnerId: string, updates: Partial<InsertJobPosting>): Promise<JobPosting>;
   deleteJobPosting(id: number, talentOwnerId: string): Promise<void>;
@@ -247,6 +247,32 @@ function isFromAts(source: string | null | undefined): boolean {
 // safely embedded inside a Postgres POSIX regex pattern.
 function escapePgRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Matched-feed retrieval lane sizes (see retrieveFeedCandidates). Generous on
+// purpose: a job no lane returns can never be shown, while hydrating and
+// scoring ~4K slim rows costs well under a second (measured on prod).
+const FEED_LANE_LIMITS = { role: 3000, skill: 1500, semantic: 300, fresh: 150 } as const;
+// Jobs created within this window are always scored (nearest-first), so a new
+// posting doesn't have to out-rank 90 days of supply just to be considered.
+const FEED_FRESH_HOURS = 72;
+
+/**
+ * Retrieval sizing overrides. Production callers never pass these; they exist
+ * so scripts/measure-feed-recall.ts can run the same matcher with effectively
+ * unbounded lanes as a ground truth for what the bounded lanes miss.
+ */
+export interface FeedRetrievalOptions {
+  laneLimits?: Partial<Record<keyof typeof FEED_LANE_LIMITS, number>>;
+  freshHours?: number;
+}
+
+export interface FeedFilters {
+  jobTitle?: string;
+  location?: string;
+  workType?: string;
+  /** Only jobs first seen within this many days. Applied before the top-100 cut. */
+  postedWithinDays?: number;
 }
 
 // Escape LIKE/ILIKE wildcards so a term is matched literally (default '\' escape).
@@ -1190,7 +1216,7 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
-  private async fetchScoredJobs(candidateId: string, filters?: { jobTitle?: string; location?: string; workType?: string }): Promise<any[] | null> {
+  private async fetchScoredJobs(candidateId: string, filters?: FeedFilters, retrieval?: FeedRetrievalOptions): Promise<any[] | null> {
     const candidate = await this.getCandidateUser(candidateId);
 
     // Fetch hidden + applied job IDs to exclude from all recommendation paths
@@ -1268,20 +1294,23 @@ export class DatabaseStorage implements IStorage {
     if (filters?.workType) {
       extraFilters.push(sql`LOWER(${jobPostings.workType}) = ${filters.workType.toLowerCase()}`);
     }
+    if (filters?.postedWithinDays) {
+      // Server-side, so "Past 24 hours" means every matching job from the past
+      // day — not just the ones that already made the unfiltered top 100.
+      const postedCutoff = new Date(Date.now() - filters.postedWithinDays * 24 * 60 * 60 * 1000).toISOString();
+      extraFilters.push(sql`${jobPostings.createdAt} > ${postedCutoff}`);
+    }
 
-    // ── Retrieval: pgvector ANN + keyword hybrid ──────────────────
-    // When candidate has an embedding, use pgvector cosine distance to find
-    // semantically similar jobs (top 200) and merge with keyword matches (top 100).
-    // This ensures semantic matches surface even when keywords don't overlap.
-
+    // ── Retrieval ─────────────────────────────────────────────────
     const titleMatchSkills = candidateSkills.filter(s => s.length >= 4);
     const roleTitleKeywords = getRoleTitleKeywords(candidateTitles);
     if (roleTitleKeywords.length > 0) {
       console.log(`Role title keywords: ${roleTitleKeywords.join(', ')}`);
     }
 
-    // Shared filters for both retrieval paths
-    const baseFilters = and(
+    // Cheap column checks, split out so the big retrieval lanes can rank on
+    // them first and run the regex-heavy checks below on a short list only.
+    const coreEligibility = and(
       eq(jobPostings.status, 'active'),
       or(
         sql`${jobPostings.expiresAt} IS NULL`,
@@ -1304,11 +1333,14 @@ export class DatabaseStorage implements IStorage {
       sql`${jobPostings.source} NOT IN (${sql.join(
         [...AGGREGATOR_SOURCES].map(s => sql`${s}`), sql`, `
       )})`,
+      ...extraFilters,
+    );
+    // Shared by every retrieval lane (see retrieveFeedCandidates), so a job's
+    // eligibility can't depend on which lane happened to find it.
+    const baseFilters = and(
+      coreEligibility,
       // Reposters run a real ATS board, so source/URL checks all pass — only the
-      // company name identifies them. Applied here because baseFilters is shared
-      // by BOTH keyword retrieval paths; the pgvector path has its own copy of
-      // this condition in the raw SQL above. All retrieval paths must agree, or
-      // a demoted company simply arrives through whichever one was missed.
+      // company name identifies them.
       reposterExclusion,
       aggregatorUrlExclusion,
       // Require URL to point to a real job post page (platform jobs exempt — no external_url)
@@ -1333,223 +1365,52 @@ export class DatabaseStorage implements IStorage {
       ...(excludeIds.length > 0
         ? [sql`${jobPostings.id} NOT IN (${sql.join(excludeIds.map(id => sql`${id}`), sql`, `)})`]
         : []),
-      ...extraFilters,
     );
 
-    let allJobs: any[];
-    let vectorDistMap = new Map<number, number>();
+    console.time('retrieval');
+    const retrieved = await this.retrieveFeedCandidates({
+      baseFilters,
+      coreEligibility,
+      vectorStr: candidateEmbedding && candidateEmbedding.length > 0 ? `[${candidateEmbedding.join(',')}]` : undefined,
+      candidateSkills,
+      titleMatchSkills,
+      roleTitleKeywords,
+      retrieval,
+    });
+    console.timeEnd('retrieval');
 
-    // Hydrate projection that omits the two heavy embedding columns
-    // (vector_embedding text + embedding vector). Neither is needed downstream:
-    // Path A precomputes cosine distance in SQL; Path B has no candidate
-    // embedding so scoreJob never reads them. Skipping them is what keeps the
-    // hydrate fast (SELECT * over ~1000 rows ships ~8MB of embedding data).
-    const { embedding: _omitEmbedding, vectorEmbedding: _omitVectorEmbedding, ...slimColumns } = getTableColumns(jobPostings);
+    const vectorDistMap = new Map<number, number>();
+    for (const [id, dist] of retrieved) {
+      if (dist !== undefined) vectorDistMap.set(id, dist);
+    }
 
-    if (candidateEmbedding && candidateEmbedding.length > 0 && client) {
-      // ── Path A: pgvector semantic retrieval + keyword backup ──
-      const vectorStr = `[${candidateEmbedding.join(',')}]`;
-      console.time('pgvector-query');
+    // Scoring hydrate. Retrieval now hands over a few thousand ids, so this
+    // projection skips everything scoreJob doesn't read: both embedding columns
+    // (distances are precomputed per lane) and requirements. description
+    // averages ~6KB and scoreJob only reads it to extract skills from jobs that
+    // have none tagged, so it is fetched for those rows alone. The returned
+    // jobs get their full text in one small query at the end.
+    const {
+      embedding: _omitEmbedding,
+      vectorEmbedding: _omitVectorEmbedding,
+      description: _omitDescription,
+      requirements: _omitRequirements,
+      ...scoringColumns
+    } = getTableColumns(jobPostings);
 
-      // pgvector ANN retrieval — top 100 by cosine distance
-      // Return cosine_dist so scoreJob can use pre-computed similarity (avoids JSON.parse of 8KB text per row)
-      const aggregatorList = [...AGGREGATOR_SOURCES].map(s => `'${s}'`).join(', ');
-      const aggregatorUrlList = AGGREGATOR_URL_PATTERNS.map(p => `external_url ILIKE '%${p}%'`).join(' OR ');
-      // Reposters must be excluded HERE too, not only in the keyword path.
-      // fetchScoredJobs retrieves through two independent queries — this raw
-      // pgvector ANN query and the drizzle-built keyword query — and they do not
-      // share a WHERE clause. Excluding a company from one still lets it reach
-      // the feed through the other, which is exactly how jobgether kept
-      // appearing after the first fix: it matches semantically, so the vector
-      // path served it. Keep the two in sync.
-      const reposterList = [...REPOSTER_COMPANIES].map(c => `'${c}'`).join(', ');
-      const jobPostUrlRequirementSql = `(source = 'platform' OR ${jobPostUrlSqlCondition('external_url')})`;
-
-      // Build the query via client.unsafe() with explicit $-parameter binding.
-      // The previous implementation embedded drizzle's sql.raw() fragments into
-      // a postgres-js template tag; the two libraries don't share a protocol,
-      // so the fragments serialized to "[object Object]" and silently coerced
-      // every WHERE clause to FALSE — zeroing out the entire pgvector path.
-      const caProvinceSuffix = `, ?(${CA_PROVINCE_CODES_RE_PART})( |,|$)`;
-      const params: any[] = [vectorStr, cutoffDateStr, NON_US_LOCATION_REGEX, MEXICO_COUNTRY_REGEX, caProvinceSuffix];
-      let conditionals = '';
-      if (excludeIds.length > 0) {
-        params.push(excludeIds);
-        conditionals += ` AND id != ALL($${params.length}::int[])`;
-      }
-      if (filters?.jobTitle) {
-        params.push('%' + filters.jobTitle.toLowerCase() + '%');
-        conditionals += ` AND LOWER(title) LIKE $${params.length}`;
-      }
-      if (filters?.location) {
-        // Must mirror the keyword path's location filter in baseFilters: a city
-        // search keeps remote and location-less roles. A strict LIKE here made
-        // "Seattle" silently drop the best semantic matches for remote roles.
-        params.push('%' + filters.location.toLowerCase() + '%');
-        conditionals += ` AND (LOWER(location) LIKE $${params.length}
-          OR LOWER(location) LIKE '%remote%'
-          OR LOWER(work_type) = 'remote'
-          OR location IS NULL
-          OR location = '')`;
-      }
-      if (filters?.workType) {
-        params.push(filters.workType.toLowerCase());
-        conditionals += ` AND LOWER(work_type) = $${params.length}`;
-      }
-
-      const rawQuery = `
-        SELECT id, (embedding <=> $1::vector) AS cosine_dist FROM job_postings
-        WHERE status = 'active'
-          AND embedding IS NOT NULL
-          AND (expires_at IS NULL OR expires_at > NOW())
-          AND (liveness_status IN ('active', 'unknown') OR source = 'platform')
-          AND (ghost_job_score IS NULL OR ghost_job_score < 60 OR source = 'platform')
-          AND (source = 'platform' OR created_at > $2)
-          AND source NOT IN (${aggregatorList})
-          AND (external_url IS NULL OR NOT (${aggregatorUrlList}))
-          AND (company IS NULL OR LOWER(company) NOT IN (${reposterList}))
-          AND ${jobPostUrlRequirementSql}
-          AND (
-            source = 'platform'
-            OR location IS NULL
-            OR TRIM(location) = ''
-            OR (
-              NOT (location ~* $3)
-              AND NOT (regexp_replace(LOWER(location), 'new mexico', '', 'g') ~* $4)
-              AND NOT (location ~* $5)
-            )
-          )
-          ${conditionals}
-        ORDER BY embedding <=> $1::vector
-        LIMIT 100
-      `;
-
-      // SET LOCAL must run inside a transaction — wrap both statements so
-      // they share a single backend connection through pgBouncer's
-      // transaction pooler. Default hnsw.ef_search=40 returns only ~13-40
-      // candidates for embeddings in sparse regions of the HNSW graph;
-      // bumping to 200 reliably surfaces the top-100 nearest.
-      const vectorRows = await client.begin(async (tx: any) => {
-        await tx.unsafe('SET LOCAL hnsw.ef_search = 200');
-        return tx.unsafe(rawQuery, params);
-      });
-      console.timeEnd('pgvector-query');
-      // Map job id → pre-computed cosine distance (0=identical, 2=opposite)
-      for (const r of vectorRows) vectorDistMap.set(r.id, parseFloat(r.cosine_dist));
-      const vectorIds = new Set(vectorDistMap.keys());
-      console.log(`[pgvector] Retrieved ${vectorIds.size} jobs by semantic similarity`);
-
-      // Keyword retrieval — top 100 (existing logic)
-      console.time('keyword-query');
-      const keywordJobs = await db
-        .select({ id: jobPostings.id })
-        .from(jobPostings)
-        .where(and(
-          baseFilters,
-          or(
-            // GIN-indexed skill match (idx_job_postings_skills_gin via the ?|
-            // operator). candidateSkills and stored job skills both pass through
-            // normalizeSkill(), so they share canonical case — no LOWER() needed,
-            // which is what lets ?| use the index. Replaces a per-row
-            // jsonb_array_elements_text subplan per skill (~7.7s → ~50ms).
-            sql`${jobPostings.skills} ?| ARRAY[${sql.join(candidateSkills.map(s => sql`${s}`), sql`, `)}]::text[]`,
-            // ILIKE (not ~* word-boundary regex) so these use the pg_trgm GIN
-            // index on title. The regex form can't use the index → a seq scan
-            // that cost ~40s alone; ILIKE substring match is ~26-85x faster and
-            // the scorer re-ranks on precise title relevance anyway.
-            ...(titleMatchSkills.length > 0
-              ? titleMatchSkills.map(skill =>
-                  sql`${jobPostings.title} ILIKE ${'%' + escapeLike(skill) + '%'}`
-                )
-              : []),
-            ...(roleTitleKeywords.length > 0
-              ? roleTitleKeywords.map(keyword =>
-                  sql`${jobPostings.title} ILIKE ${'%' + escapeLike(keyword) + '%'}`
-                )
-              : []),
-            ...((titleMatchSkills.length === 0 && roleTitleKeywords.length === 0) ? [sql`FALSE`] : []),
-          ),
-        ))
-        .limit(1000);
-      console.timeEnd('keyword-query');
-      const keywordIds = keywordJobs.map((r: any) => r.id);
-      console.log(`[keyword] Retrieved ${keywordIds.length} jobs by keyword match`);
-
-      // Merge and deduplicate
-      const mergedIds = [...new Set([...vectorIds, ...keywordIds.map(Number)])];
-      console.log(`[hybrid] Merged ${mergedIds.length} unique jobs for scoring`);
-
-      if (mergedIds.length === 0) {
-        allJobs = [];
-      } else {
-        // Cosine distance for ALL merged ids in one query (~0.3s). The ANN query
-        // only returned distances for its own top-100; computing the rest here
-        // lets scoreJob use a precomputed distance for every job, so it never
-        // JSON.parses the per-row vector_embedding text — which in turn lets the
-        // hydrate skip the two embedding columns entirely (see below).
-        console.time('dist-query');
-        const distRows = await client.unsafe(
-          `SELECT id, (embedding <=> $1::vector) AS d FROM job_postings WHERE id = ANY($2::int[]) AND embedding IS NOT NULL`,
-          [vectorStr, mergedIds],
-        );
-        for (const r of distRows) vectorDistMap.set(Number(r.id), parseFloat(r.d));
-        console.timeEnd('dist-query');
-
-        // Slim hydrate (slimColumns omits the two heavy embedding columns). For a
-        // ~1000-row merged set, SELECT * spends ~40s shipping/decoding ~8MB of
-        // embedding data we no longer need (distances are precomputed above).
-        // Dropping them takes the hydrate from ~40s → ~3s.
-        console.time('hydrate-query');
-        allJobs = await db
-          .select(slimColumns)
-          .from(jobPostings)
-          .where(sql`${jobPostings.id} IN (${sql.join(mergedIds.map(id => sql`${id}`), sql`, `)})`)
-          .orderBy(
-            sql`CASE WHEN ${jobPostings.source} = 'platform' THEN 0 ELSE 1 END`,
-            sql`${jobPostings.trustScore} DESC NULLS LAST`,
-            sql`${jobPostings.createdAt} DESC`
-          );
-        console.timeEnd('hydrate-query');
-      }
-    } else {
-      // ── Path B: keyword-only fallback (no embedding) ──
-      console.time('keyword-only-query');
+    let allJobs: any[] = [];
+    if (retrieved.size > 0) {
+      console.time('hydrate-query');
       allJobs = await db
-        .select(slimColumns)
+        .select({
+          ...scoringColumns,
+          description: sql<string | null>`CASE WHEN jsonb_typeof(${jobPostings.skills}) = 'array'
+            THEN (CASE WHEN jsonb_array_length(${jobPostings.skills}) > 0 THEN NULL ELSE ${jobPostings.description} END)
+            ELSE ${jobPostings.description} END`,
+        })
         .from(jobPostings)
-        .where(and(
-          baseFilters,
-          or(
-            // GIN-indexed skill match (idx_job_postings_skills_gin via the ?|
-            // operator). candidateSkills and stored job skills both pass through
-            // normalizeSkill(), so they share canonical case — no LOWER() needed,
-            // which is what lets ?| use the index. Replaces a per-row
-            // jsonb_array_elements_text subplan per skill (~7.7s → ~50ms).
-            sql`${jobPostings.skills} ?| ARRAY[${sql.join(candidateSkills.map(s => sql`${s}`), sql`, `)}]::text[]`,
-            // ILIKE (not ~* word-boundary regex) so these use the pg_trgm GIN
-            // index on title. The regex form can't use the index → a seq scan
-            // that cost ~40s alone; ILIKE substring match is ~26-85x faster and
-            // the scorer re-ranks on precise title relevance anyway.
-            ...(titleMatchSkills.length > 0
-              ? titleMatchSkills.map(skill =>
-                  sql`${jobPostings.title} ILIKE ${'%' + escapeLike(skill) + '%'}`
-                )
-              : []),
-            ...(roleTitleKeywords.length > 0
-              ? roleTitleKeywords.map(keyword =>
-                  sql`${jobPostings.title} ILIKE ${'%' + escapeLike(keyword) + '%'}`
-                )
-              : []),
-            ...((titleMatchSkills.length === 0 && roleTitleKeywords.length === 0) ? [sql`FALSE`] : []),
-          ),
-        ))
-        .orderBy(
-          sql`CASE WHEN ${jobPostings.source} = 'platform' THEN 0 ELSE 1 END`,
-          sql`${jobPostings.trustScore} DESC NULLS LAST`,
-          sql`${jobPostings.createdAt} DESC`
-        )
-        .limit(500);
-      console.timeEnd('keyword-only-query');
+        .where(inArray(jobPostings.id, [...retrieved.keys()]));
+      console.timeEnd('hydrate-query');
     }
 
     const jobsWithSource = allJobs
@@ -1734,7 +1595,159 @@ export class DatabaseStorage implements IStorage {
       return this.getDiscoveryFeed(excludeIds, 'Here are recent roles to explore while we tune your matches', { skills: candidateSkills, roleKeywords: roleTitleKeywords, relevantOnly: true });
     }
 
-    return finalJobs.map(({ prefBoost: _p, compositeScore: _c, ...job }) => job);
+    // Full text for the jobs actually returned (the scoring hydrate skipped it).
+    const textRows = await db
+      .select({ id: jobPostings.id, description: jobPostings.description, requirements: jobPostings.requirements })
+      .from(jobPostings)
+      .where(inArray(jobPostings.id, finalJobs.map(job => job.id)));
+    const textById = new Map(textRows.map(row => [row.id, row]));
+
+    return finalJobs.map(({ prefBoost: _p, compositeScore: _c, ...job }) => {
+      const text = textById.get(job.id);
+      return {
+        ...job,
+        description: text?.description ?? null,
+        requirements: Array.isArray(text?.requirements) ? text.requirements : [],
+      };
+    });
+  }
+
+  /**
+   * Candidate generation for the matched feed: decides which jobs get scored.
+   *
+   * Recall is the whole job here. A job no lane returns is never scored, so it
+   * can't reach the feed however well it fits. The previous version took an
+   * UNORDERED `LIMIT 1000` of keyword matches (a candidate listing
+   * "Communication" or "Git" matched ~38K jobs, so the 1000 were effectively
+   * arbitrary) plus an ANN top-100 that post-filtering cut to 58. Measured
+   * 2026-09-27 on a real candidate: the feed held 10 of their true top-100 and
+   * none of the 80 better-fitting jobs posted in the previous 48h.
+   *
+   * So every lane is ordered by a signal the scorer itself rewards, never by
+   * physical row order, and every lane shares baseFilters:
+   *   role     — title in the candidate's role family, nearest embedding first
+   *   skill    — skill overlap, highest share of the job's skills first
+   *   semantic — nearest embeddings over the whole eligible pool
+   *   fresh    — nearest jobs from the last FEED_FRESH_HOURS, so a new posting
+   *              is always scored instead of having to win a global cut first
+   *
+   * Returns job id → cosine distance (undefined when either side has no
+   * embedding).
+   */
+  private async retrieveFeedCandidates(opts: {
+    baseFilters: SQL | undefined;
+    /** The cheap subset of baseFilters (no regexes), for pre-ranking big lanes. */
+    coreEligibility: SQL | undefined;
+    vectorStr?: string;
+    candidateSkills: string[];
+    titleMatchSkills: string[];
+    roleTitleKeywords: string[];
+    retrieval?: FeedRetrievalOptions;
+  }): Promise<Map<number, number | undefined>> {
+    const { baseFilters, coreEligibility, vectorStr, candidateSkills, titleMatchSkills, roleTitleKeywords } = opts;
+    const limits = { ...FEED_LANE_LIMITS, ...opts.retrieval?.laneLimits };
+    const freshHours = opts.retrieval?.freshHours ?? FEED_FRESH_HOURS;
+
+    const dist = vectorStr ? sql<number>`(${jobPostings.embedding} <=> ${vectorStr}::vector)` : undefined;
+    // `+ 0` stops the planner from serving this ORDER BY through the HNSW
+    // index. The role and fresh lanes filter hard (title / last 72h), and an
+    // index scan applies that filter AFTER the approximate search, returning a
+    // handful of rows. An exact sort over the already-filtered rows is ~1s.
+    const exactDistOrder = dist ? sql`${dist} + 0` : undefined;
+
+    const titleContains = (terms: string[]) =>
+      terms.map(term => sql`${jobPostings.title} ILIKE ${'%' + escapeLike(term) + '%'}`);
+    const skillArray = sql`ARRAY[${sql.join(candidateSkills.map(s => sql`${s}`), sql`, `)}]::text[]`;
+    // GIN-indexed (idx_job_postings_skills_gin). Candidate and job skills both
+    // pass through normalizeSkill(), so they share canonical case.
+    const skillMatch = candidateSkills.length > 0 ? sql`${jobPostings.skills} ?| ${skillArray}` : undefined;
+    const keywordMatch = or(skillMatch, ...titleContains(titleMatchSkills));
+    const roleMatch = roleTitleKeywords.length > 0 ? or(...titleContains(roleTitleKeywords)) : undefined;
+    // Mirrors scoreJob's keyword score: matched skills / max(job skills, 3).
+    // One `?` test per skill is ~2-3x faster than unnesting the array.
+    const skillShare = candidateSkills.length > 0
+      ? sql`CASE WHEN jsonb_typeof(${jobPostings.skills}) = 'array' THEN
+          (${sql.join(candidateSkills.map(s => sql`(${jobPostings.skills} ? ${s})::int`), sql` + `)})::float
+            / GREATEST(jsonb_array_length(${jobPostings.skills}), 3)
+          ELSE 0 END`
+      : sql`0`;
+    const keywordOrder = [sql`${skillShare} DESC`, desc(jobPostings.createdAt)];
+    // Skill overlap alone is a weak proxy: a candidate listing "Git" or
+    // "Communication" overlaps ~40K jobs, and many of their best matches share
+    // a small fraction of a long skill list. With an embedding, rank the skill
+    // lane on the scorer's own two heaviest terms instead — 0.35 x semantic
+    // (same normalisation as scoreJob) + 0.25 x skill share. Measured on every
+    // candidate with skills: 100% of true >=75 matches retrieved, 91% of >=60.
+    const skillLaneOrder = dist
+      ? [sql`(0.35 * LEAST(1, GREATEST(0, ((1 - ${dist}) - 0.3) / 0.5)) + 0.25 * LEAST(1, ${skillShare})) DESC`, desc(jobPostings.createdAt)]
+      : keywordOrder;
+    const freshCutoff = new Date(Date.now() - freshHours * 60 * 60 * 1000).toISOString();
+    const idAndDist = { id: jobPostings.id, dist: dist ?? sql<null>`NULL` };
+
+    const startedAt = Date.now();
+    const timed = (name: string, query: Promise<{ id: number; dist: number | null }[]>) =>
+      query.then(rows => ({ name, rows, ms: Date.now() - startedAt }));
+    const lane = (name: string, where: SQL | undefined, orderBy: SQL[], limit: number) =>
+      timed(name, db.select(idAndDist)
+        .from(jobPostings)
+        .where(and(baseFilters, where))
+        .orderBy(...orderBy)
+        .limit(limit));
+
+    const lanes: Promise<{ name: string; rows: { id: number; dist: number | null }[]; ms: number }>[] = [];
+    if (roleMatch) {
+      lanes.push(lane('role', roleMatch, exactDistOrder ? [exactDistOrder] : keywordOrder, limits.role));
+    }
+    if (keywordMatch) {
+      // This lane can match tens of thousands of rows, and baseFilters' regex
+      // checks (non-US location, job-post URL) cost ~4s at that size. Rank on
+      // the cheap checks first, keep a 3x short list, then apply the full
+      // filters to that list only (most rows pass them).
+      const shortList = db.select({ id: jobPostings.id })
+        .from(jobPostings)
+        .where(and(coreEligibility, keywordMatch))
+        .orderBy(...skillLaneOrder)
+        .limit(limits.skill * 3);
+      lanes.push(lane('skill', inArray(jobPostings.id, shortList), skillLaneOrder, limits.skill));
+    }
+    if (dist) {
+      lanes.push(timed('semantic', db.transaction(async (tx) => {
+        // SET LOCAL needs a transaction so both statements share one backend.
+        // Without iterative scan, the index returns its ef_search nearest rows
+        // and THEN applies the WHERE, so a 300-row request came back with
+        // 58-108. relaxed_order keeps walking the graph until LIMIT rows pass
+        // (bounded by hnsw.max_scan_tuples); measured ~20ms on prod.
+        await tx.execute(sql`SET LOCAL hnsw.ef_search = 200`);
+        await tx.execute(sql`SET LOCAL hnsw.iterative_scan = relaxed_order`);
+        return tx.select(idAndDist)
+          .from(jobPostings)
+          .where(and(baseFilters, isNotNull(jobPostings.embedding)))
+          .orderBy(dist)
+          .limit(limits.semantic);
+      })));
+    }
+    // Without an embedding the scorer caps no-overlap jobs at 25%, so fresh
+    // jobs are only worth scoring when they share a skill or role title.
+    const freshRelevance = dist ? isNotNull(jobPostings.embedding) : or(keywordMatch, roleMatch);
+    if (freshRelevance) {
+      lanes.push(lane(
+        'fresh',
+        and(sql`${jobPostings.createdAt} > ${freshCutoff}`, freshRelevance),
+        exactDistOrder ? [exactDistOrder] : keywordOrder,
+        limits.fresh,
+      ));
+    }
+
+    const results = await Promise.all(lanes);
+    const retrieved = new Map<number, number | undefined>();
+    for (const { rows } of results) {
+      for (const row of rows) {
+        const d = row.dist == null ? undefined : Number(row.dist);
+        retrieved.set(Number(row.id), d);
+      }
+    }
+    console.log(`[retrieval] ${results.map(r => `${r.name}=${r.rows.length}/${r.ms}ms`).join(' ')} → ${retrieved.size} unique`);
+    return retrieved;
   }
 
   /**
@@ -1742,11 +1755,12 @@ export class DatabaseStorage implements IStorage {
    */
   async getJobRecommendations(
     candidateId: string,
-    filters?: { jobTitle?: string; location?: string; workType?: string },
+    filters?: FeedFilters,
     pagination?: { page: number; limit: number },
+    retrieval?: FeedRetrievalOptions,
   ): Promise<{ jobs: any[]; total: number; page: number; hasMore: boolean }> {
     try {
-      const recommendations = await this.fetchScoredJobs(candidateId, filters);
+      const recommendations = await this.fetchScoredJobs(candidateId, filters, retrieval);
       if (!recommendations || recommendations.length === 0) {
         return { jobs: [], total: 0, page: 1, hasMore: false };
       }
