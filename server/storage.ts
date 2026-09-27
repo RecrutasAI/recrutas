@@ -64,6 +64,7 @@ import { eq, desc, asc, and, or } from "drizzle-orm";
 import { getTableColumns } from "drizzle-orm/utils";
 import { sql } from "drizzle-orm/sql";
 import { inArray } from "drizzle-orm/sql/expressions";
+import { jobPostUrlSqlCondition } from "./lib/job-post-url";
 import { supabaseAdmin } from "./lib/supabase-admin";
 import { normalizeSkills, parseSkillsInput } from "./skill-normalizer";
 import { scoreJob, computeRecencyScore, getFreshnessLabel, inferJobLevel, getRoleTitleKeywords } from "./job-scorer";
@@ -387,15 +388,8 @@ END`;
 // https://example.com/careers fail the marker check and are dropped.
 // Internal (source = 'platform') jobs have no external_url and must be
 // allowed through separately at each call site.
-const jobPostUrlRequirement = sql`(
-  ${jobPostings.externalUrl} IS NOT NULL
-  AND NOT (${jobPostings.externalUrl} ~ '^https?://[^/]+/?$')
-  AND (
-    ${jobPostings.externalUrl} ~ '[/?][^/?#]*\\d{4,}'
-    OR ${jobPostings.externalUrl} ~* '(gh_jid|jobid|requisition|posting|/job/|/jobs/[a-z0-9_-]{8,})'
-    OR ${jobPostings.externalUrl} ~* '(boards\\.greenhouse\\.io|job-boards\\.greenhouse\\.io|jobs\\.lever\\.co|jobs\\.ashbyhq\\.com|\\.recruitee\\.com|\\.workable\\.com|\\.bamboohr\\.com|myworkdayjobs\\.com|smartrecruiters\\.com|icims\\.com|taleo\\.net)'
-  )
-)`;
+// Built from server/lib/job-post-url.ts, the same rule ingestion applies.
+const jobPostUrlRequirement = sql.raw(jobPostUrlSqlCondition('"job_postings"."external_url"'));
 
 /**
  * Database Storage Implementation
@@ -1369,18 +1363,7 @@ export class DatabaseStorage implements IStorage {
       // appearing after the first fix: it matches semantically, so the vector
       // path served it. Keep the two in sync.
       const reposterList = [...REPOSTER_COMPANIES].map(c => `'${c}'`).join(', ');
-      // Mirror of jobPostUrlRequirement — must stay in sync with the drizzle fragment above.
-      const jobPostUrlRequirementSql = `(
-        source = 'platform' OR (
-          external_url IS NOT NULL
-          AND NOT (external_url ~ '^https?://[^/]+/?$')
-          AND (
-            external_url ~ '[/?][^/?#]*\\d{4,}'
-            OR external_url ~* '(gh_jid|jobid|requisition|posting|/job/|/jobs/[a-z0-9_-]{8,})'
-            OR external_url ~* '(boards\\.greenhouse\\.io|job-boards\\.greenhouse\\.io|jobs\\.lever\\.co|jobs\\.ashbyhq\\.com|\\.recruitee\\.com|\\.workable\\.com|\\.bamboohr\\.com|myworkdayjobs\\.com|smartrecruiters\\.com|icims\\.com|taleo\\.net)'
-          )
-        )
-      )`;
+      const jobPostUrlRequirementSql = `(source = 'platform' OR ${jobPostUrlSqlCondition('external_url')})`;
 
       // Build the query via client.unsafe() with explicit $-parameter binding.
       // The previous implementation embedded drizzle's sql.raw() fragments into

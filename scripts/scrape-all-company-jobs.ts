@@ -169,6 +169,11 @@ async function main(): Promise<PipelineSummary> {
   console.log(`${verb}: ${expiry.closed} jobs missing from ${expiry.boardsUsable} cleanly-read boards`);
   console.log(`Skipped boards: ${expiry.skippedFailed} failed, ${expiry.skippedIncomplete} partial, ` +
     `${expiry.skippedEmpty} empty, ${expiry.skippedMassDrop} mass-drop (${expiry.wouldCloseSkipped} jobs left open)`);
+  const fmt = (r: typeof expiry.boards.skipped[number]) =>
+    `  ${r.source} "${r.company}": ${r.missing}/${r.active} missing (${r.outcome})` +
+    (r.sampleMissing ? `\n      gone: ${r.sampleMissing}\n      seen: ${r.sampleSeen ?? '-'}` : '');
+  if (expiry.boards.skipped.length) console.log(`Guard-skipped boards:\n${expiry.boards.skipped.map(fmt).join('\n')}`);
+  if (expiry.boards.topClosing.length) console.log(`Top closing boards:\n${expiry.boards.topClosing.map(fmt).join('\n')}`);
 
   const freshJobs = totalJobs + jsonLdJobs;
   console.log('\n=== DONE ===');

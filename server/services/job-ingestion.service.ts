@@ -12,7 +12,11 @@ import { sql } from 'drizzle-orm/sql';
 import { normalizeSkills, SKILL_ALIASES } from '../skill-normalizer';
 import { classifyWorkType } from '../lib/work-type';
 import { checkDbCapacity } from '../lib/db-capacity.js';
-import { groupKey, groupSnapshots, planBoardExpiry, type BoardSnapshot, type ActiveJobRow } from '../lib/snapshot-expiry';
+import {
+  groupKey, groupSnapshots, planBoardExpiry, describeBoardExpiry, summarizeBoardReports,
+  type BoardSnapshot, type ActiveJobRow, type BoardExpiryReport,
+} from '../lib/snapshot-expiry';
+import { isJobPostUrl } from '../lib/job-post-url';
 
 /** Extract canonical skills from free-form text using the full alias taxonomy. */
 function extractSkillsFromText(text: string): string[] {
@@ -102,23 +106,9 @@ function getSourceTrustScore(source: string): number {
   return trustScores[key] ?? trustScores.default;
 }
 
-/**
- * Mirror of the SQL `jobPostUrlRequirement` in storage.ts. A URL is considered
- * a real job-post page if it isn't a bare-domain root and contains a
- * job-id-like marker (≥4 digits in the path/query, an ATS query param, a
- * /job/ or /jobs/<long-slug> segment) or matches a known ATS host.
- *
- * Used by the ingestion chokepoint to reject homepage/careers-landing URLs
- * before they ever reach the DB. Keep in sync with server/storage.ts.
- */
-export function isJobPostUrl(url: string | null | undefined): boolean {
-  if (!url) return false;
-  if (/^https?:\/\/[^/]+\/?$/.test(url)) return false;
-  if (/[/?][^/?#]*\d{4,}/.test(url)) return true;
-  if (/(gh_jid|jobid|requisition|posting|\/job\/|\/jobs\/[a-z0-9_-]{8,})/i.test(url)) return true;
-  if (/(boards\.greenhouse\.io|job-boards\.greenhouse\.io|jobs\.lever\.co|jobs\.ashbyhq\.com|\.recruitee\.com|\.workable\.com|\.bamboohr\.com|myworkdayjobs\.com|smartrecruiters\.com|icims\.com|taleo\.net)/i.test(url)) return true;
-  return false;
-}
+// The job-post URL rule lives in server/lib/job-post-url.ts, shared with the
+// feed's SQL filters. Re-exported here for existing importers.
+export { isJobPostUrl };
 
 /**
  * Unwrap the real Postgres cause from a Drizzle error.
@@ -201,6 +191,8 @@ export interface SnapshotExpiryStats {
   closed: number;
   /** Missing rows left open because their board tripped a guard. */
   wouldCloseSkipped: number;
+  /** Guard-skipped boards and the biggest closers, with sample URLs. */
+  boards: { skipped: BoardExpiryReport[]; topClosing: BoardExpiryReport[] };
 }
 
 export class JobIngestionService {
@@ -529,8 +521,9 @@ export class JobIngestionService {
   ): Promise<SnapshotExpiryStats> {
     const stats: SnapshotExpiryStats = {
       boardsUsable: 0, skippedFailed: 0, skippedIncomplete: 0, skippedEmpty: 0, skippedMassDrop: 0,
-      closed: 0, wouldCloseSkipped: 0,
+      closed: 0, wouldCloseSkipped: 0, boards: { skipped: [], topClosing: [] },
     };
+    const reports: BoardExpiryReport[] = [];
 
     const groups = [...groupSnapshots(boards).values()];
     const usable = groups.filter(g => {
@@ -565,6 +558,7 @@ export class JobIngestionService {
       for (const g of chunk) {
         const active = byGroup.get(groupKey(g.source, g.company)) ?? [];
         const plan = planBoardExpiry(active, g.seen);
+        reports.push(describeBoardExpiry(g, active, plan));
         if (plan.action === 'close') {
           toClose.push(...plan.closeIds);
         } else {
@@ -574,6 +568,7 @@ export class JobIngestionService {
         }
       }
     }
+    stats.boards = summarizeBoardReports(reports);
 
     if (opts.dryRun) {
       stats.closed = toClose.length;
