@@ -311,25 +311,32 @@ export class JobIngestionService {
       // information, so skip it; the 20h window still guarantees a daily
       // touch, which is all liveness probing and expiry ever read.
       //
-      // A re-seen row that snapshot expiry closed (liveness_status 'removed') is
-      // reopened: the board lists it again, so the closure was a bad read or the
-      // posting came back. No other closer writes 'removed', so ghost-hidden,
-      // probe-closed and age-expired rows stay closed. If an old reopened row is
-      // past the age cutoff, expireStaleJobs closes it as 'stale' — for good.
+      // A re-seen row that is closed is reopened: its board lists it again, so
+      // it is live, whatever closed it (snapshot expiry's 'removed' after a bad
+      // read, or the unseen-cutoff's 'stale'). Only scraped rows reach this
+      // path, and every closer of scraped rows keys on "not seen", so a sighting
+      // always overrides it. Ghost-hiding closes platform jobs only.
+      //
+      // expires_at is pushed out once it is within 30 days, not on every
+      // sighting: it is indexed, so changing it forces a non-HOT update through
+      // all of job_postings' indexes (HNSW included). Extending at most monthly
+      // keeps that to ~1/30 of re-seen rows a day.
       if (toUpdate.length > 0) {
         await db.execute(sql.raw(`
           UPDATE job_postings SET
-            status = CASE
-              WHEN status = 'closed' AND liveness_status = 'removed'
-                AND (expires_at IS NULL OR expires_at > NOW())
-              THEN 'active' ELSE status END,
+            status = CASE WHEN status = 'closed' THEN 'active' ELSE status END,
             liveness_status = 'active',
             last_liveness_check = NOW(),
+            expires_at = CASE
+              WHEN expires_at IS NOT NULL AND expires_at < NOW() + INTERVAL '30 days'
+              THEN NOW() + INTERVAL '60 days' ELSE expires_at END,
             updated_at = NOW()
           WHERE (external_id, source) IN (${toUpdate.map(j =>
             `('${j.effectiveExternalId.replace(/'/g, "''")}', '${(j.source ?? 'unknown').replace(/'/g, "''")}')`
           ).join(', ')})
-            AND (liveness_status IS DISTINCT FROM 'active'
+            AND (status = 'closed'
+              OR liveness_status IS DISTINCT FROM 'active'
+              OR (expires_at IS NOT NULL AND expires_at < NOW() + INTERVAL '30 days')
               OR last_liveness_check IS NULL
               OR last_liveness_check < NOW() - INTERVAL '20 hours')
         `));
@@ -363,8 +370,12 @@ export class JobIngestionService {
               -- Only touch rows that actually need healing: without this gate the
               -- CASEs keep the old values but updated_at = NOW() still rewrites
               -- every matched row on every scrape pass (WAL amplification).
+              -- Empty skills only count when the incoming row has some: a
+              -- posting no extractor finds skills in (common outside tech)
+              -- would otherwise be rewritten on every pass, forever.
               AND (jp.description IS NULL OR jp.description = ''
-                OR jp.skills IS NULL OR jsonb_array_length(jp.skills) = 0)
+                OR ((jp.skills IS NULL OR jsonb_array_length(jp.skills) = 0)
+                  AND jsonb_array_length(v.skills::jsonb) > 0))
           `));
         }
       }
@@ -445,7 +456,16 @@ export class JobIngestionService {
   }
 
   /**
-   * Close jobs that are past their expiry or older than `daysOld`.
+   * Close jobs that are past their expiry or that no scraper has seen for
+   * `daysUnseen` days.
+   *
+   * "Seen" is last_liveness_check, which ingestion refreshes whenever a scrape
+   * lists the job again (created_at for a row never re-seen). This used to key
+   * on created_at alone, which closed postings that were still live the day
+   * they turned `daysOld`; purge-old-jobs then deleted them at 45 days and the
+   * next scrape re-inserted them as new — a live posting was visible ~15 days
+   * in every 45. A still-listed job now stays open, and a closed one reopens
+   * on its next sighting.
    *
    * Batched deliberately. As a single statement this NEVER completed: db.ts sets
    * a 20s statement_timeout, and the update rewrites ~14KB-wide rows across all
@@ -460,11 +480,11 @@ export class JobIngestionService {
    * one stopped, because closed rows no longer match the predicate.
    */
   async expireStaleJobs(
-    daysOld: number = 60,
+    daysUnseen: number = 60,
     opts: { batchSize?: number; maxMs?: number } = {}
   ): Promise<number> {
     const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - daysOld);
+    cutoffDate.setDate(cutoffDate.getDate() - daysUnseen);
 
     const batchSize = opts.batchSize ?? 500;
     // Wall-clock budget so this can never be the reason a cron is killed. The
@@ -494,7 +514,8 @@ export class JobIngestionService {
             SELECT id FROM job_postings
             WHERE source != 'platform'
               AND status = 'active'
-              AND (expires_at < NOW() OR created_at < ${cutoffDate.toISOString()})
+              AND (expires_at < NOW()
+                OR COALESCE(last_liveness_check, created_at) < ${cutoffDate.toISOString()})
             LIMIT ${batchSize}
           )`
         );
