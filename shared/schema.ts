@@ -146,7 +146,9 @@ export const jobPostings = pgTable("job_postings", {
   expiresAt: timestamp("expires_at"), // Job expiration to prevent applying to old jobs
   // Liveness and trust scoring fields for job quality ranking
   lastLivenessCheck: timestamp("last_liveness_check"),
-  livenessStatus: varchar("liveness_status", { enum: ["active", "stale", "unknown"] }).default("unknown"),
+  // "removed" = closed by snapshot expiry (the job left its employer's board);
+  // ingestion reopens it if the board lists it again. A plain varchar, so no migration.
+  livenessStatus: varchar("liveness_status", { enum: ["active", "stale", "unknown", "removed"] }).default("unknown"),
   trustScore: integer("trust_score").default(50), // 0-100, internal/platform jobs get 100
   // Ghost job detection fields
   ghostJobScore: integer("ghost_job_score").default(0), // 0-100, higher = more likely ghost job

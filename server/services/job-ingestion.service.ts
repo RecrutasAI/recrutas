@@ -12,6 +12,7 @@ import { sql } from 'drizzle-orm/sql';
 import { normalizeSkills, SKILL_ALIASES } from '../skill-normalizer';
 import { classifyWorkType } from '../lib/work-type';
 import { checkDbCapacity } from '../lib/db-capacity.js';
+import { groupKey, groupSnapshots, planBoardExpiry, type BoardSnapshot, type ActiveJobRow } from '../lib/snapshot-expiry';
 
 /** Extract canonical skills from free-form text using the full alias taxonomy. */
 function extractSkillsFromText(text: string): string[] {
@@ -190,6 +191,18 @@ function buildJobRow(job: any, systemUserId: string, now: Date, expiresAt: Date 
   };
 }
 
+export interface SnapshotExpiryStats {
+  boardsUsable: number;
+  skippedFailed: number;
+  skippedIncomplete: number;
+  skippedEmpty: number;
+  skippedMassDrop: number;
+  /** Rows closed — or, on a dry run, rows that would be. */
+  closed: number;
+  /** Missing rows left open because their board tripped a guard. */
+  wouldCloseSkipped: number;
+}
+
 export class JobIngestionService {
   async ingestExternalJobs(jobs: ExternalJobInput[]): Promise<{ inserted: number; duplicates: number; errors: number; skippedNonUS: number; skippedBadUrl: number }> {
     const stats = { inserted: 0, duplicates: 0, errors: 0, skippedNonUS: 0, skippedBadUrl: 0 };
@@ -305,9 +318,19 @@ export class JobIngestionService {
       // already marked active and checked in the last 20h carries no new
       // information, so skip it; the 20h window still guarantees a daily
       // touch, which is all liveness probing and expiry ever read.
+      //
+      // A re-seen row that snapshot expiry closed (liveness_status 'removed') is
+      // reopened: the board lists it again, so the closure was a bad read or the
+      // posting came back. No other closer writes 'removed', so ghost-hidden,
+      // probe-closed and age-expired rows stay closed. If an old reopened row is
+      // past the age cutoff, expireStaleJobs closes it as 'stale' — for good.
       if (toUpdate.length > 0) {
         await db.execute(sql.raw(`
           UPDATE job_postings SET
+            status = CASE
+              WHEN status = 'closed' AND liveness_status = 'removed'
+                AND (expires_at IS NULL OR expires_at > NOW())
+              THEN 'active' ELSE status END,
             liveness_status = 'active',
             last_liveness_check = NOW(),
             updated_at = NOW()
@@ -490,6 +513,85 @@ export class JobIngestionService {
     }
 
     return total;
+  }
+
+  /**
+   * Snapshot expiry (see server/lib/snapshot-expiry.ts): close active jobs that
+   * a cleanly-read board no longer lists. Only rows created before the scrape
+   * began are considered, so nothing this run inserted can be closed by it.
+   *
+   * dryRun reads and plans but writes nothing.
+   */
+  async expireMissingFromBoards(
+    boards: BoardSnapshot[],
+    runStartedAt: Date,
+    opts: { dryRun?: boolean } = {},
+  ): Promise<SnapshotExpiryStats> {
+    const stats: SnapshotExpiryStats = {
+      boardsUsable: 0, skippedFailed: 0, skippedIncomplete: 0, skippedEmpty: 0, skippedMassDrop: 0,
+      closed: 0, wouldCloseSkipped: 0,
+    };
+
+    const groups = [...groupSnapshots(boards).values()];
+    const usable = groups.filter(g => {
+      if (g.usable) return true;
+      if (g.reason === 'failed') stats.skippedFailed++;
+      else stats.skippedIncomplete++;
+      return false;
+    });
+    stats.boardsUsable = usable.length;
+
+    const toClose: number[] = [];
+    const CHUNK = 200;
+    for (let i = 0; i < usable.length; i += CHUNK) {
+      const chunk = usable.slice(i, i + CHUNK);
+      const keys = sql.join(chunk.map(g => sql`(${g.source}, ${g.company})`), sql`, `);
+      const rows = await db.execute(sql`
+        SELECT id, source, company, external_url
+        FROM job_postings
+        WHERE (source, company) IN (${keys})
+          AND status = 'active'
+          AND created_at < ${runStartedAt.toISOString()}
+      `) as any[];
+
+      const byGroup = new Map<string, ActiveJobRow[]>();
+      for (const r of rows) {
+        const k = groupKey(r.source, r.company);
+        let list = byGroup.get(k);
+        if (!list) byGroup.set(k, list = []);
+        list.push({ id: r.id, externalUrl: r.external_url });
+      }
+
+      for (const g of chunk) {
+        const active = byGroup.get(groupKey(g.source, g.company)) ?? [];
+        const plan = planBoardExpiry(active, g.seen);
+        if (plan.action === 'close') {
+          toClose.push(...plan.closeIds);
+        } else {
+          if (plan.reason === 'empty-board') stats.skippedEmpty++;
+          else stats.skippedMassDrop++;
+          stats.wouldCloseSkipped += plan.wouldClose;
+        }
+      }
+    }
+
+    if (opts.dryRun) {
+      stats.closed = toClose.length;
+      return stats;
+    }
+
+    // 'removed', not 'stale': it marks these closures so ingestion can reopen a
+    // job the board lists again without reviving anything another closer shut.
+    for (let i = 0; i < toClose.length; i += 500) {
+      const ids = sql.join(toClose.slice(i, i + 500).map(id => sql`${id}`), sql`, `);
+      const result = await db.execute(sql`
+        UPDATE job_postings
+        SET status = 'closed', liveness_status = 'removed', updated_at = NOW()
+        WHERE id IN (${ids}) AND status = 'active'
+      `) as any;
+      stats.closed += result.count ?? 0;
+    }
+    return stats;
   }
 
   // Resolve bad URLs for existing jobs (e.g., amazon.com → amazon.jobs)

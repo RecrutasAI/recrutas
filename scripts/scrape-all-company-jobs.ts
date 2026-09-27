@@ -2,21 +2,29 @@
  * Full company job scraping pipeline:
  * 1. Scrapes all known ATS companies for fresh jobs
  * 2. Scrapes JSON-LD-approved companies' career pages
+ * 3. Snapshot expiry: closes jobs that a cleanly-read ATS board no longer lists
  *
  * Usage:
  *   npx tsx scripts/scrape-all-company-jobs.ts [--dry-run]
+ *
+ * Phase 3 always plans and reports what it would close; it only WRITES when
+ * SNAPSHOT_EXPIRY=on and the run isn't --dry-run. Off by default so the
+ * would-close counts can be watched in pipeline_runs before anything closes.
  */
 import 'dotenv/config';
 import postgres from 'postgres';
-import { listAtsJobs } from '../server/lib/adzuna-link-resolver';
+import { fetchAtsBoard } from '../server/lib/adzuna-link-resolver';
 import { jobIngestionService } from '../server/services/job-ingestion.service';
 import { runAsPipeline, type PipelineSummary } from '../server/services/pipeline-run.service';
+import type { BoardSnapshot } from '../server/lib/snapshot-expiry';
 
 const DRY_RUN   = process.argv.includes('--dry-run');
+const SNAPSHOT_EXPIRY_WRITES = process.env.SNAPSHOT_EXPIRY === 'on' && !DRY_RUN;
 const CONC      = 8;
 const ATS_TYPES = new Set(['greenhouse', 'lever', 'ashby', 'workable', 'recruitee', 'smartrecruiters', 'breezy']);
 
 async function main(): Promise<PipelineSummary> {
+  const runStartedAt = new Date();
   const sql = postgres(process.env.POSTGRES_URL_NON_POOLING || process.env.POSTGRES_URL || '', { max: 3, prepare: false });
 
   // Adzuna redirect-URL resolution used to run here as phase 1, re-resolving the
@@ -41,6 +49,7 @@ async function main(): Promise<PipelineSummary> {
   console.log(`Found ${atsCompanies.length} companies with ATS APIs`);
 
   let scraped = 0, totalJobs = 0;
+  const snapshots: BoardSnapshot[] = [];
 
   // Scraped jobs are ingested in bounded batches rather than accumulated across
   // all ~1.4K companies and flushed once at the end. Holding every job (with its
@@ -70,10 +79,17 @@ async function main(): Promise<PipelineSummary> {
     const slice = atsCompanies.slice(i, i + CONC);
     const results = await Promise.allSettled(
       slice.map(async (entry) => {
+        const source = `ATS:${entry.detectedAts}`;
         try {
-          const jobs = await listAtsJobs(entry.detectedAts as any, entry.atsId);
-          return jobs.length > 0 ? { company: entry.normalizedName, atsType: entry.detectedAts, jobs } : null;
-        } catch { return null; }
+          const b = await fetchAtsBoard(entry.detectedAts as any, entry.atsId);
+          snapshots.push(b.ok
+            ? { source, company: entry.normalizedName, ok: true, complete: b.complete, seenUrls: b.seenUrls }
+            : { source, company: entry.normalizedName, ok: false, complete: false, seenUrls: [] });
+          return b.ok && b.jobs.length > 0 ? { company: entry.normalizedName, atsType: entry.detectedAts, jobs: b.jobs } : null;
+        } catch {
+          snapshots.push({ source, company: entry.normalizedName, ok: false, complete: false, seenUrls: [] });
+          return null;
+        }
       })
     );
 
@@ -144,6 +160,16 @@ async function main(): Promise<PipelineSummary> {
   const ingestStats = ingestedAny ? ingestTotals : null;
   if (ingestStats) console.log('Stats:', ingestStats);
 
+  // --- PHASE 3: Snapshot expiry ---
+  // ATS boards only: JSON-LD pages are capped at 20 postings, so they are never
+  // a complete snapshot. Runs last, so a run killed by its timeout closes nothing.
+  console.log(`\n=== PHASE 3: Snapshot expiry${SNAPSHOT_EXPIRY_WRITES ? '' : ' (plan only)'} ===`);
+  const expiry = await jobIngestionService.expireMissingFromBoards(snapshots, runStartedAt, { dryRun: !SNAPSHOT_EXPIRY_WRITES });
+  const verb = SNAPSHOT_EXPIRY_WRITES ? 'closed' : 'would close';
+  console.log(`${verb}: ${expiry.closed} jobs missing from ${expiry.boardsUsable} cleanly-read boards`);
+  console.log(`Skipped boards: ${expiry.skippedFailed} failed, ${expiry.skippedIncomplete} partial, ` +
+    `${expiry.skippedEmpty} empty, ${expiry.skippedMassDrop} mass-drop (${expiry.wouldCloseSkipped} jobs left open)`);
+
   const freshJobs = totalJobs + jsonLdJobs;
   console.log('\n=== DONE ===');
   console.log(`ATS companies scraped: ${scraped}`);
@@ -156,8 +182,9 @@ async function main(): Promise<PipelineSummary> {
     status: (ingestStats?.errors || 0) > 0 ? 'warning' : 'ok',
     itemsProcessed: ingestStats?.inserted ?? 0,
     itemsFailed: ingestStats?.errors ?? 0,
-    message: `${scraped + jsonLdScraped} companies, ${freshJobs} fresh jobs, ${ingestStats?.inserted ?? 0} inserted${DRY_RUN ? ' (dry-run)' : ''}`,
-    stats: { atsCompanies: scraped, jsonLdCompanies: jsonLdScraped, freshJobs, inserted: ingestStats?.inserted ?? 0, duplicates: ingestStats?.duplicates ?? 0, errors: ingestStats?.errors ?? 0, dryRun: DRY_RUN },
+    message: `${scraped + jsonLdScraped} companies, ${freshJobs} fresh jobs, ${ingestStats?.inserted ?? 0} inserted` +
+      `, ${expiry.closed} ${verb} (off board)${DRY_RUN ? ' (dry-run)' : ''}`,
+    stats: { atsCompanies: scraped, jsonLdCompanies: jsonLdScraped, freshJobs, inserted: ingestStats?.inserted ?? 0, duplicates: ingestStats?.duplicates ?? 0, errors: ingestStats?.errors ?? 0, dryRun: DRY_RUN, snapshotExpiry: { ...expiry, writes: SNAPSHOT_EXPIRY_WRITES } },
   };
 }
 

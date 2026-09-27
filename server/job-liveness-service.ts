@@ -23,7 +23,7 @@ export interface LivenessCheckResult {
   httpStatus?: number;
   responseTime?: number;
   trustScore?: number;
-  livenessStatus?: 'active' | 'stale' | 'unknown';
+  livenessStatus?: 'active' | 'stale' | 'unknown' | 'removed';
 }
 
 // Phrases that indicate a job is no longer available
