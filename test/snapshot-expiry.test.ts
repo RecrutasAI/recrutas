@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
-  planBoardExpiry, groupSnapshots, groupKey,
+  planBoardExpiry, groupSnapshots, groupKey, describeBoardExpiry, summarizeBoardReports,
   SNAPSHOT_GUARD_MIN_ACTIVE, type BoardSnapshot,
 } from '../server/lib/snapshot-expiry';
 import { fetchAtsBoard, listAtsJobs } from '../server/lib/adzuna-link-resolver';
@@ -128,5 +128,40 @@ describe('fetchAtsBoard', () => {
   it('keeps listAtsJobs returning [] on a failed read', async () => {
     respond(500, {});
     expect(await listAtsJobs('greenhouse', 'acme')).toEqual([]);
+  });
+});
+
+describe('board expiry reports', () => {
+  it('pairs a missing URL with a seen URL so a URL-shape change is visible', () => {
+    // A careers-domain move: the same postings, every URL changed. The guard
+    // skips it exactly like a real purge — only the samples tell them apart.
+    const active = rows(urls(12, 'https://www.acme.com/careers?gh_jid='));
+    const seen = new Set(urls(12, 'https://careers.acme.com/?gh_jid='));
+    const plan = planBoardExpiry(active, seen);
+    const r = describeBoardExpiry({ source: 'ATS:greenhouse', company: 'acme', seen }, active, plan);
+    expect(r).toEqual({
+      source: 'ATS:greenhouse', company: 'acme', active: 12, missing: 12, outcome: 'mass-drop',
+      sampleMissing: 'https://www.acme.com/careers?gh_jid=0',
+      sampleSeen: 'https://careers.acme.com/?gh_jid=0',
+    });
+  });
+
+  it('reports a clean board with nothing missing and no missing sample', () => {
+    const active = rows(['a', 'b']);
+    const seen = new Set(['a', 'b']);
+    const r = describeBoardExpiry({ source: 'ATS:lever', company: 'x', seen }, active, planBoardExpiry(active, seen));
+    expect(r).toMatchObject({ outcome: 'close', missing: 0, sampleMissing: undefined, sampleSeen: 'a' });
+  });
+
+  it('keeps every guard-skipped board and only the biggest closers', () => {
+    const rep = (company: string, missing: number, outcome: 'close' | 'mass-drop' | 'empty-board') =>
+      ({ source: 'ATS:greenhouse', company, active: 100, missing, outcome });
+    const reports = [
+      rep('quiet', 0, 'close'), rep('small', 3, 'close'), rep('big', 40, 'close'),
+      rep('drop', 90, 'mass-drop'), rep('empty', 5, 'empty-board'),
+    ];
+    const s = summarizeBoardReports(reports, 1);
+    expect(s.skipped.map(r => r.company)).toEqual(['drop', 'empty']);
+    expect(s.topClosing.map(r => r.company)).toEqual(['big']);
   });
 });

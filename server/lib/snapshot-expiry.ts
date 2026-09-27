@@ -89,3 +89,51 @@ export function planBoardExpiry(active: ActiveJobRow[], seen: Set<string>): Snap
 
   return { action: 'close', closeIds: missing.map(r => r.id) };
 }
+
+/** One board's expiry outcome, for the run log and pipeline_runs stats. */
+export interface BoardExpiryReport {
+  source: string;
+  company: string;
+  active: number;
+  missing: number;
+  outcome: 'close' | 'empty-board' | 'mass-drop';
+  /** One URL we hold as active that the board no longer lists... */
+  sampleMissing?: string;
+  /** ...next to one URL the board does list. When the two differ only in
+   *  shape (host, path, query), the board changed its URLs rather than
+   *  dropping its postings — the case the mass-drop guard can't tell apart. */
+  sampleSeen?: string;
+}
+
+export function describeBoardExpiry(
+  group: Pick<SnapshotGroup, 'source' | 'company' | 'seen'>,
+  active: ActiveJobRow[],
+  plan: SnapshotDecision,
+): BoardExpiryReport {
+  const missing = active.filter(r => r.externalUrl && !group.seen.has(r.externalUrl));
+  return {
+    source: group.source,
+    company: group.company,
+    active: active.length,
+    missing: missing.length,
+    outcome: plan.action === 'close' ? 'close' : plan.reason,
+    sampleMissing: missing[0]?.externalUrl ?? undefined,
+    sampleSeen: group.seen.values().next().value,
+  };
+}
+
+/**
+ * The boards worth reading in a run: every guard-skipped board (there are
+ * ~20 per run, and each is a question the guard left open) plus the boards
+ * that close the most rows. Bounded so pipeline_runs.stats stays small.
+ */
+export function summarizeBoardReports(
+  reports: BoardExpiryReport[],
+  limit = 20,
+): { skipped: BoardExpiryReport[]; topClosing: BoardExpiryReport[] } {
+  const byMissing = (a: BoardExpiryReport, b: BoardExpiryReport) => b.missing - a.missing;
+  return {
+    skipped: reports.filter(r => r.outcome !== 'close').sort(byMissing).slice(0, 2 * limit),
+    topClosing: reports.filter(r => r.outcome === 'close' && r.missing > 0).sort(byMissing).slice(0, limit),
+  };
+}
