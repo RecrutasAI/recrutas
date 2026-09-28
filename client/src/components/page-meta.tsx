@@ -19,7 +19,7 @@ const SITE = 'Recrutas';
 
 const ROUTES: Record<string, RouteMeta> = {
   '/': {
-    title: `${SITE} — Live US jobs, ranked for you`,
+    title: `${SITE} — Job Search, Re-Invented`,
     description:
       'Upload your résumé once. Recrutas ranks live jobs from company career pages by how well you fit — and tells you why. Free for candidates.',
   },

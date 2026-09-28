@@ -101,10 +101,11 @@ function Hero({ onStart }: { onStart: () => void }) {
           <ArrowRight className="w-3.5 h-3.5 text-neutral-400" />
         </button>
         <h1 className="text-[2.6rem] leading-[1.05] sm:text-6xl lg:text-7xl font-semibold tracking-[-0.04em] max-w-4xl">
-          Live US jobs,{" "}
-          <span className="text-emerald-600 dark:text-emerald-400">ranked for you.</span>
+          Job Search,{" "}
+          <span className="whitespace-nowrap text-emerald-600 dark:text-emerald-400">Re-Invented.</span>
         </h1>
         <p className="mt-6 text-lg sm:text-xl leading-relaxed text-neutral-600 dark:text-neutral-400 max-w-2xl">
+          <span className="text-neutral-900 dark:text-white font-medium">Live US jobs, ranked for you.</span>{" "}
           Upload your résumé once. Recrutas ranks live roles from company career pages by how well you
           actually fit — and tells you why. No searching, no ghost listings.
         </p>
