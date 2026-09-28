@@ -63,7 +63,6 @@ export default function RoleSelectionStep() {
     if (EMPLOYER_SELF_SERVE || autoAssigned.current) {return;}
     autoAssigned.current = true;
     setRoleMutation.mutate('candidate', { onSuccess: () => setRole('candidate') });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (!EMPLOYER_SELF_SERVE) {
