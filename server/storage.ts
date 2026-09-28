@@ -280,6 +280,33 @@ function escapeLike(s: string): string {
   return s.replace(/[\\%_]/g, '\\$&');
 }
 
+// The feed's search-UI filters as SQL, shared by the scored feed and its
+// discovery fallbacks so a filtered feed never shows rows outside the filter.
+// Applied before the 100-job cut: filtering the unfiltered top 100 only ever
+// found jobs that were already in it.
+function feedFilterConditions(filters?: FeedFilters): SQL[] {
+  const conditions: SQL[] = [];
+  if (filters?.jobTitle) {
+    conditions.push(sql`LOWER(${jobPostings.title}) LIKE ${'%' + filters.jobTitle.toLowerCase() + '%'}`);
+  }
+  if (filters?.location?.trim()) {
+    // Same semantics as the feed's city search: case-insensitive substring,
+    // so "new york" matches "New York, NY".
+    conditions.push(sql`${jobPostings.location} ILIKE ${'%' + escapeLike(filters.location.trim()) + '%'}`);
+  }
+  if (filters?.workType) {
+    // work_type is stored lowercase (classifyWorkType at ingest). Comparing the
+    // bare column lets the planner use its stats — behind LOWER() it can't tell
+    // that 'onsite' is ~90% of jobs, and drops the HNSW index for a 3x slower plan.
+    conditions.push(eq(jobPostings.workType, filters.workType.toLowerCase()));
+  }
+  if (filters?.postedWithinDays) {
+    const postedCutoff = new Date(Date.now() - filters.postedWithinDays * 24 * 60 * 60 * 1000).toISOString();
+    conditions.push(sql`${jobPostings.createdAt} > ${postedCutoff}`);
+  }
+  return conditions;
+}
+
 // Job board aggregators — excluded from the candidate feed (links don't go to actual job pages)
 const AGGREGATOR_SOURCES = new Set(['Adzuna', 'JSearch', 'Jooble', 'Indeed', 'ArbeitNow', 'USAJobs', 'RemoteOK', 'WeWorkRemotely', 'The Muse']);
 
@@ -1098,6 +1125,7 @@ export class DatabaseStorage implements IStorage {
     excludeIds: number[],
     explanation: string,
     relevance?: { skills?: string[]; roleKeywords?: string[]; relevantOnly?: boolean },
+    filterWhere: SQL[] = [],
   ): Promise<any[]> {
     const ninetyDaysAgo = new Date();
     ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
@@ -1146,6 +1174,7 @@ export class DatabaseStorage implements IStorage {
         ...(excludeIds.length > 0
           ? [sql`${jobPostings.id} NOT IN (${sql.join(excludeIds.map(id => sql`${id}`), sql`, `)})`]
           : []),
+        ...filterWhere,
         ...extraWhere,
       ))
       .orderBy(
@@ -1231,7 +1260,7 @@ export class DatabaseStorage implements IStorage {
 
     if (!candidate || !candidate.skills || candidate.skills.length === 0) {
       console.log(`Candidate ${candidateId} has no skills - returning discovery feed`);
-      return this.getDiscoveryFeed(excludeIds, 'Upload your resume to get personalized matches');
+      return this.getDiscoveryFeed(excludeIds, 'Upload your resume to get personalized matches', undefined, feedFilterConditions(filters));
     }
 
     const jobPreferences = (candidate as any)?.jobPreferences || {};
@@ -1244,7 +1273,7 @@ export class DatabaseStorage implements IStorage {
     // tokens from seeing "No matches yet" despite having uploaded a resume.
     if (candidateSkills.length === 0) {
       console.log(`Candidate ${candidateId} has skills but none normalized - returning discovery feed`);
-      return this.getDiscoveryFeed(excludeIds, "We couldn't recognize specific skills from your resume — here are recent roles to explore");
+      return this.getDiscoveryFeed(excludeIds, "We couldn't recognize specific skills from your resume — here are recent roles to explore", undefined, feedFilterConditions(filters));
     }
 
     // Extract candidate's previous job titles from resume parsing data
@@ -1274,32 +1303,7 @@ export class DatabaseStorage implements IStorage {
     ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
     const cutoffDateStr = ninetyDaysAgo.toISOString();
 
-    // Build optional filter conditions from the search UI
-    const extraFilters: any[] = [];
-    if (filters?.jobTitle) {
-      extraFilters.push(sql`LOWER(${jobPostings.title}) LIKE ${'%' + filters.jobTitle.toLowerCase() + '%'}`);
-    }
-    if (filters?.location) {
-      // Don't punish IT candidates: searching "Seattle" should still surface
-      // remote and location-less roles, which make up most of the tech pool.
-      const pat = '%' + filters.location.toLowerCase() + '%';
-      extraFilters.push(or(
-        sql`LOWER(${jobPostings.location}) LIKE ${pat}`,
-        sql`LOWER(${jobPostings.location}) LIKE '%remote%'`,
-        sql`LOWER(${jobPostings.workType}) = 'remote'`,
-        sql`${jobPostings.location} IS NULL`,
-        sql`${jobPostings.location} = ''`
-      ));
-    }
-    if (filters?.workType) {
-      extraFilters.push(sql`LOWER(${jobPostings.workType}) = ${filters.workType.toLowerCase()}`);
-    }
-    if (filters?.postedWithinDays) {
-      // Server-side, so "Past 24 hours" means every matching job from the past
-      // day — not just the ones that already made the unfiltered top 100.
-      const postedCutoff = new Date(Date.now() - filters.postedWithinDays * 24 * 60 * 60 * 1000).toISOString();
-      extraFilters.push(sql`${jobPostings.createdAt} > ${postedCutoff}`);
-    }
+    const extraFilters = feedFilterConditions(filters);
 
     // ── Retrieval ─────────────────────────────────────────────────
     const titleMatchSkills = candidateSkills.filter(s => s.length >= 4);
@@ -1592,7 +1596,7 @@ export class DatabaseStorage implements IStorage {
     // real platform/ATS supply to show.
     if (finalJobs.length === 0) {
       console.log(`[fetchScoredJobs] 0 jobs cleared the 30% floor — falling back to relevant discovery (else empty → aggregator)`);
-      return this.getDiscoveryFeed(excludeIds, 'Here are recent roles to explore while we tune your matches', { skills: candidateSkills, roleKeywords: roleTitleKeywords, relevantOnly: true });
+      return this.getDiscoveryFeed(excludeIds, 'Here are recent roles to explore while we tune your matches', { skills: candidateSkills, roleKeywords: roleTitleKeywords, relevantOnly: true }, extraFilters);
     }
 
     // Full text for the jobs actually returned (the scoring hydrate skipped it).

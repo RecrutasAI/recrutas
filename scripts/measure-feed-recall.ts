@@ -15,6 +15,7 @@
 //   npx tsx scripts/measure-feed-recall.ts                    # all candidates
 //   npx tsx scripts/measure-feed-recall.ts --user=<uuid>      # one candidate
 //   npx tsx scripts/measure-feed-recall.ts --posted-within=1  # "Past 24 hours"
+//   npx tsx scripts/measure-feed-recall.ts --location=seattle --work-type=remote
 //
 // Read-only. Point DATABASE_URL at the database you want to measure (a bare run
 // picks up the local .env). Exits 1 when pooled recall of >=60 matches falls
@@ -27,6 +28,8 @@ import { storage, type FeedRetrievalOptions } from '../server/storage';
 const arg = (name: string) => process.argv.find(a => a.startsWith(`--${name}=`))?.split('=')[1];
 const ONLY_USER = arg('user');
 const POSTED_WITHIN = arg('posted-within') ? Number(arg('posted-within')) : undefined;
+const LOCATION = arg('location');
+const WORK_TYPE = arg('work-type');
 const MIN_RECALL = arg('min-recall') ? Number(arg('min-recall')) : 0.9;
 
 const UNBOUNDED: FeedRetrievalOptions = {
@@ -44,7 +47,7 @@ async function feed(userId: string, retrieval?: FeedRetrievalOptions): Promise<{
   try {
     const result = await storage.getJobRecommendations(
       userId,
-      POSTED_WITHIN ? { postedWithinDays: POSTED_WITHIN } : {},
+      { postedWithinDays: POSTED_WITHIN, location: LOCATION, workType: WORK_TYPE },
       { page: 1, limit: 100 },
       retrieval,
     );
@@ -63,7 +66,12 @@ async function main() {
         ORDER BY user_id`) as unknown as { user_id: string }[];
 
   const pooled = { top: [0, 0], s75: [0, 0], s60: [0, 0] };
-  console.log(`candidates: ${rows.length}${POSTED_WITHIN ? ` · posted within ${POSTED_WITHIN}d` : ''}`);
+  const filterNote = [
+    POSTED_WITHIN && `posted within ${POSTED_WITHIN}d`,
+    LOCATION && `location ~ "${LOCATION}"`,
+    WORK_TYPE && `work type ${WORK_TYPE}`,
+  ].filter(Boolean).map(f => ` · ${f}`).join('');
+  console.log(`candidates: ${rows.length}${filterNote}`);
   console.log('candidate  recall@100   >=75     >=60     feed  truth   feed-ms');
 
   for (const { user_id } of rows) {
