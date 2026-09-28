@@ -4,10 +4,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useSession } from "@supabase/auth-helpers-react";
 import { ArrowRight, ArrowUpRight, Upload } from "lucide-react";
 import {
-  SiteShell, Band, SectionLabel, Tag, PrimaryButton, OutlineButton, useSiteNav,
+  SiteShell, Band, SectionLabel, Tag, PrimaryButton, useSiteNav,
 } from "@/components/site/site-shell";
 
-const FIREFOX_LISTING = "https://addons.mozilla.org/en-US/firefox/addon/recrutas-auto-fill/";
 const RULE = "border-neutral-200 dark:border-neutral-800";
 
 interface LiveStats {
@@ -66,8 +65,7 @@ export default function LandingResponsive() {
       <HowItWorks />
       <WhyRecrutas />
       <MatchAnatomy />
-      <ApplyAnywhere />
-      <Hiring onHire={() => setLocation('/signup/talent-owner')} />
+      <EmployerInterest />
       <ManifestoBand />
       <FinalCta onStart={goToApp} />
     </SiteShell>
@@ -226,7 +224,7 @@ function HowItWorks() {
   const steps = [
     { title: "Upload your résumé", body: "We read your titles, skills and seniority — no forms to fill in." },
     { title: "Get a ranked feed", body: "Live roles from company career pages, best fit first — each with the reason it matched." },
-    { title: "Apply on the company's site", body: "Straight to the real posting. The Auto-Fill extension can complete the form for you." },
+    { title: "Apply on the company's site", body: "Every match links straight to the real posting on the employer's own site — no reposters in between." },
   ];
   return (
     <Band id="how" inner="px-4 sm:px-10 py-14 sm:py-20">
@@ -361,55 +359,72 @@ function MatchAnatomy() {
   );
 }
 
-// -- Extension + developers -------------------------------------------------------------------------
+// -- Employers: interest list only (phase 2 isn't open) -----------------------------------------------
 
-function ApplyAnywhere() {
-  return (
-    <Band inner="px-4 sm:px-10 py-14 sm:py-20">
-      <SectionLabel n="04">Apply anywhere</SectionLabel>
-      <div className={`grid md:grid-cols-2 border-t border-l ${RULE}`}>
-        <div className={`p-6 sm:p-8 border-r border-b ${RULE}`}>
-          <div className="flex gap-1.5 mb-8"><Tag tone="live">Firefox · live</Tag><Tag>Chrome · soon</Tag></div>
-          <h3 className="text-xl font-semibold tracking-tight mb-2">Auto-Fill extension</h3>
-          <p className="text-neutral-600 dark:text-neutral-400 leading-relaxed mb-6">
-            Open any application on the company's own site and fill the whole form from your Recrutas profile in one click.
-          </p>
-          <a href={FIREFOX_LISTING} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 font-geist-mono text-[11px] uppercase tracking-[0.14em] text-emerald-600 dark:text-emerald-400 hover:underline">
-            Add to Firefox <ArrowUpRight className="w-3.5 h-3.5" />
-          </a>
-        </div>
-        <div className={`p-6 sm:p-8 border-r border-b ${RULE}`}>
-          <div className="flex gap-1.5 mb-8"><Tag>MCP · exploring</Tag></div>
-          <h3 className="text-xl font-semibold tracking-tight mb-2">For developers: Recrutas in your AI tools</h3>
-          <p className="text-neutral-600 dark:text-neutral-400 leading-relaxed mb-4">
-            Ask Claude, Cursor or ChatGPT for your matches — right where you already work.
-          </p>
-          <div className={`font-geist-mono text-[13px] border ${RULE} bg-neutral-50 dark:bg-neutral-950 px-3 py-2 mb-6`}>
-            <span className="text-emerald-600 dark:text-emerald-400">&gt;</span> find live backend roles that fit my résumé, and tell me why
-          </div>
-          <a href="mailto:support@recrutas.ai?subject=MCP%20early%20access" className="inline-flex items-center gap-1.5 font-geist-mono text-[11px] uppercase tracking-[0.14em] text-emerald-600 dark:text-emerald-400 hover:underline">
-            Request early access <ArrowRight className="w-3.5 h-3.5" />
-          </a>
-        </div>
-      </div>
-    </Band>
-  );
-}
+function EmployerInterest() {
+  const [email, setEmail] = useState("");
+  const [state, setState] = useState<"idle" | "sending" | "done" | "error">("idle");
+  const [message, setMessage] = useState("");
 
-// -- Hiring (early employers) -----------------------------------------------------------------------
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.includes("@")) {
+      setState("error");
+      setMessage("Enter a work email.");
+      return;
+    }
+    setState("sending");
+    try {
+      const res = await fetch("/api/waitlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, source: "employer" }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Something went wrong. Try again in a minute.");
+      setState("done");
+      setMessage("Thanks — you're on the list. We'll email you when employer access opens.");
+    } catch (err) {
+      setState("error");
+      setMessage(err instanceof Error ? err.message : "Something went wrong. Try again in a minute.");
+    }
+  };
 
-function Hiring({ onHire }: { onHire: () => void }) {
   return (
     <Band inner="px-4 sm:px-10 py-10 sm:py-12">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-5">
+      <div className="grid md:grid-cols-[1fr_minmax(0,420px)] gap-6 md:items-center">
         <div>
           <div className="font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500 mb-2">For employers</div>
-          <div className="text-lg font-semibold tracking-tight">Hiring? We're onboarding a few early employers.</div>
-          <div className="text-neutral-500 mt-1">Exam-ranked candidates, direct chat with the people you want, no agency fees.</div>
+          <div className="text-lg font-semibold tracking-tight">Hiring? Join the employer interest list.</div>
+          <div className="text-neutral-500 mt-1">Employer access isn't open yet. Leave your work email and we'll reach out when it is.</div>
         </div>
-        <OutlineButton onClick={onHire}>
-          Sign up as an employer <ArrowRight className="w-3.5 h-3.5" />
-        </OutlineButton>
+        {state === "done" ? (
+          <p className="font-geist-mono text-[12px] text-emerald-600 dark:text-emerald-400" role="status">{message}</p>
+        ) : (
+          <form onSubmit={submit} className="w-full">
+            <div className={`flex border ${RULE} focus-within:border-neutral-900 dark:focus-within:border-white transition-colors`}>
+              <label htmlFor="employer-email" className="sr-only">Work email</label>
+              <input
+                id="employer-email"
+                type="email"
+                required
+                autoComplete="email"
+                placeholder="you@company.com"
+                value={email}
+                onChange={(e) => { setEmail(e.target.value); if (state === "error") setState("idle"); }}
+                className="flex-1 min-w-0 h-10 px-3 bg-transparent text-sm outline-none placeholder:text-neutral-400"
+              />
+              <button
+                type="submit"
+                disabled={state === "sending"}
+                className="shrink-0 h-10 px-4 font-geist-mono text-[11px] uppercase tracking-[0.14em] bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-emerald-600 dark:hover:bg-emerald-400 disabled:opacity-60 transition-colors"
+              >
+                {state === "sending" ? "Sending…" : "Notify me"}
+              </button>
+            </div>
+            {state === "error" && <p className="mt-2 text-sm text-red-600 dark:text-red-400" role="alert">{message}</p>}
+          </form>
+        )}
       </div>
     </Band>
   );

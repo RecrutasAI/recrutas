@@ -11,7 +11,7 @@ import { ThemeToggleButton } from "@/components/theme-toggle-button";
 // labels — with Recrutas green as the one accent. Geist for text, Geist Mono
 // for labels and live data.
 
-export type SiteSection = "home" | "manifesto";
+export type SiteSection = "home" | "manifesto" | "legal";
 
 const NAV: { label: string; href: string }[] = [
   { label: "How it works", href: "/#how" },
@@ -175,13 +175,31 @@ export function PrimaryButton({ children, onClick }: { children: ReactNode; onCl
   );
 }
 
-export function OutlineButton({ children, onClick }: { children: ReactNode; onClick: () => void }) {
+/**
+ * Wrapper for long-form policy pages (privacy, terms). Sections inside are
+ * plain <section><h2/><p/><ul/></section>; typography comes from here.
+ */
+export function LegalPage({ title, updated, children }: { title: string; updated: string; children: ReactNode }) {
   return (
-    <button
-      onClick={onClick}
-      className={`inline-flex items-center justify-center gap-2 h-10 px-4 border ${RULE} font-geist-mono text-[11px] uppercase tracking-[0.14em] hover:border-neutral-900 dark:hover:border-white transition-colors`}
-    >
-      {children}
-    </button>
+    <SiteShell active="legal">
+      <Band className="border-t-0" inner="px-4 sm:px-10 pt-16 pb-20 sm:pt-24 sm:pb-28">
+        <article className="mx-auto max-w-2xl">
+          <SectionLabel>Legal</SectionLabel>
+          <h1 className="text-4xl sm:text-5xl font-semibold tracking-[-0.04em] leading-[1.05] mb-4">{title}</h1>
+          <p className="font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500 mb-12">Last updated: {updated}</p>
+          <div
+            className={[
+              "space-y-10 text-[15px] sm:text-base leading-[1.75] text-neutral-700 dark:text-neutral-300",
+              "[&_section]:border-t [&_section]:border-neutral-200 dark:[&_section]:border-neutral-800 [&_section]:pt-8",
+              "[&_h2]:text-lg [&_h2]:font-semibold [&_h2]:tracking-tight [&_h2]:text-neutral-900 dark:[&_h2]:text-white [&_h2]:mb-3",
+              "[&_p]:mb-3 [&_ul]:space-y-2 [&_ul]:pl-5 [&_ul]:list-disc [&_li]:marker:text-emerald-600",
+              "[&_a]:text-emerald-600 dark:[&_a]:text-emerald-400 [&_a]:underline [&_a]:underline-offset-2",
+            ].join(" ")}
+          >
+            {children}
+          </div>
+        </article>
+      </Band>
+    </SiteShell>
   );
 }

@@ -9,11 +9,11 @@ import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
 import { useLocation } from 'wouter';
 
-// Employer accounts are early access while phase 1 (candidates) is live:
-// employers sign up on the dedicated /signup/talent-owner page, which sets the
-// role itself and never reaches this screen. So an account that arrives here
-// without a role (e.g. a first "Continue with Google" from /auth) is a
-// candidate. Flip to true to offer the candidate / talent-owner choice again.
+// Employer access is closed while phase 1 (candidates) is live — employers
+// join the homepage interest list, and nothing public links to employer
+// signup. So an account that arrives here without a role (e.g. a first
+// "Continue with Google" from /auth) is a candidate. Flip to true to offer
+// the candidate / talent-owner choice again.
 export const EMPLOYER_SELF_SERVE = false;
 
 export default function RoleSelectionStep() {

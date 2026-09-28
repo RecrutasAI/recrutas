@@ -3428,11 +3428,23 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     // US-only notice (source "non-us:<CC>"); promising them an invite would be
     // wrong — they're waiting for coverage, not for a spot.
     const nonUs = typeof source === 'string' && source.startsWith('non-us:');
+    // Employers join from the homepage interest list while employer access is
+    // closed (phase 1 is candidates only) — no invite code is coming for them.
+    const employer = source === 'employer';
     await sendEmail({
       to: normalizedEmail,
       from: 'noreply@recrutas.ai',
-      subject: nonUs ? "We'll let you know when Recrutas expands" : "You're on the Recrutas early access list!",
-      html: nonUs
+      subject: employer
+        ? "You're on the Recrutas employer interest list"
+        : nonUs ? "We'll let you know when Recrutas expands" : "You're on the Recrutas early access list!",
+      html: employer
+        ? `
+        <p>Hi,</p>
+        <p>Thanks for your interest in hiring through <strong>Recrutas</strong>. Employer access isn't open yet — we're starting with candidates.</p>
+        <p>We'll email you when it opens. No other emails in the meantime.</p>
+        <p>— The Recrutas Team</p>
+      `
+        : nonUs
         ? `
         <p>Hi,</p>
         <p>Thanks for your interest in <strong>Recrutas</strong>. Right now every job we list comes from a US employer, so we can't match you with roles where you are yet.</p>
@@ -3451,7 +3463,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     await sendEmail({
       to: 'hello@recrutas.ai',
       from: 'noreply@recrutas.ai',
-      subject: `[Waitlist] New signup: ${normalizedEmail}`,
+      subject: employer ? `[Employer interest] ${normalizedEmail}` : `[Waitlist] New signup: ${normalizedEmail}`,
       html: `<p><strong>${firstName || ''} ${lastName || ''}</strong> (${normalizedEmail}) joined the waitlist.</p><p>Source: ${source || 'early-access-page'}</p>`,
     }).catch((err: Error) => console.error('[Waitlist] Failed to send admin notification:', err));
 

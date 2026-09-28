@@ -184,9 +184,8 @@ export default function AuthPage() {
                   <a href={`/signup/candidate${codeSuffix}`} className="w-full inline-flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600 dark:border-gray-600">
                     Sign up as a Candidate
                   </a>
-                  {/* Employer signup is early-access only while phase 1 (candidates)
-                      is live — employers reach /signup/talent-owner from the
-                      homepage's "Hiring?" box, not from here. */}
+                  {/* Employer access is closed while phase 1 (candidates) is live;
+                      employers join the interest list on the homepage instead. */}
                 </div>
               </div>
             </div>
