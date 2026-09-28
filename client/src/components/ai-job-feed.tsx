@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
@@ -201,7 +201,17 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
   // out-ranked 90 days of supply — usually none.
   const postedWithinDays = DATE_FILTER_OPTIONS.find(o => o.value === datePostedFilter)?.days;
 
-  // Single fetch of the full (≤100) match set. The other filters below run
+  // Location and work type go to the server for the same reason. The city box
+  // is free text, so wait for typing to pause before refetching.
+  const [serverLocation, setServerLocation] = useState("");
+  useEffect(() => {
+    const next = locationFilter === 'all' ? '' : locationFilter.trim();
+    const t = setTimeout(() => setServerLocation(next), 400);
+    return () => clearTimeout(t);
+  }, [locationFilter]);
+  const serverWorkType = workTypeFilter === 'all' ? '' : workTypeFilter;
+
+  // Single fetch of the full (≤100) match set. Search, company and level run
   // client-side over this COMPLETE set — previously filtering only saw the pages
   // an infinite scroll had loaded, which silently hid matching jobs on unfetched
   // pages, left the filter dropdowns incomplete, and could show a false "no
@@ -212,17 +222,22 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
     isFetching,
     refetch,
   } = useQuery<PaginatedResponse>({
-    queryKey: ['/api/ai-matches', postedWithinDays ?? 'all'],
+    queryKey: ['/api/ai-matches', postedWithinDays ?? 'all', serverLocation, serverWorkType],
     queryFn: async () => {
       // Only the first load of this mount counts as a visit. Background
       // refetches (every 5 min, after hide/apply) would otherwise re-stamp
       // last_feed_visit and clear the "New" badges while the user is reading.
       const visit = feedVisitStamped.current ? '0' : '1';
       feedVisitStamped.current = true;
-      const posted = postedWithinDays ? `&postedWithin=${postedWithinDays}` : '';
-      const response = await apiRequest("GET", `/api/ai-matches?page=1&limit=${FEED_FETCH_LIMIT}&visit=${visit}${posted}`);
+      const params = new URLSearchParams({ page: '1', limit: String(FEED_FETCH_LIMIT), visit });
+      if (postedWithinDays) params.set('postedWithin', String(postedWithinDays));
+      if (serverLocation) params.set('location', serverLocation);
+      if (serverWorkType) params.set('workType', serverWorkType);
+      const response = await apiRequest("GET", `/api/ai-matches?${params.toString()}`);
       return response.json();
     },
+    // Keep the current list on screen while a filter change refetches.
+    placeholderData: (previous) => previous,
     refetchInterval: 300000,
   });
 
