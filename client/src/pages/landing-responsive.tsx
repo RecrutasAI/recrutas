@@ -66,7 +66,7 @@ export default function LandingResponsive() {
       <WhyRecrutas />
       <MatchAnatomy />
       <ApplyAnywhere />
-      <Roadmap onHire={() => setLocation('/signup/talent-owner')} />
+      <Hiring onHire={() => setLocation('/signup/talent-owner')} />
       <ManifestoBand />
       <FinalCta onStart={goToApp} />
     </SiteShell>
@@ -90,14 +90,14 @@ function Hero({ onStart }: { onStart: () => void }) {
       />
       <Container className="relative pt-16 pb-12 sm:pt-24 sm:pb-16">
         <button
-          onClick={() => go("/#roadmap")}
+          onClick={() => go("/#how")}
           className="inline-flex items-center gap-2 mb-7 rounded-full border border-neutral-200 dark:border-neutral-800 bg-white/60 dark:bg-neutral-900/60 px-3 py-1 text-sm"
         >
           <span className="relative flex w-2 h-2">
             <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-60 animate-ping" />
             <span className="relative inline-flex w-2 h-2 rounded-full bg-emerald-500" />
           </span>
-          Phase 1 is live — the candidate dashboard
+          Now open for US job seekers
           <ArrowRight className="w-3.5 h-3.5 text-neutral-400" />
         </button>
         <h1 className="text-[2.6rem] leading-[1.05] sm:text-6xl lg:text-7xl font-semibold tracking-[-0.04em] max-w-4xl">
@@ -385,52 +385,22 @@ function ApplyAnywhere() {
   );
 }
 
-// -- Roadmap -------------------------------------------------------------------------------------------
+// -- Hiring (early employers) -----------------------------------------------------------------------
 
-const PHASES: { title: string; status: string; tone: "live" | "next" | "neutral"; body: string }[] = [
-  { title: "Candidate dashboard", status: "Live", tone: "live", body: "The ranked feed, résumé parsing, filters, saved and applied jobs." },
-  { title: "Employer job board", status: "Next", tone: "next", body: "Companies post roles here. Pass a short exam built from the job and get a real answer within 24 hours, plus a direct line to the hiring manager." },
-  { title: "Browser extension", status: "Firefox live", tone: "neutral", body: "One-click auto-fill on every major browser. Chrome is next." },
-  { title: "Mobile", status: "Later", tone: "neutral", body: "Your feed and your applications, in your pocket." },
-];
-
-function Roadmap({ onHire }: { onHire: () => void }) {
+function Hiring({ onHire }: { onHire: () => void }) {
   return (
-    <section id="roadmap" className="scroll-mt-20 border-t border-neutral-200 dark:border-neutral-800">
-      <Container className="py-16 sm:py-24">
-        <Eyebrow>Roadmap</Eyebrow>
-        <h2 className="text-3xl sm:text-4xl font-semibold tracking-[-0.03em] max-w-2xl mb-3">Built in order.</h2>
-        <p className="text-lg text-neutral-600 dark:text-neutral-400 max-w-2xl mb-12">
-          Each phase ships when the one before it works for real people.
-        </p>
-        <ol className="relative grid md:grid-cols-4 gap-8 md:gap-6">
-          <div aria-hidden className="hidden md:block absolute top-[11px] left-3 right-3 h-px bg-neutral-200 dark:bg-neutral-800" />
-          {PHASES.map((p, i) => (
-            <li key={p.title} className="relative pl-10 md:pl-0">
-              {i < PHASES.length - 1 && (
-                <div aria-hidden className="md:hidden absolute left-[11px] top-7 -bottom-8 w-px bg-neutral-200 dark:bg-neutral-800" />
-              )}
-              <span className={`absolute md:relative left-0 top-0 flex w-6 h-6 rounded-full items-center justify-center text-[11px] font-semibold ring-4 ring-white dark:ring-[#0a0a0a] ${
-                p.tone === "live" ? "bg-emerald-600 text-white" : p.tone === "next" ? "bg-amber-500 text-white" : "bg-neutral-200 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
-              }`}>{i + 1}</span>
-              <div className="md:mt-5">
-                <h3 className="font-semibold tracking-tight mb-2">{p.title}</h3>
-                <Pill tone={p.tone}>{p.status}</Pill>
-                <p className="mt-3 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">{p.body}</p>
-              </div>
-            </li>
-          ))}
-        </ol>
-        <div className="mt-14 rounded-xl bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <section className="border-t border-neutral-200 dark:border-neutral-800">
+      <Container className="py-12 sm:py-16">
+        <div className="rounded-xl bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 p-6 sm:p-8 flex flex-col sm:flex-row sm:items-center justify-between gap-5">
           <div>
-            <div className="font-semibold">Hiring? Phase 2 is taking early employers.</div>
-            <div className="text-neutral-500">Exam-ranked candidates, direct chat, no agency fees.</div>
+            <div className="text-lg font-semibold tracking-tight">Hiring? We're onboarding a few early employers.</div>
+            <div className="text-neutral-500 mt-1">Exam-ranked candidates, direct chat with the people you want, no agency fees.</div>
           </div>
           <button
             onClick={onHire}
             className="shrink-0 inline-flex items-center gap-2 h-10 px-4 rounded-lg text-sm font-medium border border-neutral-300 dark:border-neutral-700 hover:border-neutral-900 dark:hover:border-neutral-300 transition-colors"
           >
-            Post a job — early access <ArrowRight className="w-4 h-4" />
+            Sign up as an employer <ArrowRight className="w-4 h-4" />
           </button>
         </div>
       </Container>

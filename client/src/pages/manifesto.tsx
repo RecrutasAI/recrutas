@@ -1,11 +1,10 @@
 import type { ReactNode } from "react";
 import { useLocation } from "wouter";
-import { ArrowRight, Upload } from "lucide-react";
-import { SiteShell, Container, PrimaryButton, useSiteNav } from "@/components/site/site-shell";
+import { Upload } from "lucide-react";
+import { SiteShell, Container, PrimaryButton } from "@/components/site/site-shell";
 
 export default function ManifestoPage() {
   const [, setLocation] = useLocation();
-  const go = useSiteNav();
   const start = () => setLocation("/auth");
 
   return (
@@ -46,12 +45,6 @@ export default function ManifestoPage() {
             <PrimaryButton onClick={start}>
               <Upload className="w-4 h-4" /> Get your ranked feed
             </PrimaryButton>
-            <button
-              onClick={() => go("/#roadmap")}
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
-            >
-              See the roadmap <ArrowRight className="w-4 h-4" />
-            </button>
           </div>
         </article>
       </Container>

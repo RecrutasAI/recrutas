@@ -14,7 +14,6 @@ export type SiteSection = "home" | "manifesto";
 
 const NAV: { label: string; href: string }[] = [
   { label: "How it works", href: "/#how" },
-  { label: "Roadmap", href: "/#roadmap" },
   { label: "Manifesto", href: "/manifesto" },
 ];
 
