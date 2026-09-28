@@ -64,7 +64,6 @@ export default function LandingResponsive() {
       <LiveSearch onStart={goToApp} />
       <HowItWorks />
       <WhyRecrutas />
-      <GhostCheck />
       <EmployerInterest />
       <ManifestoBand />
       <FinalCta onStart={goToApp} />
@@ -420,118 +419,6 @@ function WhyRecrutas() {
           </div>
         ))}
       </div>
-    </Band>
-  );
-}
-
-// -- Is this job still real? ------------------------------------------------------------------------
-
-interface JobUrlCheck {
-  verdict: 'live' | 'unverified' | 'taken-down' | 'closed' | 'repost' | 'job-board' | 'not-indexed' | 'invalid';
-  host?: string;
-  job?: { title: string; company: string; location: string | null; lastSeen: string | null; postingUrl: string | null };
-}
-
-function whenSeen(iso: string | null | undefined): string {
-  if (!iso) return "a while ago";
-  const hours = (Date.now() - new Date(iso).getTime()) / 3_600_000;
-  if (hours < 48) return timeAgo(iso);
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
-const VERDICTS: Record<JobUrlCheck['verdict'], { tone: "live" | "warn" | "dead" | "neutral"; label: string; text: (r: JobUrlCheck) => string }> = {
-  "live": { tone: "live", label: "Live", text: (r) => `It's on ${r.job!.company}'s own board — we checked ${whenSeen(r.job!.lastSeen)}.` },
-  "unverified": { tone: "warn", label: "Not seen lately", text: (r) => `We last saw it on ${r.job!.company}'s board ${whenSeen(r.job!.lastSeen)}. It may already be gone.` },
-  "taken-down": { tone: "dead", label: "Taken down", text: (r) => `${r.job!.company} took this posting off its board (last seen ${whenSeen(r.job!.lastSeen)}). If it's still listed somewhere, that's a leftover.` },
-  "closed": { tone: "dead", label: "Closed", text: (r) => `It hasn't been on ${r.job!.company}'s board since ${whenSeen(r.job!.lastSeen)}.` },
-  "repost": { tone: "warn", label: "Repost", text: () => "This listing comes from a job reposter, not the company that's hiring. Look for the original on the company's own careers page." },
-  "job-board": { tone: "neutral", label: "Job-board link", text: (r) => `That's a ${r.host ?? "job-board"} link, not the company's own posting. Open it, click through to the company's careers page, and paste that link instead.` },
-  "not-indexed": { tone: "neutral", label: "Not in our index", text: (r) => `We don't track ${r.host ?? "that site"} yet — we check postings on 4,000+ companies' own career pages.` },
-  "invalid": { tone: "neutral", label: "Not a link", text: () => "Paste the full link to a job posting, starting with https://." },
-};
-
-const VERDICT_TONES = {
-  live: "border-emerald-600/40 text-emerald-700 dark:border-emerald-400/40 dark:text-emerald-400",
-  warn: "border-amber-600/40 text-amber-700 dark:border-amber-400/40 dark:text-amber-400",
-  dead: "border-red-600/40 text-red-700 dark:border-red-400/40 dark:text-red-400",
-  neutral: "border-neutral-300 text-neutral-600 dark:border-neutral-700 dark:text-neutral-400",
-} as const;
-
-function GhostCheck() {
-  const [url, setUrl] = useState("");
-  const [state, setState] = useState<"idle" | "checking" | "done" | "error">("idle");
-  const [result, setResult] = useState<JobUrlCheck | null>(null);
-  const [error, setError] = useState("");
-
-  const check = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!url.trim()) return;
-    setState("checking");
-    try {
-      const res = await fetch(`/api/platform/check-job?url=${encodeURIComponent(url.trim())}`);
-      const body = await res.json().catch(() => ({}));
-      if (res.status === 400) { setResult({ verdict: "invalid" }); setState("done"); return; }
-      if (!res.ok) throw new Error(res.status === 429 ? "Lots of checks in a short time — try again in a minute." : "The checker is unavailable right now.");
-      setResult(body);
-      setState("done");
-    } catch (err) {
-      setState("error");
-      setError(err instanceof Error ? err.message : "The checker is unavailable right now.");
-    }
-  };
-
-  const v = result ? VERDICTS[result.verdict] : null;
-
-  return (
-    <Band id="ghost-check" inner="px-4 sm:px-10 py-14 sm:py-20">
-      <SectionLabel n="03">Ghost check</SectionLabel>
-      <h2 className="text-3xl sm:text-5xl font-semibold tracking-[-0.035em] max-w-3xl mb-3">Is this job still real?</h2>
-      <p className="text-lg text-neutral-600 dark:text-neutral-400 max-w-2xl mb-8">
-        Paste any job link. We'll tell you whether it's still on the company's own board.
-      </p>
-      <form onSubmit={check} className={`flex flex-col sm:flex-row border ${RULE}`}>
-        <label className="sr-only" htmlFor="ghost-url">Job link</label>
-        <input
-          id="ghost-url"
-          type="url"
-          inputMode="url"
-          value={url}
-          onChange={(e) => { setUrl(e.target.value); if (state !== "checking") setState("idle"); }}
-          placeholder="https://boards.greenhouse.io/company/jobs/123456"
-          className={`flex-1 min-w-0 h-12 px-4 bg-transparent font-geist-mono text-[13px] outline-none placeholder:text-neutral-400 border-b sm:border-b-0 sm:border-r ${RULE}`}
-        />
-        <button
-          type="submit"
-          disabled={state === "checking" || !url.trim()}
-          className="h-12 px-6 font-geist-mono text-[11px] uppercase tracking-[0.14em] bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-emerald-600 dark:hover:bg-emerald-400 disabled:opacity-50 transition-colors"
-        >
-          {state === "checking" ? "Checking…" : "Check it"}
-        </button>
-      </form>
-
-      {state === "error" && <p className="mt-4 text-sm text-red-600 dark:text-red-400" role="alert">{error}</p>}
-      {state === "done" && result && v && (
-        <div className={`mt-4 border ${RULE} p-5`} role="status">
-          <span className={`inline-flex items-center gap-1.5 border px-2 py-0.5 font-geist-mono text-[11px] uppercase tracking-[0.14em] ${VERDICT_TONES[v.tone]}`}>
-            {v.tone === "live" ? "● " : ""}{v.label}
-          </span>
-          {result.job && (
-            <div className="mt-3">
-              <div className="font-semibold">{result.job.title}</div>
-              <div className="text-sm text-neutral-500">{result.job.company}{result.job.location ? ` · ${shortLocation(result.job.location, null)}` : ""}</div>
-            </div>
-          )}
-          <p className="mt-3 text-neutral-700 dark:text-neutral-300">{v.text(result)}</p>
-          {result.verdict === "live" && result.job?.postingUrl && (
-            <a href={result.job.postingUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 mt-3 font-geist-mono text-[11px] uppercase tracking-[0.14em] text-emerald-600 dark:text-emerald-400 hover:underline">
-              Open the company's posting <ArrowUpRight className="w-3.5 h-3.5" />
-            </a>
-          )}
-        </div>
-      )}
-      <p className="mt-3 font-geist-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500">
-        We never open the link — we just look it up in our index of company boards.
-      </p>
     </Band>
   );
 }
