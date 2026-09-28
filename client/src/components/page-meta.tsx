@@ -19,9 +19,14 @@ const SITE = 'Recrutas';
 
 const ROUTES: Record<string, RouteMeta> = {
   '/': {
-    title: `${SITE} — AI-Driven Hiring Platform`,
+    title: `${SITE} — Real jobs. Made to fit you.`,
     description:
-      'AI-powered instant job matching that connects qualified candidates with full-time roles in real-time. Get matched, chat, and get hired — in minutes, not weeks.',
+      'Upload your résumé once. Get live US roles from company career pages, ranked by how well you fit — and why. Free for candidates.',
+  },
+  '/manifesto': {
+    title: `Manifesto — ${SITE}`,
+    description:
+      'No one should have to beg for the right to earn a living. Real jobs, pulled straight from the source, made to fit you. No ghosts. No leftovers. No silence.',
   },
   '/pricing': {
     title: `Pricing — ${SITE}`,

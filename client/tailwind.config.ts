@@ -5,6 +5,11 @@ export default {
   content: ["./index.html", "./src/**/*.{js,jsx,ts,tsx}"],
   theme: {
     extend: {
+      fontFamily: {
+        // Self-hosted (@fontsource-variable) — the CSP only allows font-src 'self'.
+        geist: ['"Geist Variable"', "system-ui", "sans-serif"],
+        "geist-mono": ['"Geist Mono Variable"', "ui-monospace", "monospace"],
+      },
       borderRadius: {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",

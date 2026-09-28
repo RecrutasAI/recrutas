@@ -58,7 +58,7 @@ import {
   inviteCodeRedemptions,
   dailyUsageLimits,
 } from "../shared/schema.js";
-import { isRecentlyVerifiedLive } from "../shared/liveness.js";
+import { isRecentlyVerifiedLive, LIVE_BADGE_MAX_AGE_HOURS } from "../shared/liveness.js";
 import { db } from "./db";
 import { eq, desc, asc, and, or } from "drizzle-orm";
 import { getTableColumns } from "drizzle-orm/utils";
@@ -325,6 +325,75 @@ const AGGREGATOR_SOURCES = new Set(['Adzuna', 'JSearch', 'Jooble', 'Indeed', 'Ar
 // client") flags Accenture Federal Services at 100% — a real employer whose
 // consultants genuinely work with clients — and would wrongly bury it. Add a
 // company here only after confirming the postings are someone else's roles.
+// Landing-page ticker: recognisable employers and the tech roles the launch
+// is aimed at. Lowercased to match lower(company).
+// Keys are lower(company); values are how the company writes its own name
+// (company is often stored lowercased by ingestion).
+const JUST_CHECKED_DISPLAY_NAMES: Record<string, string> = {
+  'anthropic': 'Anthropic', 'openai': 'OpenAI', 'stripe': 'Stripe', 'databricks': 'Databricks',
+  'datadog': 'Datadog', 'anduril industries': 'Anduril Industries', 'waymo': 'Waymo',
+  'figma': 'Figma', 'ramp': 'Ramp', 'notion': 'Notion', 'coinbase': 'Coinbase',
+  'airbnb': 'Airbnb', 'robinhood': 'Robinhood', 'brex': 'Brex', 'plaid': 'Plaid',
+  'doordash usa': 'DoorDash', 'doordash': 'DoorDash',
+};
+const JUST_CHECKED_COMPANIES = Object.keys(JUST_CHECKED_DISPLAY_NAMES);
+const JUST_CHECKED_TITLE_REGEX =
+  '\\m(engineer|developer|scientist|machine learning|data|designer|product manager|sre|devops|security)\\M';
+
+// db.execute returns a driver result ({ rows }) or the rows array itself,
+// depending on the driver.
+function resultRows<T>(result: unknown): T[] {
+  return (result as { rows?: T[] }).rows ?? (result as T[]);
+}
+
+interface CheckedJobRow {
+  title: string; company: string; location: string | null; work_type: string | null;
+  external_url: string | null; last_liveness_check: Date | string | null;
+}
+
+// Ingestion often stores company lowercased ("roku", "anduril industries").
+// Known names get their real spelling; other all-lowercase names are
+// title-cased; anything with capitals is left as the company wrote it.
+// A job title often spells the name properly ("Front-End Engineer, IXL
+// Product" for "ixl learning"), so words found there take its casing.
+function displayCompanyName(company: string, titleHint = ''): string {
+  const known = JUST_CHECKED_DISPLAY_NAMES[String(company).toLowerCase()];
+  if (known) {return known;}
+  if (company !== company.toLowerCase()) {return company;}
+  const hintWords = new Map(
+    (titleHint.match(/\p{L}[\p{L}\d]*/gu) ?? []).map(w => [w.toLowerCase(), w] as [string, string]),
+  );
+  return company.replace(/\p{L}[\p{L}\d]*/gu, w => {
+    const fromTitle = hintWords.get(w);
+    return fromTitle && fromTitle !== w ? fromTitle : w.charAt(0).toUpperCase() + w.slice(1);
+  });
+}
+
+export interface LiveRoleSearch {
+  total: number;
+  thisWeek: number;
+  recentlyChecked: number;
+  checkWindowHours: number;
+  topCompanies: { company: string; count: number }[];
+  postings: {
+    title: string; company: string; location: string | null; workType: string | null;
+    externalUrl: string | null; lastLivenessCheck: Date | string | null;
+  }[];
+}
+
+export interface JobUrlCheck {
+  verdict: 'live' | 'unverified' | 'taken-down' | 'closed' | 'repost' | 'job-board' | 'not-indexed' | 'invalid';
+  host?: string;
+  job?: { title: string; company: string; location: string | null; lastSeen: Date | null; postingUrl: string | null };
+}
+
+// Aggregators and boards that list jobs rather than host them.
+const JOB_BOARD_HOSTS = [
+  'linkedin.com', 'indeed.com', 'glassdoor.com', 'ziprecruiter.com', 'monster.com', 'simplyhired.com',
+  'dice.com', 'careerbuilder.com', 'wellfound.com', 'builtin.com', 'jooble.org', 'adzuna.com',
+  'talent.com', 'jobgether.com', 'google.com', 'hiring.cafe', 'hiringcafe.com', 'otta.com',
+];
+
 const REPOSTER_COMPANIES = new Set([
   'jobgether',              // remote-work marketplace relisting other companies' roles
   'nexthire',               // recruiting agency
@@ -802,6 +871,179 @@ export class DatabaseStorage implements IStorage {
       console.error('Error fetching job posting:', error);
       throw error;
     }
+  }
+
+  /**
+   * A handful of real, recently re-checked US tech roles for the public
+   * landing page ticker — one per well-known employer. Uses the same
+   * eligibility rules as the feed (direct ATS board, no reposters, real job
+   * post URL, explicitly US location, inside the live-badge window).
+   */
+  async getJustCheckedJobs(limit = 6): Promise<Array<{
+    title: string; company: string; location: string | null; workType: string | null;
+    externalUrl: string | null; lastLivenessCheck: Date | string | null;
+  }>> {
+    const rows = await db.execute(sql`
+      SELECT * FROM (
+        SELECT DISTINCT ON (lower(${jobPostings.company}))
+          ${jobPostings.title} AS title,
+          ${jobPostings.company} AS company,
+          ${jobPostings.location} AS location,
+          ${jobPostings.workType} AS work_type,
+          ${jobPostings.externalUrl} AS external_url,
+          ${jobPostings.lastLivenessCheck} AS last_liveness_check
+        FROM ${jobPostings}
+        WHERE ${jobPostings.status} = 'active'
+          AND ${jobPostings.livenessStatus} = 'active'
+          AND ${jobPostings.trustScore} >= 90
+          AND ${jobPostings.source} LIKE 'ATS:%'
+          AND ${jobPostings.lastLivenessCheck} > now() - make_interval(hours => ${LIVE_BADGE_MAX_AGE_HOURS})
+          AND lower(${jobPostings.company}) IN (${sql.join(JUST_CHECKED_COMPANIES.map(c => sql`${c}`), sql`, `)})
+          AND ${jobPostings.title} ~* ${JUST_CHECKED_TITLE_REGEX}
+          AND ${reposterExclusion}
+          AND ${jobPostUrlRequirement}
+          AND ${usPriorityOrder} = 0
+        ORDER BY lower(${jobPostings.company}), ${jobPostings.lastLivenessCheck} DESC
+      ) per_company
+      ORDER BY last_liveness_check DESC
+      LIMIT ${limit}
+    `);
+    return resultRows<CheckedJobRow>(rows).map(r => ({
+      title: String(r.title).trim(),
+      company: displayCompanyName(r.company, String(r.title)),
+      location: r.location,
+      workType: r.work_type,
+      externalUrl: r.external_url,
+      lastLivenessCheck: r.last_liveness_check,
+    }));
+  }
+
+
+  /**
+   * Landing page "what's live for you" search: counts and a few real postings
+   * for a role (and optional city / remote) with no résumé and no account.
+   * Same eligibility as the feed. The title filter runs first on the trigram
+   * index; the expensive US-location check only sees the rows it keeps.
+   */
+  async searchLiveRoles(opts: { words: string[]; location?: string; remoteOnly?: boolean }): Promise<LiveRoleSearch> {
+    const likeEsc = (v: string) => v.replace(/[\\%_]/g, c => `\\${c}`);
+    const titleConds = opts.words.map(w => w.length >= 3
+      ? sql`title ILIKE ${'%' + likeEsc(w) + '%'}`
+      // Short words ("ml", "qa", "ui") would match inside other words.
+      : sql`title ~* ${'\\m' + w.replace(/[^a-z0-9]/gi, '') + '\\M'}`);
+    const conds = [sql`status = 'active'`, ...titleConds];
+    if (opts.location) {conds.push(sql`location ILIKE ${'%' + likeEsc(opts.location) + '%'}`);}
+    if (opts.remoteOnly) {conds.push(sql`work_type = 'remote'`);}
+
+    const rows = await db.execute(sql`
+      WITH m AS MATERIALIZED (
+        SELECT title, company, location, work_type, external_url, source, trust_score,
+               liveness_status, last_liveness_check, created_at
+        FROM job_postings
+        WHERE ${sql.join(conds, sql` AND `)}
+      ),
+      e AS MATERIALIZED (
+        SELECT *, ${usPriorityOrder} AS us_rank FROM m AS job_postings
+        WHERE ${reposterExclusion} AND ${jobPostUrlRequirement} AND ${usPriorityOrder} <> 2
+      )
+      SELECT
+        (SELECT count(*)::int FROM e) AS total,
+        (SELECT count(*)::int FROM e WHERE created_at > now() - interval '7 days') AS this_week,
+        (SELECT count(*)::int FROM e WHERE last_liveness_check > now() - make_interval(hours => ${LIVE_BADGE_MAX_AGE_HOURS})) AS recently_checked,
+        (SELECT coalesce(json_agg(t), '[]') FROM (
+          SELECT min(company) AS company, count(*)::int AS n FROM e
+          GROUP BY lower(company) ORDER BY count(*) DESC, lower(company) LIMIT 5
+        ) t) AS top_companies,
+        (SELECT coalesce(json_agg(t), '[]') FROM (
+          SELECT title, company, location, work_type, external_url, last_liveness_check FROM e
+          -- Counts match the feed (unknown locations included); the postings
+          -- we show must be explicitly US.
+          WHERE us_rank = 0 AND liveness_status = 'active' AND trust_score >= 90 AND source LIKE 'ATS:%'
+            AND last_liveness_check > now() - make_interval(hours => ${LIVE_BADGE_MAX_AGE_HOURS})
+          ORDER BY created_at DESC LIMIT 6
+        ) t) AS postings
+    `);
+    const r = resultRows<{
+      total: number; this_week: number; recently_checked: number;
+      top_companies: { company: string; n: number }[] | null;
+      postings: CheckedJobRow[] | null;
+    }>(rows)[0];
+    return {
+      total: r?.total ?? 0,
+      thisWeek: r?.this_week ?? 0,
+      recentlyChecked: r?.recently_checked ?? 0,
+      checkWindowHours: LIVE_BADGE_MAX_AGE_HOURS,
+      topCompanies: (r?.top_companies ?? []).map(c => ({ company: displayCompanyName(c.company), count: c.n })),
+      postings: (r?.postings ?? []).map(j => ({
+        title: String(j.title).trim(),
+        company: displayCompanyName(j.company, String(j.title)),
+        location: j.location,
+        workType: j.work_type,
+        externalUrl: j.external_url,
+        lastLivenessCheck: j.last_liveness_check,
+      })),
+    };
+  }
+
+  /**
+   * "Is this job still real?" — look a pasted posting URL up in our index.
+   * Database lookup only: the URL is never fetched.
+   */
+  async checkJobUrl(raw: string): Promise<JobUrlCheck> {
+    let url: URL;
+    try { url = new URL(raw.trim()); } catch { return { verdict: 'invalid' }; }
+    if (!/^https?:$/.test(url.protocol)) {return { verdict: 'invalid' };}
+    const host = url.hostname.toLowerCase().replace(/^www\./, '');
+
+    // Exact spellings first (indexed): as pasted, without tracking params or
+    // fragment, and with / without a trailing slash.
+    const cleaned = new URL(url.toString());
+    cleaned.hash = '';
+    for (const k of [...cleaned.searchParams.keys()]) {
+      if (/^(utm_|ref|source|src|lever-|gh_src|trk)/i.test(k)) {cleaned.searchParams.delete(k);}
+    }
+    const variants = new Set<string>();
+    for (const u of [raw.trim(), url.toString(), cleaned.toString()]) {
+      variants.add(u);
+      variants.add(u.endsWith('/') ? u.slice(0, -1) : `${u}/`);
+    }
+    const cols = {
+      title: jobPostings.title, company: jobPostings.company, location: jobPostings.location,
+      status: jobPostings.status, livenessStatus: jobPostings.livenessStatus,
+      lastLivenessCheck: jobPostings.lastLivenessCheck, source: jobPostings.source,
+      externalUrl: jobPostings.externalUrl,
+    };
+    let [row] = await db.select(cols).from(jobPostings)
+      .where(inArray(jobPostings.externalUrl, [...variants])).limit(1);
+
+    // Fallback: the same posting under another URL shape, matched on its
+    // job id (a long number or a UUID). Unindexed, so only on a miss.
+    if (!row) {
+      const id = (url.pathname + url.search).match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0]
+        ?? (url.pathname + url.search).match(/\d{6,}/g)?.sort((a, b) => b.length - a.length)[0];
+      if (id) {
+        [row] = await db.select(cols).from(jobPostings)
+          .where(sql`${jobPostings.externalUrl} LIKE ${'%' + id + '%'}`)
+          .orderBy(desc(jobPostings.lastLivenessCheck)).limit(1);
+      }
+    }
+
+    if (!row) {
+      return { verdict: JOB_BOARD_HOSTS.some(h => host === h || host.endsWith(`.${h}`)) ? 'job-board' : 'not-indexed', host };
+    }
+    const job = {
+      title: String(row.title).trim(),
+      company: displayCompanyName(row.company, String(row.title)),
+      location: row.location,
+      lastSeen: row.lastLivenessCheck,
+      postingUrl: row.externalUrl,
+    };
+    if (REPOSTER_COMPANIES.has(String(row.company).toLowerCase())) {return { verdict: 'repost', job };}
+    if (row.status === 'active') {
+      const hours = row.lastLivenessCheck ? (Date.now() - new Date(row.lastLivenessCheck).getTime()) / 3_600_000 : Infinity;
+      return { verdict: hours <= LIVE_BADGE_MAX_AGE_HOURS && row.livenessStatus === 'active' ? 'live' : 'unverified', job };
+    }
+    return { verdict: row.livenessStatus === 'removed' ? 'taken-down' : 'closed', job };
   }
 
   async getExternalJobs(skills: string[] = [], filters: { jobTitle?: string; location?: string; workType?: string } = {}): Promise<JobPosting[]> {

@@ -41,6 +41,7 @@ import { CompanyJob } from '../server/company-jobs-aggregator';
 import { externalJobsScheduler } from './services/external-jobs-scheduler';
 import { jobIngestionService } from './services/job-ingestion.service';
 import { getModelInfo } from './ml-matching';
+import { LIVE_BADGE_MAX_AGE_HOURS } from "../shared/liveness.js";
 import { sendWelcomeEmail, sendEmail } from './email-service';
 import { sendEmail as sendTransactionalEmail, employerWelcomeEmail, employerNewApplicantEmail } from './lib/email';
 import { track as serverTrack } from './lib/analytics';
@@ -290,6 +291,8 @@ Requirements: ${(requirements || []).join('; ') || 'Not specified'}`;
 
 import { registerMetricsRoutes } from './routes/metrics-api.js';
 import { isResumeFileField } from './extension-fill-helpers.js';
+
+interface LiveStatsRow { active_jobs: number; companies: number; recently_checked: number }
 
 export async function registerRoutes(app: Express): Promise<Express> {
   console.log('registerRoutes called!');
@@ -747,6 +750,108 @@ export async function registerRoutes(app: Express): Promise<Express> {
     } catch (error) {
       console.error('Error fetching platform stats:', error);
       res.status(503).json({ message: 'Stats temporarily unavailable' });
+    }
+  }));
+
+  // Public supply numbers for the landing page. Only job counts — never user
+  // counts. ~0.4s over the active set, so it is cached at the edge for an hour.
+  app.get('/api/platform/live-stats', asyncHandler(async (req, res) => {
+    if (!db) return res.status(503).json({ message: 'Database not available' });
+    try {
+      const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Live stats query timeout')), 15000)
+      );
+      const rows = await Promise.race([
+        db.execute(sql`
+          SELECT count(*)::int AS active_jobs,
+                 count(DISTINCT lower(company))::int AS companies,
+                 count(*) FILTER (
+                   WHERE last_liveness_check > now() - make_interval(hours => ${LIVE_BADGE_MAX_AGE_HOURS})
+                 )::int AS recently_checked
+          FROM job_postings
+          WHERE status = 'active'
+        `),
+        timeout,
+      ]);
+      const result = rows as { rows?: LiveStatsRow[] } | LiveStatsRow[];
+      const row: Partial<LiveStatsRow> = (Array.isArray(result) ? result : result.rows ?? [])[0] ?? {};
+      res.set('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=3600, stale-if-error=86400');
+      res.json({
+        activeJobs: row.active_jobs ?? 0,
+        companies: row.companies ?? 0,
+        recentlyChecked: row.recently_checked ?? 0,
+        checkWindowHours: LIVE_BADGE_MAX_AGE_HOURS,
+      });
+    } catch (error) {
+      console.error('Error fetching live stats:', error);
+      res.status(503).json({ message: 'Stats temporarily unavailable' });
+    }
+  }));
+
+  // Landing page "what's live for you": counts + a few postings for a typed
+  // role, no résumé needed. Returns at most 6 postings per query, so it can't
+  // page through the index; rate-limited on top of the edge cache.
+  app.get('/api/platform/live-search', rateLimit({ windowMs: 60 * 1000, max: 30 }), asyncHandler(async (req, res) => {
+    const clean = (v: unknown, max: number) =>
+      typeof v === 'string' ? v.toLowerCase().replace(/[^a-z0-9 +#./&'-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) : '';
+    const q = clean(req.query.q, 60);
+    const location = clean(req.query.location, 40);
+    const words = q.split(' ').filter(w => w.length >= 2).slice(0, 5);
+    if (words.length === 0) {
+      return res.status(400).json({ message: 'Type a role, e.g. "backend engineer".' });
+    }
+    if (!db) return res.status(503).json({ message: 'Search temporarily unavailable' });
+    try {
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Live search timeout')), 15000)
+      );
+      const result = await Promise.race([
+        storage.searchLiveRoles({ words, location: location.length >= 2 ? location : undefined, remoteOnly: req.query.remote === '1' }),
+        timeout,
+      ]);
+      res.set('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=3600');
+      res.json(result);
+    } catch (error) {
+      console.error('Error in live search:', error);
+      res.status(503).json({ message: 'Search temporarily unavailable' });
+    }
+  }));
+
+  // "Is this job still real?" — database lookup of a pasted posting URL.
+  // The URL is never fetched.
+  app.get('/api/platform/check-job', rateLimit({ windowMs: 60 * 1000, max: 20 }), asyncHandler(async (req, res) => {
+    const url = typeof req.query.url === 'string' ? req.query.url.trim() : '';
+    if (!url || url.length > 2000) {
+      return res.status(400).json({ verdict: 'invalid' });
+    }
+    if (!db) return res.status(503).json({ message: 'Check temporarily unavailable' });
+    try {
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Job check timeout')), 15000)
+      );
+      const result = await Promise.race([storage.checkJobUrl(url), timeout]);
+      res.set('Cache-Control', 'public, max-age=120, s-maxage=900, stale-while-revalidate=900');
+      res.json(result);
+    } catch (error) {
+      console.error('Error checking job URL:', error);
+      res.status(503).json({ message: 'Check temporarily unavailable' });
+    }
+  }));
+
+  // Landing-page ticker: a few real roles recently re-checked on their
+  // company's board. ~0.7s, edge-cached for 15 minutes.
+  app.get('/api/platform/just-checked', asyncHandler(async (req, res) => {
+    if (!db) return res.status(503).json({ jobs: [] });
+    try {
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Just-checked query timeout')), 15000)
+      );
+      const jobs = await Promise.race([storage.getJustCheckedJobs(6), timeout]);
+      res.set('Cache-Control', 'public, max-age=120, s-maxage=900, stale-while-revalidate=900, stale-if-error=86400');
+      res.json({ jobs });
+    } catch (error) {
+      console.error('Error fetching just-checked jobs:', error);
+      res.status(503).json({ jobs: [] });
     }
   }));
 
@@ -3376,11 +3481,23 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     // US-only notice (source "non-us:<CC>"); promising them an invite would be
     // wrong — they're waiting for coverage, not for a spot.
     const nonUs = typeof source === 'string' && source.startsWith('non-us:');
+    // Employers join from the homepage interest list while employer access is
+    // closed (phase 1 is candidates only) — no invite code is coming for them.
+    const employer = source === 'employer';
     await sendEmail({
       to: normalizedEmail,
       from: 'noreply@recrutas.ai',
-      subject: nonUs ? "We'll let you know when Recrutas expands" : "You're on the Recrutas early access list!",
-      html: nonUs
+      subject: employer
+        ? "You're on the Recrutas employer interest list"
+        : nonUs ? "We'll let you know when Recrutas expands" : "You're on the Recrutas early access list!",
+      html: employer
+        ? `
+        <p>Hi,</p>
+        <p>Thanks for your interest in hiring through <strong>Recrutas</strong>. Employer access isn't open yet — we're starting with candidates.</p>
+        <p>We'll email you when it opens. No other emails in the meantime.</p>
+        <p>— The Recrutas Team</p>
+      `
+        : nonUs
         ? `
         <p>Hi,</p>
         <p>Thanks for your interest in <strong>Recrutas</strong>. Right now every job we list comes from a US employer, so we can't match you with roles where you are yet.</p>
@@ -3399,7 +3516,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     await sendEmail({
       to: 'hello@recrutas.ai',
       from: 'noreply@recrutas.ai',
-      subject: `[Waitlist] New signup: ${normalizedEmail}`,
+      subject: employer ? `[Employer interest] ${normalizedEmail}` : `[Waitlist] New signup: ${normalizedEmail}`,
       html: `<p><strong>${firstName || ''} ${lastName || ''}</strong> (${normalizedEmail}) joined the waitlist.</p><p>Source: ${source || 'early-access-page'}</p>`,
     }).catch((err: Error) => console.error('[Waitlist] Failed to send admin notification:', err));
 

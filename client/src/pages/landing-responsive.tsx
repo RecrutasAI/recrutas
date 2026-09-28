@@ -1,96 +1,44 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { Button } from "@/components/ui/button";
-import {
-  Zap, Shield, CheckCircle2, ArrowRight,
-  Sparkles, Menu, X, MessageSquare,
-  Clock, Upload, Trophy, BarChart3, Users,
-  Target, Search,
-} from "lucide-react";
-import SmartLogo from "@/components/smart-logo";
-import { ThemeToggleButton } from "@/components/theme-toggle-button";
+import { useQuery } from "@tanstack/react-query";
 import { useSession } from "@supabase/auth-helpers-react";
+import { ArrowRight, ArrowUpRight, Upload } from "lucide-react";
+import {
+  SiteShell, Band, SectionLabel, Tag, PrimaryButton, useSiteNav,
+} from "@/components/site/site-shell";
 
-// -- Product mockup: shows real product flow, not a stock mockup ----------------
+const RULE = "border-neutral-200 dark:border-neutral-800";
 
-function ProductMockup() {
-  return (
-    <div className="relative w-full max-w-lg mx-auto lg:mx-0">
-      {/* Browser chrome */}
-      <div className="rounded-2xl border border-gray-200 dark:border-gray-700 shadow-2xl overflow-hidden bg-white dark:bg-gray-900">
-        {/* Top bar */}
-        <div className="bg-gray-100 dark:bg-gray-800 px-4 py-3 flex items-center gap-3 border-b border-gray-200 dark:border-gray-700">
-          <div className="flex gap-1.5 shrink-0">
-            <div className="w-3 h-3 rounded-full bg-red-400" />
-            <div className="w-3 h-3 rounded-full bg-yellow-400" />
-            <div className="w-3 h-3 rounded-full bg-green-400" />
-          </div>
-          <div className="flex-1 bg-white dark:bg-gray-700 rounded-md px-3 py-1 text-xs text-gray-400 text-center truncate">
-            recrutas.ai/dashboard
-          </div>
-        </div>
-
-        {/* Dashboard content */}
-        <div className="p-5 space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-gray-900 dark:text-white">Your Matches</p>
-            <span className="text-xs text-gray-400">Today</span>
-          </div>
-
-          {/* Job cards */}
-          {[
-            { company: "Series B Startup", role: "Senior Frontend Engineer", score: 94, status: "94% match" },
-            { company: "Cloud Platform Co", role: "Full Stack Engineer", score: 91, status: "91% match" },
-            { company: "Dev Tools Inc", role: "Software Engineer", score: 87, status: "87% match" },
-          ].map((job, i) => (
-            <div
-              key={i}
-              className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50"
-            >
-              <div className="w-9 h-9 rounded-lg bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 flex items-center justify-center text-xs font-bold text-gray-700 dark:text-gray-300 shrink-0 shadow-sm">
-                {job.company[0]}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold text-gray-900 dark:text-white truncate">{job.role}</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400">{job.company}</p>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
-                  {job.score}%
-                </span>
-                <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
-                  {job.status}
-                </span>
-              </div>
-            </div>
-          ))}
-
-          {/* Match activity */}
-          <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 pt-1 border-t border-gray-100 dark:border-gray-800">
-            <Sparkles className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-            3 new matches found based on your resume skills
-          </div>
-        </div>
-      </div>
-
-      {/* Floating notification */}
-      <div className="absolute -bottom-5 -right-4 sm:-right-8 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 px-3 py-2.5 flex items-center gap-2.5 max-w-[240px]">
-        <div className="w-7 h-7 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center shrink-0">
-          <Target className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-        </div>
-        <div>
-          <p className="text-xs font-semibold text-gray-900 dark:text-white leading-tight">12 new matches</p>
-          <p className="text-xs text-gray-500 dark:text-gray-400 leading-tight">Based on your React + Node skills</p>
-        </div>
-      </div>
-    </div>
-  );
+interface LiveStats {
+  activeJobs: number;
+  companies: number;
+  recentlyChecked: number;
+  checkWindowHours: number;
 }
 
-// -- Main page ----------------------------------------------------------------
+interface CheckedJob {
+  title: string;
+  company: string;
+  location: string | null;
+  workType: string | null;
+  externalUrl: string | null;
+  lastLivenessCheck: string | null;
+}
+
+function useLiveStats() {
+  return useQuery<LiveStats>({
+    queryKey: ['/api/platform/live-stats'],
+    queryFn: async () => {
+      const res = await fetch('/api/platform/live-stats');
+      if (!res.ok) throw new Error('live stats unavailable');
+      return res.json();
+    },
+    staleTime: 60 * 60 * 1000,
+    retry: false,
+  });
+}
 
 export default function LandingResponsive() {
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const session = useSession();
   const [, setLocation] = useLocation();
 
@@ -111,471 +59,586 @@ export default function LandingResponsive() {
   }
 
   return (
-    <div className="min-h-screen bg-white dark:bg-black overflow-x-hidden">
+    <SiteShell active="home">
+      <Hero onStart={goToApp} />
+      <LiveSearch onStart={goToApp} />
+      <HowItWorks />
+      <WhyRecrutas />
+      <GhostCheck />
+      <EmployerInterest />
+      <ManifestoBand />
+      <FinalCta onStart={goToApp} />
+    </SiteShell>
+  );
+}
 
-      {/* -- Mobile menu overlay -- */}
-      {mobileMenuOpen && (
-        <div className="fixed inset-0 bg-black/95 z-50 lg:hidden flex flex-col">
-          <div className="flex justify-between items-center p-5 border-b border-gray-800">
-            <span className="text-white font-bold text-lg">Recrutas</span>
-            <button onClick={() => setMobileMenuOpen(false)} className="text-gray-400 hover:text-white">
-              <X className="w-6 h-6" />
-            </button>
-          </div>
-          <nav className="flex flex-col gap-2 p-6 flex-1">
-            <div className="flex items-center justify-between py-3 border-b border-gray-800">
-              <span className="text-gray-300 text-lg font-medium">Theme</span>
-              <ThemeToggleButton />
-            </div>
-            <button onClick={() => { setMobileMenuOpen(false); setLocation('/auth'); }}
-              className="text-left text-gray-300 hover:text-white py-3 text-lg font-medium border-b border-gray-800">
-              Sign In
-            </button>
-            <Button
-              size="lg"
-              className="mt-6 w-full bg-black dark:bg-white text-white dark:text-black rounded-xl text-base"
-              onClick={() => { setMobileMenuOpen(false); goToApp(); }}
-            >
-              Upload Resume <ArrowRight className="w-4 h-4 ml-2" />
-            </Button>
-          </nav>
+// -- Hero -----------------------------------------------------------------------
+
+function Hero({ onStart }: { onStart: () => void }) {
+  const { data: stats } = useLiveStats();
+  const go = useSiteNav();
+  const checkedPct = stats && stats.activeJobs > 0
+    ? Math.round((stats.recentlyChecked / stats.activeJobs) * 100)
+    : 0;
+
+  return (
+    <section className="relative overflow-hidden">
+      {/* Faint square grid, fading out from the top — the page's ledger paper. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 text-neutral-900/[0.05] dark:text-white/[0.06]"
+        style={{
+          backgroundImage:
+            "linear-gradient(currentColor 1px, transparent 1px), linear-gradient(90deg, currentColor 1px, transparent 1px)",
+          backgroundSize: "48px 48px",
+          maskImage: "radial-gradient(ellipse 80% 70% at 30% 0%, black 20%, transparent 75%)",
+          WebkitMaskImage: "radial-gradient(ellipse 80% 70% at 30% 0%, black 20%, transparent 75%)",
+        }}
+      />
+      <div aria-hidden className="pointer-events-none absolute -top-48 left-1/4 w-[700px] h-[420px] rounded-full bg-emerald-500/10 dark:bg-emerald-500/[0.08] blur-3xl" />
+      <div className={`relative mx-auto max-w-6xl lg:border-x ${RULE} px-4 sm:px-10 pt-16 pb-14 sm:pt-24 sm:pb-20`}>
+        <button
+          onClick={() => go("/#live")}
+          className={`inline-flex items-center gap-2 mb-8 border ${RULE} bg-white/70 dark:bg-black/70 px-3 py-1.5 font-geist-mono text-[11px] uppercase tracking-[0.14em]`}
+        >
+          <span className="relative flex w-2 h-2">
+            <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-60 animate-ping" />
+            <span className="relative inline-flex w-2 h-2 rounded-full bg-emerald-500" />
+          </span>
+          Now open for US job seekers
+          <ArrowRight className="w-3.5 h-3.5 text-neutral-400" />
+        </button>
+        <h1 className="text-[2.6rem] leading-[1.05] sm:text-6xl lg:text-7xl font-semibold tracking-[-0.04em] max-w-4xl">
+          Real jobs.{" "}
+          <span className="whitespace-nowrap text-emerald-600 dark:text-emerald-400">Made to fit you.</span>
+        </h1>
+        <p className="mt-6 text-lg sm:text-xl leading-relaxed text-neutral-600 dark:text-neutral-400 max-w-2xl">
+          Upload your résumé once. Get live US roles, ranked by how well you fit — and why.
+        </p>
+        <div className="mt-9 flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
+          <PrimaryButton onClick={onStart}>
+            <Upload className="w-4 h-4" /> Upload résumé — it's free
+          </PrimaryButton>
+          <span className="font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500">Free for candidates · US roles only</span>
+        </div>
+      </div>
+      {stats && stats.activeJobs > 0 && (
+        <div className={`relative border-t ${RULE}`}>
+          <dl className={`mx-auto max-w-6xl lg:border-x ${RULE} grid grid-cols-3 divide-x divide-neutral-200 dark:divide-neutral-800`}>
+            {[
+              [stats.activeJobs.toLocaleString(), "live roles"],
+              [stats.companies.toLocaleString(), "companies"],
+              // Only quote the check rate when it is a number worth quoting.
+              checkedPct >= 50
+                ? [`${checkedPct}%`, `checked < ${stats.checkWindowHours}h`]
+                : ["4h", "between board re-reads"],
+            ].map(([value, label]) => (
+              <div key={label} className="px-4 sm:px-10 py-5">
+                <dt className="sr-only">{label}</dt>
+                <dd className="font-geist-mono text-xl sm:text-3xl tracking-tight">{value}</dd>
+                <dd className="font-geist-mono text-[10px] sm:text-[11px] uppercase tracking-[0.14em] text-neutral-500 mt-1">{label}</dd>
+              </div>
+            ))}
+          </dl>
         </div>
       )}
+    </section>
+  );
+}
 
-      {/* -- Navbar -- */}
-      <nav className="sticky top-0 z-40 bg-white/90 dark:bg-black/90 backdrop-blur border-b border-gray-200 dark:border-gray-800">
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-2.5">
-              <SmartLogo size={28} showText={false} />
-              <span className="font-bold text-lg text-black dark:text-white tracking-tight">Recrutas</span>
-            </div>
+// -- Signature: roles just re-checked on company boards ------------------------------
 
-            <div className="hidden lg:flex items-center gap-3">
-              <ThemeToggleButton />
-              <Button variant="ghost" size="sm"
-                className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white"
-                onClick={() => setLocation('/auth')}>
-                Sign In
-              </Button>
-              <Button size="sm"
-                className="bg-black dark:bg-white text-white dark:text-black hover:bg-gray-800 dark:hover:bg-gray-200 rounded-lg font-medium"
-                onClick={goToApp}>
-                Get Started Free
-              </Button>
-            </div>
+function timeAgo(iso: string | null): string {
+  if (!iso) return "";
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 60) return `${Math.max(1, mins)}m ago`;
+  return `${Math.round(mins / 60)}h ago`;
+}
 
-            <button className="lg:hidden text-black dark:text-white p-1"
-              onClick={() => setMobileMenuOpen(true)}>
-              <Menu className="w-6 h-6" />
-            </button>
-          </div>
-        </div>
-      </nav>
+// Long multi-city strings ("San Francisco, CA | New York City, NY | …") are
+// trimmed to the first place plus a count.
+function shortLocation(loc: string | null, workType: string | null): string {
+  if (!loc || !loc.trim()) return workType === "remote" ? "Remote" : "United States";
+  const parts = loc.split(/\s*[|;•]\s*/).filter(Boolean);
+  return parts.length > 1 ? `${parts[0].trim()} +${parts.length - 1}` : loc.trim();
+}
 
-      {/* -- Hero -- */}
-      <section className="relative pt-20 pb-16 md:pt-28 md:pb-24 lg:pt-36 lg:pb-32 overflow-hidden">
-        <div className="absolute inset-0 bg-grid-pattern opacity-40 dark:opacity-20 pointer-events-none" />
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-emerald-500/10 dark:bg-emerald-500/5 blur-3xl rounded-full pointer-events-none" />
+interface LiveRoleSearch {
+  total: number;
+  thisWeek: number;
+  recentlyChecked: number;
+  checkWindowHours: number;
+  topCompanies: { company: string; count: number }[];
+  postings: CheckedJob[];
+}
 
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8 relative">
-          <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
-            {/* Left: copy */}
-            <div>
-              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-black dark:text-white leading-[1.1] tracking-tight mb-6">
-                Every Candidate<br />
-                Deserves an<br />
-                <span className="text-emerald-500">Answer.</span>
-              </h1>
+const ROLE_SUGGESTIONS = ["backend engineer", "data scientist", "product manager", "frontend engineer", "data analyst", "designer"];
 
-              <p className="text-lg md:text-xl text-gray-500 dark:text-gray-400 leading-relaxed mb-8 max-w-lg">
-                AI matches you to real jobs based on your resume. The Recrutas browser extension applies for you. <strong className="text-black dark:text-white">No more silence.</strong>
-              </p>
-
-              <div className="flex flex-col sm:flex-row gap-3 mb-8">
-                <Button
-                  size="lg"
-                  className="bg-black dark:bg-white text-white dark:text-black hover:bg-gray-800 dark:hover:bg-gray-200 rounded-xl text-base font-semibold px-7 h-12"
-                  onClick={goToApp}
-                >
-                  <Upload className="w-4 h-4 mr-2" />
-                  Upload Resume — It's Free
-                </Button>
-              </div>
-
-              <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 text-sm text-gray-500 dark:text-gray-400">
-                <span className="flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" /> Free forever for candidates
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" /> No credit card required
-                </span>
-              </div>
-            </div>
-
-            {/* Right: product mockup */}
-            <div className="hidden md:block">
-              <ProductMockup />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* -- The problem -- */}
-      <section className="py-16 md:py-20 border-y border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8 max-w-3xl text-center">
-          <h2 className="text-2xl md:text-3xl font-bold text-black dark:text-white mb-4">
-            You already know the problem
-          </h2>
-          <p className="text-gray-500 dark:text-gray-400 text-lg leading-relaxed">
-            You apply to hundreds of jobs. You rewrite your resume for each one. You fill out
-            the same form over and over. You wait days, weeks, months — and hear nothing.
-            Not even a no. Just silence. Like you never existed.
-            <strong className="text-black dark:text-white"> We built Recrutas to change that.</strong>
-          </p>
-        </div>
-      </section>
-
-      {/* -- Two ways to get hired -- */}
-      <section className="py-20 md:py-28">
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-black dark:text-white mb-3">
-              Two ways to get hired
-            </h2>
-            <p className="text-gray-500 dark:text-gray-400 text-lg max-w-2xl mx-auto">
-              External jobs: AI finds the right roles for you. Internal jobs: prove yourself, skip the line.
-            </p>
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-8 max-w-5xl mx-auto">
-            {/* External jobs path */}
-            <div className="p-6 md:p-8 rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-100 dark:border-emerald-800 flex items-center justify-center">
-                  <Search className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-black dark:text-white">Smart Matching</h3>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">For external jobs</p>
-                </div>
-              </div>
-              <div className="space-y-4">
-                {[
-                  { step: "01", text: "Upload your resume &mdash; AI extracts skills, titles, experience" },
-                  { step: "02", text: "Get matched to thousands of live jobs from real company career pages" },
-                  { step: "03", text: "See match scores &mdash; know exactly why each job fits your background" },
-                  { step: "04", text: "Apply with the Recrutas browser extension &mdash; it fills the form for you" },
-                ].map(({ step, text }) => (
-                  <div key={step} className="flex items-start gap-3">
-                    <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800 shrink-0 mt-0.5">{step}</span>
-                    <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed" dangerouslySetInnerHTML={{ __html: text }} />
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Internal jobs path */}
-            <div className="p-6 md:p-8 rounded-2xl border-2 border-emerald-200 dark:border-emerald-800 bg-emerald-50/30 dark:bg-emerald-900/10">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-100 dark:border-emerald-800 flex items-center justify-center">
-                  <Trophy className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-black dark:text-white">Exam &amp; Chat</h3>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">For jobs posted on Recrutas</p>
-                </div>
-              </div>
-              <div className="space-y-4">
-                {[
-                  { step: "01", text: "Apply to a role posted directly on Recrutas" },
-                  { step: "02", text: "Take a quick screening exam &mdash; know your score the same day" },
-                  { step: "03", text: "Get ranked against other candidates &mdash; top scorers skip the line" },
-                  { step: "04", text: "Unlock direct chat with the hiring manager &mdash; no middlemen" },
-                ].map(({ step, text }) => (
-                  <div key={step} className="flex items-start gap-3">
-                    <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800 shrink-0 mt-0.5">{step}</span>
-                    <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed" dangerouslySetInnerHTML={{ __html: text }} />
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* No ghosting promise */}
-          <div className="mt-12 max-w-2xl mx-auto text-center">
-            <div className="inline-flex items-center gap-2 px-5 py-3 rounded-full bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800">
-              <Shield className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-              <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">For jobs posted on Recrutas, every application gets a real response within 24 hours.</span>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* -- What makes this different -- */}
-      <section className="py-20 md:py-28 border-t border-gray-100 dark:border-gray-800">
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-black dark:text-white mb-3">
-              Not another job board
-            </h2>
-            <p className="text-gray-500 dark:text-gray-400 text-lg max-w-xl mx-auto">
-              We don't just list jobs. We match you to the right ones &mdash; and when companies hire through us, you get a real process with real answers.
-            </p>
-          </div>
-
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl mx-auto">
-            {[
-              {
-                icon: Sparkles,
-                title: "Matched by what you've actually done",
-                body: "We compare your job titles, skills, and experience to every listing &mdash; not just keywords. A Senior Frontend Engineer sees Senior Frontend roles, not random PM jobs.",
-              },
-              {
-                icon: Target,
-                title: "Thousands of jobs, personalized for you",
-                body: "Jobs from real company career pages, updated daily. Your feed shows only roles that match your background &mdash; no scrolling through irrelevant listings.",
-              },
-              {
-                icon: Shield,
-                title: "No ghost jobs, no ghosting",
-                body: "Every listing is verified live. We auto-hide stale postings. For internal jobs, every candidate gets a real response &mdash; even if it's a no.",
-              },
-              {
-                icon: Trophy,
-                title: "Prove yourself with exams",
-                body: "For jobs posted on Recrutas, take a quick screening exam. Your score ranks you against other candidates &mdash; top scorers skip the line.",
-              },
-              {
-                icon: MessageSquare,
-                title: "Chat directly with hiring managers",
-                body: "Pass the exam and unlock direct messaging with the hiring team. No recruiters in the middle, no phone tag, no weeks of silence.",
-              },
-              {
-                icon: Zap,
-                title: "One resume, every job",
-                body: "Upload once. Your profile is always ready. Apply to any job in your feed with one click &mdash; no re-entering the same info over and over.",
-              },
-            ].map(({ icon: Icon, title, body }) => (
-              <div
-                key={title}
-                className="p-6 rounded-2xl border border-gray-200 dark:border-gray-800 hover:border-emerald-200 dark:hover:border-emerald-800 transition-colors bg-white dark:bg-gray-900 group"
-              >
-                <div className="w-10 h-10 rounded-xl bg-gray-100 dark:bg-gray-800 group-hover:bg-emerald-50 dark:group-hover:bg-emerald-900/30 flex items-center justify-center mb-4 transition-colors">
-                  <Icon className="w-5 h-5 text-gray-600 dark:text-gray-400 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors" />
-                </div>
-                <h3 className="font-bold text-black dark:text-white mb-2">{title}</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed" dangerouslySetInnerHTML={{ __html: body }} />
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* -- Before / After -- */}
-      <section className="py-20 md:py-28 bg-gray-50 dark:bg-gray-900/50 border-y border-gray-200 dark:border-gray-800">
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-14">
-            <h2 className="text-3xl md:text-4xl font-bold text-black dark:text-white mb-3">
-              Before vs. after Recrutas
-            </h2>
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-6 max-w-4xl mx-auto">
-            {/* Before */}
-            <div className="p-6 md:p-8 rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-              <p className="text-sm font-semibold text-red-500 uppercase tracking-wider mb-6">Without Recrutas</p>
-              <ul className="space-y-4">
-                {[
-                  "Apply to hundreds of jobs manually",
-                  "Fill out the same form over and over",
-                  "Hear back from almost nobody",
-                  "No idea if anyone read your resume",
-                  "Ghost jobs waste your time",
-                  "Ghosted — weeks of silence, zero feedback",
-                ].map((item) => (
-                  <li key={item} className="flex items-start gap-3 text-sm text-gray-600 dark:text-gray-400">
-                    <X className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            {/* After */}
-            <div className="p-6 md:p-8 rounded-2xl border-2 border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-900/10">
-              <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-6">With Recrutas</p>
-              <ul className="space-y-4">
-                {[
-                  "Upload resume once, AI finds jobs that fit",
-                  "See match scores — know why each role fits you",
-                  "Take exams — get ranked on skill, not connections",
-                  "Chat directly with hiring managers",
-                  "Only verified, live job listings",
-                  "Real responses on Recrutas-posted jobs — no ghosting",
-                ].map((item) => (
-                  <li key={item} className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-300">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* -- For Companies -- */}
-      <section className="py-20 md:py-28">
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-14">
-            <p className="text-sm font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-4">For Companies</p>
-            <h2 className="text-3xl md:text-4xl font-bold text-black dark:text-white mb-4">
-              Get pre-qualified candidates, not resume spam
-            </h2>
-            <p className="text-gray-500 dark:text-gray-400 text-lg leading-relaxed max-w-2xl mx-auto">
-              Post a job. Candidates take a screening exam. You see them ranked by skill. Chat directly with top scorers. Every applicant gets a real response within 24 hours.
-            </p>
-          </div>
-
-          <div className="grid sm:grid-cols-3 gap-6 max-w-4xl mx-auto mb-10">
-            {[
-              {
-                icon: BarChart3,
-                title: "Exam-ranked candidates",
-                body: "Set a screening exam. Candidates are ranked by score — you see the best first.",
-              },
-              {
-                icon: Users,
-                title: "Direct chat with top talent",
-                body: "Top exam scorers unlock direct messaging. No agencies, no phone tag.",
-              },
-              {
-                icon: Clock,
-                title: "24-hour response SLA",
-                body: "Every candidate who applies gets a real response within 24 hours. Your employer brand stays strong.",
-              },
-            ].map(({ icon: Icon, title, body }) => (
-              <div key={title} className="p-6 rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 text-center">
-                <div className="w-10 h-10 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center mb-4 mx-auto">
-                  <Icon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                </div>
-                <h3 className="font-bold text-black dark:text-white mb-2">{title}</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">{body}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="text-center">
-            <Button
-              size="lg"
-              variant="outline"
-              className="rounded-xl text-base font-semibold px-8 h-12 border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
-              onClick={() => setLocation('/signup/talent-owner')}
-            >
-              Post a Job Free
-              <ArrowRight className="w-4 h-4 ml-2" />
-            </Button>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-3">No agencies. No placement fees.</p>
-          </div>
-        </div>
-      </section>
-
-      {/* -- Final CTA -- */}
-      <section className="py-24 md:py-32 bg-black dark:bg-emerald-950">
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8 max-w-2xl text-center">
-          <h2 className="text-3xl md:text-5xl font-bold text-white mb-4 leading-tight">
-            You deserve better<br />than silence.
-          </h2>
-          <p className="text-gray-400 text-lg mb-10">
-            Upload your resume. Let AI find your matches. Free forever for candidates.
-          </p>
-          <Button
-            size="lg"
-            className="bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl text-base font-semibold px-8 h-12"
-            onClick={goToApp}
+function PostingRows({ jobs }: { jobs: CheckedJob[] }) {
+  return (
+    <ul>
+      {jobs.map((j, i) => (
+        <li key={`${j.company}-${j.title}-${i}`} className={i > 0 ? `border-t ${RULE}` : ""}>
+          <a
+            href={j.externalUrl ?? undefined}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group grid grid-cols-[1fr_auto] sm:grid-cols-[minmax(0,2.2fr)_minmax(0,1fr)_minmax(0,1.2fr)_90px] items-center gap-x-4 gap-y-0.5 px-4 sm:px-5 py-3 hover:bg-emerald-50/60 dark:hover:bg-emerald-500/[0.06] transition-colors"
           >
-            <Upload className="w-4 h-4 mr-2" />
-            Upload Resume — It's Free
-          </Button>
-        </div>
-      </section>
+            <span className="text-[15px] font-medium truncate">{j.title}</span>
+            <span className="sm:hidden font-geist-mono text-xs text-emerald-600 dark:text-emerald-400 text-right">{timeAgo(j.lastLivenessCheck)}</span>
+            <span className="text-sm text-neutral-600 dark:text-neutral-400 truncate">{j.company}</span>
+            <span className="hidden sm:block text-sm text-neutral-500 truncate">{shortLocation(j.location, j.workType)}</span>
+            <span className="hidden sm:flex items-center justify-end gap-1.5 font-geist-mono text-xs text-emerald-600 dark:text-emerald-400">
+              {timeAgo(j.lastLivenessCheck)}
+              <ArrowUpRight className="w-3.5 h-3.5 text-neutral-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+            </span>
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
-      {/* -- Footer -- */}
-      <footer className="border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900">
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-12 md:py-16">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
-            {/* Brand */}
-            <div className="col-span-2 md:col-span-1">
-              <div className="flex items-center gap-2 mb-3">
-                <SmartLogo size={24} showText={false} />
-                <span className="font-bold text-black dark:text-white">Recrutas</span>
+/**
+ * The live card. Empty, it shows roles just re-checked on company boards;
+ * with a role typed, it shows that person's live market — no résumé needed.
+ */
+function LiveSearch({ onStart }: { onStart: () => void }) {
+  const [role, setRole] = useState("");
+  const [city, setCity] = useState("");
+  const [remote, setRemote] = useState(false);
+  const [query, setQuery] = useState<{ q: string; location: string; remote: boolean } | null>(null);
+
+  const justChecked = useQuery<{ jobs: CheckedJob[] }>({
+    queryKey: ['/api/platform/just-checked'],
+    queryFn: async () => {
+      const res = await fetch('/api/platform/just-checked');
+      if (!res.ok) throw new Error('just-checked unavailable');
+      return res.json();
+    },
+    staleTime: 10 * 60 * 1000,
+    retry: false,
+  });
+
+  const search = useQuery<LiveRoleSearch>({
+    queryKey: ['/api/platform/live-search', query],
+    enabled: !!query,
+    queryFn: async () => {
+      const params = new URLSearchParams({ q: query!.q });
+      if (query!.location) params.set('location', query!.location);
+      if (query!.remote) params.set('remote', '1');
+      const res = await fetch(`/api/platform/live-search?${params}`);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(res.status === 429 ? 'Lots of searches in a short time — try again in a minute.' : body.message || 'Search is unavailable right now.');
+      return body;
+    },
+    staleTime: 10 * 60 * 1000,
+    retry: false,
+  });
+
+  const run = (q = role, location = city, r = remote) => {
+    if (q.trim().length < 2) return;
+    setQuery({ q: q.trim(), location: location.trim(), remote: r });
+  };
+  const result = search.data;
+  const where = query ? [query.location, query.remote ? "remote" : ""].filter(Boolean).join(" · ") : "";
+  const checkedPct = result && result.total > 0 ? Math.round((result.recentlyChecked / result.total) * 100) : 0;
+
+  return (
+    <Band id="live" inner="px-4 sm:px-10 py-14 sm:py-20">
+      <SectionLabel>Live right now</SectionLabel>
+      <h2 className="text-3xl sm:text-5xl font-semibold tracking-[-0.035em] max-w-3xl mb-3">What's live for you right now?</h2>
+      <p className="text-lg text-neutral-600 dark:text-neutral-400 max-w-2xl mb-8">Type a role. No résumé, no account — just the real market, today.</p>
+
+      <form
+        onSubmit={(e) => { e.preventDefault(); run(); }}
+        className={`grid sm:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_auto_auto] border ${RULE}`}
+      >
+        <label className="sr-only" htmlFor="live-role">Role</label>
+        <input
+          id="live-role"
+          value={role}
+          onChange={(e) => setRole(e.target.value)}
+          placeholder="Role, e.g. backend engineer"
+          maxLength={60}
+          className={`h-12 px-4 bg-transparent text-[15px] outline-none placeholder:text-neutral-400 border-b sm:border-b-0 sm:border-r ${RULE}`}
+        />
+        <label className="sr-only" htmlFor="live-city">City</label>
+        <input
+          id="live-city"
+          value={city}
+          onChange={(e) => setCity(e.target.value)}
+          placeholder="City (optional)"
+          maxLength={40}
+          className={`h-12 px-4 bg-transparent text-[15px] outline-none placeholder:text-neutral-400 border-b sm:border-b-0 sm:border-r ${RULE}`}
+        />
+        <button
+          type="button"
+          aria-pressed={remote}
+          onClick={() => setRemote(!remote)}
+          className={`h-12 px-4 font-geist-mono text-[11px] uppercase tracking-[0.14em] border-b sm:border-b-0 sm:border-r ${RULE} transition-colors ${
+            remote ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400" : "text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
+          }`}
+        >
+          {remote ? "✓ " : ""}Remote only
+        </button>
+        <button type="submit" className="h-12 px-6 bg-emerald-600 text-white text-[15px] font-medium hover:bg-emerald-500 transition-colors">
+          Show me
+        </button>
+      </form>
+      <div className="flex flex-wrap gap-2 mt-3">
+        {ROLE_SUGGESTIONS.map((sug) => (
+          <button
+            key={sug}
+            onClick={() => { setRole(sug); run(sug); }}
+            className={`px-2.5 h-7 border ${RULE} font-geist-mono text-[10px] uppercase tracking-[0.12em] text-neutral-500 hover:text-neutral-900 dark:hover:text-white hover:border-neutral-900 dark:hover:border-white transition-colors`}
+          >
+            {sug}
+          </button>
+        ))}
+      </div>
+
+      <div className={`mt-8 border ${RULE} bg-white dark:bg-black`}>
+        {!query ? (
+          <>
+            <div className={`flex items-center justify-between gap-4 px-4 sm:px-5 h-11 border-b ${RULE} bg-neutral-50 dark:bg-neutral-950`}>
+              <div className="flex items-center gap-2 font-geist-mono text-[11px] uppercase tracking-[0.14em]">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                Just checked on company boards
               </div>
-              <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed max-w-xs">
-                AI-powered job matching. Upload your resume, find roles that fit.
+              <span className="hidden sm:block font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500">Real postings · every 15 min</span>
+            </div>
+            {(justChecked.data?.jobs.length ?? 0) > 0
+              ? <PostingRows jobs={justChecked.data!.jobs} />
+              : <p className="px-5 py-6 text-sm text-neutral-500">Type a role above to see what's live.</p>}
+          </>
+        ) : search.isLoading ? (
+          <p className="px-5 py-10 font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500">Reading the market…</p>
+        ) : search.isError ? (
+          <p className="px-5 py-8 text-sm text-red-600 dark:text-red-400" role="alert">{(search.error as Error).message}</p>
+        ) : result && result.total === 0 ? (
+          <div className="px-5 py-8">
+            <p className="text-[15px]">No live <span className="font-medium">"{query.q}"</span> roles{where ? ` (${where})` : ""} right now.</p>
+            <p className="text-sm text-neutral-500 mt-1">Try a broader title, or drop the city.</p>
+          </div>
+        ) : result ? (
+          <>
+            <div className={`px-4 sm:px-5 py-4 border-b ${RULE} bg-neutral-50 dark:bg-neutral-950`}>
+              <div className="font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500 mb-3">
+                "{query.q}"{where ? ` · ${where}` : ""}
+              </div>
+              <dl className="grid grid-cols-3 gap-4">
+                {[
+                  [result.total.toLocaleString(), "live roles"],
+                  [result.thisWeek.toLocaleString(), "new this week"],
+                  [`${checkedPct}%`, `checked < ${result.checkWindowHours}h`],
+                ].map(([v, l]) => (
+                  <div key={l}>
+                    <dd className="font-geist-mono text-2xl sm:text-3xl tracking-tight">{v}</dd>
+                    <dt className="font-geist-mono text-[10px] sm:text-[11px] uppercase tracking-[0.14em] text-neutral-500 mt-1">{l}</dt>
+                  </div>
+                ))}
+              </dl>
+              {result.topCompanies.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 mt-4">
+                  <span className="font-geist-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500 mr-1">Hiring most</span>
+                  {result.topCompanies.map((c) => <Tag key={c.company}>{c.company} · {c.count}</Tag>)}
+                </div>
+              )}
+            </div>
+            {result.postings.length > 0 && <PostingRows jobs={result.postings} />}
+            <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-4 border-t ${RULE}`}>
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                That's {result.total.toLocaleString()} live {result.total === 1 ? "role" : "roles"}. Let us rank them against your résumé.
               </p>
+              <PrimaryButton onClick={onStart}>
+                Rank these for me <ArrowRight className="w-4 h-4" />
+              </PrimaryButton>
             </div>
+          </>
+        ) : null}
+      </div>
+    </Band>
+  );
+}
 
-            {/* Product */}
-            <div>
-              <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-4">Product</p>
-              <ul className="space-y-3">
-                {[
-                  { label: "Find Jobs", href: "/auth" },
-                  { label: "Post a Job", href: "/signup/talent-owner" },
-                  { label: "Pricing", href: "/pricing" },
-                ].map(({ label, href }) => (
-                  <li key={label}>
-                    <a href={href} className="text-sm text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white transition-colors">
-                      {label}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </div>
+// -- How it works ---------------------------------------------------------------------
 
-            {/* Company */}
-            <div>
-              <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-4">Company</p>
-              <ul className="space-y-3">
-                {[
-                  { label: "Community", href: "https://www.reddit.com/r/recrutas/", external: true },
-                  { label: "Privacy", href: "/privacy" },
-                  { label: "Terms", href: "/terms" },
-                ].map(({ label, href, external }) => (
-                  <li key={label}>
-                    <a
-                      href={href}
-                      {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-                      className="text-sm text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white transition-colors"
-                    >
-                      {label}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </div>
+function HowItWorks() {
+  const steps = [
+    { title: "Upload your résumé", body: "We read your titles, skills and seniority — no forms to fill in." },
+    { title: "Get a ranked feed", body: "Live roles from company career pages, best fit first — each with the reason it matched." },
+    { title: "Apply on the company's site", body: "Every match links straight to the real posting on the employer's own site — no reposters in between." },
+  ];
+  return (
+    <Band id="how" inner="px-4 sm:px-10 py-14 sm:py-20">
+      <SectionLabel n="01">How it works</SectionLabel>
+      <h2 className="text-3xl sm:text-5xl font-semibold tracking-[-0.035em] max-w-3xl mb-12">
+        You stop searching. You start choosing.
+      </h2>
+      <ol className={`grid md:grid-cols-3 border-t border-l ${RULE}`}>
+        {steps.map((s, i) => (
+          <li key={s.title} className={`p-6 sm:p-7 border-r border-b ${RULE}`}>
+            <div className="font-geist-mono text-[11px] text-emerald-600 dark:text-emerald-400 mb-10">STEP 0{i + 1}</div>
+            <h3 className="text-lg font-semibold tracking-tight mb-2">{s.title}</h3>
+            <p className="text-neutral-600 dark:text-neutral-400 leading-relaxed">{s.body}</p>
+          </li>
+        ))}
+      </ol>
+    </Band>
+  );
+}
 
-            {/* CTA column */}
-            <div>
-              <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-4">Get started</p>
-              <Button
-                className="w-full bg-black dark:bg-white text-white dark:text-black hover:bg-gray-800 dark:hover:bg-gray-200 rounded-lg text-sm"
-                onClick={goToApp}
-              >
-                Upload Resume Free
-              </Button>
+// -- Why Recrutas ------------------------------------------------------------------------
+
+const REASONS: { title: string; body: string; tags: string[] }[] = [
+  { title: "Matched on what you've done.", body: "Your titles, skills and seniority — not keyword overlap. A senior backend engineer sees senior backend roles.", tags: ["titles", "skills", "seniority"] },
+  { title: "Direct from the company.", body: "Pulled from each employer's own hiring system. No reposters, no aggregator spam.", tags: ["greenhouse", "lever", "ashby"] },
+  { title: "Live, and checked.", body: "Every board is re-read every few hours. A job gets the live badge only if we saw it in the last 36 hours.", tags: ["● live · checked"] },
+  { title: "Every match explains itself.", body: "A score and the reasons behind it, so an 85 and a 60 look different and you know where to spend your time.", tags: ["score", "why it fits"] },
+  { title: "Filters that mean it.", body: "City, remote / hybrid / onsite and date posted run over your whole match set — not just the first page.", tags: ["seattle", "remote", "past 3 days"] },
+  { title: "Free for candidates.", body: "No subscription, no premium tier for job seekers. Companies will pay; people looking for work don't.", tags: ["$0"] },
+];
+
+function WhyRecrutas() {
+  return (
+    <Band inner="px-4 sm:px-10 py-14 sm:py-20">
+      <SectionLabel n="02">Why Recrutas</SectionLabel>
+      <h2 className="text-3xl sm:text-5xl font-semibold tracking-[-0.035em] max-w-3xl mb-12">
+        Real jobs, made to fit you. No ghosts, no leftovers.
+      </h2>
+      <div className={`grid sm:grid-cols-2 lg:grid-cols-3 border-t border-l ${RULE}`}>
+        {REASONS.map((r, i) => (
+          <div key={r.title} className={`p-6 sm:p-7 border-r border-b ${RULE} hover:bg-neutral-50 dark:hover:bg-neutral-950 transition-colors`}>
+            <div className="font-geist-mono text-[11px] text-neutral-400 mb-4">{String(i + 1).padStart(2, "0")}</div>
+            <h3 className="font-semibold tracking-tight mb-2">{r.title}</h3>
+            <p className="text-sm leading-relaxed text-neutral-600 dark:text-neutral-400 mb-5">{r.body}</p>
+            <div className="flex flex-wrap gap-1.5">
+              {r.tags.map((t) => <Tag key={t} tone={t.startsWith("●") ? "live" : "neutral"}>{t}</Tag>)}
             </div>
           </div>
+        ))}
+      </div>
+    </Band>
+  );
+}
 
-          <div className="pt-8 border-t border-gray-200 dark:border-gray-800 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <p className="text-sm text-gray-400">
-              &copy; {new Date().getFullYear()} Recrutas. All rights reserved.
-            </p>
-          </div>
+// -- Is this job still real? ------------------------------------------------------------------------
+
+interface JobUrlCheck {
+  verdict: 'live' | 'unverified' | 'taken-down' | 'closed' | 'repost' | 'job-board' | 'not-indexed' | 'invalid';
+  host?: string;
+  job?: { title: string; company: string; location: string | null; lastSeen: string | null; postingUrl: string | null };
+}
+
+function whenSeen(iso: string | null | undefined): string {
+  if (!iso) return "a while ago";
+  const hours = (Date.now() - new Date(iso).getTime()) / 3_600_000;
+  if (hours < 48) return timeAgo(iso);
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+const VERDICTS: Record<JobUrlCheck['verdict'], { tone: "live" | "warn" | "dead" | "neutral"; label: string; text: (r: JobUrlCheck) => string }> = {
+  "live": { tone: "live", label: "Live", text: (r) => `It's on ${r.job!.company}'s own board — we checked ${whenSeen(r.job!.lastSeen)}.` },
+  "unverified": { tone: "warn", label: "Not seen lately", text: (r) => `We last saw it on ${r.job!.company}'s board ${whenSeen(r.job!.lastSeen)}. It may already be gone.` },
+  "taken-down": { tone: "dead", label: "Taken down", text: (r) => `${r.job!.company} took this posting off its board (last seen ${whenSeen(r.job!.lastSeen)}). If it's still listed somewhere, that's a leftover.` },
+  "closed": { tone: "dead", label: "Closed", text: (r) => `It hasn't been on ${r.job!.company}'s board since ${whenSeen(r.job!.lastSeen)}.` },
+  "repost": { tone: "warn", label: "Repost", text: () => "This listing comes from a job reposter, not the company that's hiring. Look for the original on the company's own careers page." },
+  "job-board": { tone: "neutral", label: "Job-board link", text: (r) => `That's a ${r.host ?? "job-board"} link, not the company's own posting. Open it, click through to the company's careers page, and paste that link instead.` },
+  "not-indexed": { tone: "neutral", label: "Not in our index", text: (r) => `We don't track ${r.host ?? "that site"} yet — we check postings on 4,000+ companies' own career pages.` },
+  "invalid": { tone: "neutral", label: "Not a link", text: () => "Paste the full link to a job posting, starting with https://." },
+};
+
+const VERDICT_TONES = {
+  live: "border-emerald-600/40 text-emerald-700 dark:border-emerald-400/40 dark:text-emerald-400",
+  warn: "border-amber-600/40 text-amber-700 dark:border-amber-400/40 dark:text-amber-400",
+  dead: "border-red-600/40 text-red-700 dark:border-red-400/40 dark:text-red-400",
+  neutral: "border-neutral-300 text-neutral-600 dark:border-neutral-700 dark:text-neutral-400",
+} as const;
+
+function GhostCheck() {
+  const [url, setUrl] = useState("");
+  const [state, setState] = useState<"idle" | "checking" | "done" | "error">("idle");
+  const [result, setResult] = useState<JobUrlCheck | null>(null);
+  const [error, setError] = useState("");
+
+  const check = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!url.trim()) return;
+    setState("checking");
+    try {
+      const res = await fetch(`/api/platform/check-job?url=${encodeURIComponent(url.trim())}`);
+      const body = await res.json().catch(() => ({}));
+      if (res.status === 400) { setResult({ verdict: "invalid" }); setState("done"); return; }
+      if (!res.ok) throw new Error(res.status === 429 ? "Lots of checks in a short time — try again in a minute." : "The checker is unavailable right now.");
+      setResult(body);
+      setState("done");
+    } catch (err) {
+      setState("error");
+      setError(err instanceof Error ? err.message : "The checker is unavailable right now.");
+    }
+  };
+
+  const v = result ? VERDICTS[result.verdict] : null;
+
+  return (
+    <Band id="ghost-check" inner="px-4 sm:px-10 py-14 sm:py-20">
+      <SectionLabel n="03">Ghost check</SectionLabel>
+      <h2 className="text-3xl sm:text-5xl font-semibold tracking-[-0.035em] max-w-3xl mb-3">Is this job still real?</h2>
+      <p className="text-lg text-neutral-600 dark:text-neutral-400 max-w-2xl mb-8">
+        Paste any job link. We'll tell you whether it's still on the company's own board.
+      </p>
+      <form onSubmit={check} className={`flex flex-col sm:flex-row border ${RULE}`}>
+        <label className="sr-only" htmlFor="ghost-url">Job link</label>
+        <input
+          id="ghost-url"
+          type="url"
+          inputMode="url"
+          value={url}
+          onChange={(e) => { setUrl(e.target.value); if (state !== "checking") setState("idle"); }}
+          placeholder="https://boards.greenhouse.io/company/jobs/123456"
+          className={`flex-1 min-w-0 h-12 px-4 bg-transparent font-geist-mono text-[13px] outline-none placeholder:text-neutral-400 border-b sm:border-b-0 sm:border-r ${RULE}`}
+        />
+        <button
+          type="submit"
+          disabled={state === "checking" || !url.trim()}
+          className="h-12 px-6 font-geist-mono text-[11px] uppercase tracking-[0.14em] bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-emerald-600 dark:hover:bg-emerald-400 disabled:opacity-50 transition-colors"
+        >
+          {state === "checking" ? "Checking…" : "Check it"}
+        </button>
+      </form>
+
+      {state === "error" && <p className="mt-4 text-sm text-red-600 dark:text-red-400" role="alert">{error}</p>}
+      {state === "done" && result && v && (
+        <div className={`mt-4 border ${RULE} p-5`} role="status">
+          <span className={`inline-flex items-center gap-1.5 border px-2 py-0.5 font-geist-mono text-[11px] uppercase tracking-[0.14em] ${VERDICT_TONES[v.tone]}`}>
+            {v.tone === "live" ? "● " : ""}{v.label}
+          </span>
+          {result.job && (
+            <div className="mt-3">
+              <div className="font-semibold">{result.job.title}</div>
+              <div className="text-sm text-neutral-500">{result.job.company}{result.job.location ? ` · ${shortLocation(result.job.location, null)}` : ""}</div>
+            </div>
+          )}
+          <p className="mt-3 text-neutral-700 dark:text-neutral-300">{v.text(result)}</p>
+          {result.verdict === "live" && result.job?.postingUrl && (
+            <a href={result.job.postingUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 mt-3 font-geist-mono text-[11px] uppercase tracking-[0.14em] text-emerald-600 dark:text-emerald-400 hover:underline">
+              Open the company's posting <ArrowUpRight className="w-3.5 h-3.5" />
+            </a>
+          )}
         </div>
-      </footer>
+      )}
+      <p className="mt-3 font-geist-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500">
+        We never open the link — we just look it up in our index of company boards.
+      </p>
+    </Band>
+  );
+}
 
-    </div>
+// -- Employers: interest list only (phase 2 isn't open) -----------------------------------------------
+
+function EmployerInterest() {
+  const [email, setEmail] = useState("");
+  const [state, setState] = useState<"idle" | "sending" | "done" | "error">("idle");
+  const [message, setMessage] = useState("");
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.includes("@")) {
+      setState("error");
+      setMessage("Enter a work email.");
+      return;
+    }
+    setState("sending");
+    try {
+      const res = await fetch("/api/waitlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, source: "employer" }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Something went wrong. Try again in a minute.");
+      setState("done");
+      setMessage("Thanks — you're on the list. We'll email you when employer access opens.");
+    } catch (err) {
+      setState("error");
+      setMessage(err instanceof Error ? err.message : "Something went wrong. Try again in a minute.");
+    }
+  };
+
+  return (
+    <Band inner="px-4 sm:px-10 py-10 sm:py-12">
+      <div className="grid md:grid-cols-[1fr_minmax(0,420px)] gap-6 md:items-center">
+        <div>
+          <div className="font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500 mb-2">For employers</div>
+          <div className="text-lg font-semibold tracking-tight">Hiring? Join the employer interest list.</div>
+          <div className="text-neutral-500 mt-1">Employer access isn't open yet. Leave your work email and we'll reach out when it is.</div>
+        </div>
+        {state === "done" ? (
+          <p className="font-geist-mono text-[12px] text-emerald-600 dark:text-emerald-400" role="status">{message}</p>
+        ) : (
+          <form onSubmit={submit} className="w-full">
+            <div className={`flex border ${RULE} focus-within:border-neutral-900 dark:focus-within:border-white transition-colors`}>
+              <label htmlFor="employer-email" className="sr-only">Work email</label>
+              <input
+                id="employer-email"
+                type="email"
+                required
+                autoComplete="email"
+                placeholder="you@company.com"
+                value={email}
+                onChange={(e) => { setEmail(e.target.value); if (state === "error") setState("idle"); }}
+                className="flex-1 min-w-0 h-10 px-3 bg-transparent text-sm outline-none placeholder:text-neutral-400"
+              />
+              <button
+                type="submit"
+                disabled={state === "sending"}
+                className="shrink-0 h-10 px-4 font-geist-mono text-[11px] uppercase tracking-[0.14em] bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-emerald-600 dark:hover:bg-emerald-400 disabled:opacity-60 transition-colors"
+              >
+                {state === "sending" ? "Sending…" : "Notify me"}
+              </button>
+            </div>
+            {state === "error" && <p className="mt-2 text-sm text-red-600 dark:text-red-400" role="alert">{message}</p>}
+          </form>
+        )}
+      </div>
+    </Band>
+  );
+}
+
+// -- Manifesto band + final CTA ---------------------------------------------------------------------------
+
+function ManifestoBand() {
+  const go = useSiteNav();
+  return (
+    <Band
+      className="bg-neutral-950 text-white dark:bg-emerald-950/30"
+      inner="border-neutral-800 dark:border-emerald-900/40 px-4 sm:px-10 py-20 sm:py-28"
+    >
+      <p className="font-geist-mono text-[11px] uppercase tracking-[0.16em] text-emerald-400 mb-6">Our manifesto</p>
+      <blockquote className="text-3xl sm:text-5xl font-semibold tracking-[-0.03em] leading-[1.1] max-w-4xl">
+        No one should have to beg for the right to earn a living.
+      </blockquote>
+      <p className="mt-6 text-lg text-neutral-400 max-w-2xl leading-relaxed">
+        Too many good people are sending hundreds of applications into the dark and hearing nothing back.
+        No reply. No reason. Just silence. We do not accept this.
+      </p>
+      <button onClick={() => go("/manifesto")} className="mt-8 inline-flex items-center gap-1.5 font-geist-mono text-[11px] uppercase tracking-[0.14em] text-emerald-400 hover:underline">
+        Read the manifesto <ArrowRight className="w-3.5 h-3.5" />
+      </button>
+    </Band>
+  );
+}
+
+function FinalCta({ onStart }: { onStart: () => void }) {
+  return (
+    <Band inner="px-4 sm:px-10 py-20 sm:py-28 text-center">
+      <h2 className="text-3xl sm:text-5xl font-semibold tracking-[-0.035em] mb-4">See what you're a fit for.</h2>
+      <p className="text-lg text-neutral-600 dark:text-neutral-400 mb-9">One résumé. A ranked feed of live roles. Free.</p>
+      <PrimaryButton onClick={onStart}>
+        <Upload className="w-4 h-4" /> Upload résumé
+      </PrimaryButton>
+    </Band>
   );
 }
