@@ -7,7 +7,7 @@ import path from "path";
 import fs from "fs";
 import { z } from "zod";
 
-import { storage, SAMPLE_PERSONA_IDS } from "./storage";
+import { storage } from "./storage";
 import { isAuthenticated } from "./middleware/auth";
 import { companyJobsAggregator } from "./company-jobs-aggregator";
 import { universalJobScraper } from "./universal-job-scraper";
@@ -291,6 +291,8 @@ Requirements: ${(requirements || []).join('; ') || 'Not specified'}`;
 
 import { registerMetricsRoutes } from './routes/metrics-api.js';
 import { isResumeFileField } from './extension-fill-helpers.js';
+
+interface LiveStatsRow { active_jobs: number; companies: number; recently_checked: number }
 
 export async function registerRoutes(app: Express): Promise<Express> {
   console.log('registerRoutes called!');
@@ -770,8 +772,9 @@ export async function registerRoutes(app: Express): Promise<Express> {
           WHERE status = 'active'
         `),
         timeout,
-      ]) as any;
-      const row = (rows.rows ?? rows)[0] ?? {};
+      ]);
+      const result = rows as { rows?: LiveStatsRow[] } | LiveStatsRow[];
+      const row: Partial<LiveStatsRow> = (Array.isArray(result) ? result : result.rows ?? [])[0] ?? {};
       res.set('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=3600, stale-if-error=86400');
       res.json({
         activeJobs: row.active_jobs ?? 0,
@@ -785,24 +788,53 @@ export async function registerRoutes(app: Express): Promise<Express> {
     }
   }));
 
-  // Landing-page "real match" card: the production scorer run for a fixed
-  // sample résumé against live jobs. ~0.5s, edge-cached for an hour.
-  app.get('/api/platform/sample-match', asyncHandler(async (req, res) => {
-    const persona = typeof req.query.persona === 'string' ? req.query.persona : '';
-    if (!SAMPLE_PERSONA_IDS.includes(persona)) {
-      return res.status(400).json({ message: `persona must be one of: ${SAMPLE_PERSONA_IDS.join(', ')}` });
+  // Landing page "what's live for you": counts + a few postings for a typed
+  // role, no résumé needed. Returns at most 6 postings per query, so it can't
+  // page through the index; rate-limited on top of the edge cache.
+  app.get('/api/platform/live-search', rateLimit({ windowMs: 60 * 1000, max: 30 }), asyncHandler(async (req, res) => {
+    const clean = (v: unknown, max: number) =>
+      typeof v === 'string' ? v.toLowerCase().replace(/[^a-z0-9 +#./&'-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) : '';
+    const q = clean(req.query.q, 60);
+    const location = clean(req.query.location, 40);
+    const words = q.split(' ').filter(w => w.length >= 2).slice(0, 5);
+    if (words.length === 0) {
+      return res.status(400).json({ message: 'Type a role, e.g. "backend engineer".' });
     }
-    if (!db) return res.status(503).json({ match: null });
+    if (!db) return res.status(503).json({ message: 'Search temporarily unavailable' });
     try {
       const timeout = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Sample match timeout')), 15000)
+        setTimeout(() => reject(new Error('Live search timeout')), 15000)
       );
-      const match = await Promise.race([storage.getSampleMatch(persona), timeout]);
-      res.set('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=3600, stale-if-error=86400');
-      res.json({ match });
+      const result = await Promise.race([
+        storage.searchLiveRoles({ words, location: location.length >= 2 ? location : undefined, remoteOnly: req.query.remote === '1' }),
+        timeout,
+      ]);
+      res.set('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=3600');
+      res.json(result);
     } catch (error) {
-      console.error('Error computing sample match:', error);
-      res.status(503).json({ match: null });
+      console.error('Error in live search:', error);
+      res.status(503).json({ message: 'Search temporarily unavailable' });
+    }
+  }));
+
+  // "Is this job still real?" — database lookup of a pasted posting URL.
+  // The URL is never fetched.
+  app.get('/api/platform/check-job', rateLimit({ windowMs: 60 * 1000, max: 20 }), asyncHandler(async (req, res) => {
+    const url = typeof req.query.url === 'string' ? req.query.url.trim() : '';
+    if (!url || url.length > 2000) {
+      return res.status(400).json({ verdict: 'invalid' });
+    }
+    if (!db) return res.status(503).json({ message: 'Check temporarily unavailable' });
+    try {
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Job check timeout')), 15000)
+      );
+      const result = await Promise.race([storage.checkJobUrl(url), timeout]);
+      res.set('Cache-Control', 'public, max-age=120, s-maxage=900, stale-while-revalidate=900');
+      res.json(result);
+    } catch (error) {
+      console.error('Error checking job URL:', error);
+      res.status(503).json({ message: 'Check temporarily unavailable' });
     }
   }));
 

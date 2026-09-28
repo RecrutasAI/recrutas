@@ -61,10 +61,10 @@ export default function LandingResponsive() {
   return (
     <SiteShell active="home">
       <Hero onStart={goToApp} />
-      <JustChecked />
+      <LiveSearch onStart={goToApp} />
       <HowItWorks />
       <WhyRecrutas />
-      <MatchAnatomy />
+      <GhostCheck />
       <EmployerInterest />
       <ManifestoBand />
       <FinalCta onStart={goToApp} />
@@ -98,7 +98,7 @@ function Hero({ onStart }: { onStart: () => void }) {
       <div aria-hidden className="pointer-events-none absolute -top-48 left-1/4 w-[700px] h-[420px] rounded-full bg-emerald-500/10 dark:bg-emerald-500/[0.08] blur-3xl" />
       <div className={`relative mx-auto max-w-6xl lg:border-x ${RULE} px-4 sm:px-10 pt-16 pb-14 sm:pt-24 sm:pb-20`}>
         <button
-          onClick={() => go("/#how")}
+          onClick={() => go("/#live")}
           className={`inline-flex items-center gap-2 mb-8 border ${RULE} bg-white/70 dark:bg-black/70 px-3 py-1.5 font-geist-mono text-[11px] uppercase tracking-[0.14em]`}
         >
           <span className="relative flex w-2 h-2">
@@ -163,8 +163,54 @@ function shortLocation(loc: string | null, workType: string | null): string {
   return parts.length > 1 ? `${parts[0].trim()} +${parts.length - 1}` : loc.trim();
 }
 
-function JustChecked() {
-  const { data } = useQuery<{ jobs: CheckedJob[] }>({
+interface LiveRoleSearch {
+  total: number;
+  thisWeek: number;
+  recentlyChecked: number;
+  checkWindowHours: number;
+  topCompanies: { company: string; count: number }[];
+  postings: CheckedJob[];
+}
+
+const ROLE_SUGGESTIONS = ["backend engineer", "data scientist", "product manager", "frontend engineer", "data analyst", "designer"];
+
+function PostingRows({ jobs }: { jobs: CheckedJob[] }) {
+  return (
+    <ul>
+      {jobs.map((j, i) => (
+        <li key={`${j.company}-${j.title}-${i}`} className={i > 0 ? `border-t ${RULE}` : ""}>
+          <a
+            href={j.externalUrl ?? undefined}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group grid grid-cols-[1fr_auto] sm:grid-cols-[minmax(0,2.2fr)_minmax(0,1fr)_minmax(0,1.2fr)_90px] items-center gap-x-4 gap-y-0.5 px-4 sm:px-5 py-3 hover:bg-emerald-50/60 dark:hover:bg-emerald-500/[0.06] transition-colors"
+          >
+            <span className="text-[15px] font-medium truncate">{j.title}</span>
+            <span className="sm:hidden font-geist-mono text-xs text-emerald-600 dark:text-emerald-400 text-right">{timeAgo(j.lastLivenessCheck)}</span>
+            <span className="text-sm text-neutral-600 dark:text-neutral-400 truncate">{j.company}</span>
+            <span className="hidden sm:block text-sm text-neutral-500 truncate">{shortLocation(j.location, j.workType)}</span>
+            <span className="hidden sm:flex items-center justify-end gap-1.5 font-geist-mono text-xs text-emerald-600 dark:text-emerald-400">
+              {timeAgo(j.lastLivenessCheck)}
+              <ArrowUpRight className="w-3.5 h-3.5 text-neutral-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+            </span>
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * The live card. Empty, it shows roles just re-checked on company boards;
+ * with a role typed, it shows that person's live market — no résumé needed.
+ */
+function LiveSearch({ onStart }: { onStart: () => void }) {
+  const [role, setRole] = useState("");
+  const [city, setCity] = useState("");
+  const [remote, setRemote] = useState(false);
+  const [query, setQuery] = useState<{ q: string; location: string; remote: boolean } | null>(null);
+
+  const justChecked = useQuery<{ jobs: CheckedJob[] }>({
     queryKey: ['/api/platform/just-checked'],
     queryFn: async () => {
       const res = await fetch('/api/platform/just-checked');
@@ -174,44 +220,145 @@ function JustChecked() {
     staleTime: 10 * 60 * 1000,
     retry: false,
   });
-  const jobs = data?.jobs ?? [];
-  if (jobs.length === 0) return null;
+
+  const search = useQuery<LiveRoleSearch>({
+    queryKey: ['/api/platform/live-search', query],
+    enabled: !!query,
+    queryFn: async () => {
+      const params = new URLSearchParams({ q: query!.q });
+      if (query!.location) params.set('location', query!.location);
+      if (query!.remote) params.set('remote', '1');
+      const res = await fetch(`/api/platform/live-search?${params}`);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(res.status === 429 ? 'Lots of searches in a short time — try again in a minute.' : body.message || 'Search is unavailable right now.');
+      return body;
+    },
+    staleTime: 10 * 60 * 1000,
+    retry: false,
+  });
+
+  const run = (q = role, location = city, r = remote) => {
+    if (q.trim().length < 2) return;
+    setQuery({ q: q.trim(), location: location.trim(), remote: r });
+  };
+  const result = search.data;
+  const where = query ? [query.location, query.remote ? "remote" : ""].filter(Boolean).join(" · ") : "";
+  const checkedPct = result && result.total > 0 ? Math.round((result.recentlyChecked / result.total) * 100) : 0;
 
   return (
-    <Band inner="px-4 sm:px-10 py-14 sm:py-20">
-      <div className={`border ${RULE} bg-white dark:bg-black`}>
-        <div className={`flex items-center justify-between gap-4 px-4 sm:px-5 h-11 border-b ${RULE} bg-neutral-50 dark:bg-neutral-950`}>
-          <div className="flex items-center gap-2 font-geist-mono text-[11px] uppercase tracking-[0.14em]">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            Just checked on company boards
-          </div>
-          <span className="hidden sm:block font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500">Real postings · every 15 min</span>
-        </div>
-        <ul>
-          {jobs.map((j, i) => (
-            <li key={`${j.company}-${j.title}`} className={i > 0 ? `border-t ${RULE}` : ""}>
-              <a
-                href={j.externalUrl ?? undefined}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="group grid grid-cols-[1fr_auto] sm:grid-cols-[minmax(0,2.2fr)_minmax(0,1fr)_minmax(0,1.2fr)_90px] items-center gap-x-4 gap-y-0.5 px-4 sm:px-5 py-3 hover:bg-emerald-50/60 dark:hover:bg-emerald-500/[0.06] transition-colors"
-              >
-                <span className="text-[15px] font-medium truncate">{j.title}</span>
-                <span className="sm:hidden font-geist-mono text-xs text-emerald-600 dark:text-emerald-400 text-right">{timeAgo(j.lastLivenessCheck)}</span>
-                <span className="text-sm text-neutral-600 dark:text-neutral-400 truncate">{j.company}</span>
-                <span className="hidden sm:block text-sm text-neutral-500 truncate">{shortLocation(j.location, j.workType)}</span>
-                <span className="hidden sm:flex items-center justify-end gap-1.5 font-geist-mono text-xs text-emerald-600 dark:text-emerald-400">
-                  {timeAgo(j.lastLivenessCheck)}
-                  <ArrowUpRight className="w-3.5 h-3.5 text-neutral-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-                </span>
-              </a>
-            </li>
-          ))}
-        </ul>
+    <Band id="live" inner="px-4 sm:px-10 py-14 sm:py-20">
+      <SectionLabel>Live right now</SectionLabel>
+      <h2 className="text-3xl sm:text-5xl font-semibold tracking-[-0.035em] max-w-3xl mb-3">What's live for you right now?</h2>
+      <p className="text-lg text-neutral-600 dark:text-neutral-400 max-w-2xl mb-8">Type a role. No résumé, no account — just the real market, today.</p>
+
+      <form
+        onSubmit={(e) => { e.preventDefault(); run(); }}
+        className={`grid sm:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_auto_auto] border ${RULE}`}
+      >
+        <label className="sr-only" htmlFor="live-role">Role</label>
+        <input
+          id="live-role"
+          value={role}
+          onChange={(e) => setRole(e.target.value)}
+          placeholder="Role, e.g. backend engineer"
+          maxLength={60}
+          className={`h-12 px-4 bg-transparent text-[15px] outline-none placeholder:text-neutral-400 border-b sm:border-b-0 sm:border-r ${RULE}`}
+        />
+        <label className="sr-only" htmlFor="live-city">City</label>
+        <input
+          id="live-city"
+          value={city}
+          onChange={(e) => setCity(e.target.value)}
+          placeholder="City (optional)"
+          maxLength={40}
+          className={`h-12 px-4 bg-transparent text-[15px] outline-none placeholder:text-neutral-400 border-b sm:border-b-0 sm:border-r ${RULE}`}
+        />
+        <button
+          type="button"
+          aria-pressed={remote}
+          onClick={() => setRemote(!remote)}
+          className={`h-12 px-4 font-geist-mono text-[11px] uppercase tracking-[0.14em] border-b sm:border-b-0 sm:border-r ${RULE} transition-colors ${
+            remote ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400" : "text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
+          }`}
+        >
+          {remote ? "✓ " : ""}Remote only
+        </button>
+        <button type="submit" className="h-12 px-6 bg-emerald-600 text-white text-[15px] font-medium hover:bg-emerald-500 transition-colors">
+          Show me
+        </button>
+      </form>
+      <div className="flex flex-wrap gap-2 mt-3">
+        {ROLE_SUGGESTIONS.map((sug) => (
+          <button
+            key={sug}
+            onClick={() => { setRole(sug); run(sug); }}
+            className={`px-2.5 h-7 border ${RULE} font-geist-mono text-[10px] uppercase tracking-[0.12em] text-neutral-500 hover:text-neutral-900 dark:hover:text-white hover:border-neutral-900 dark:hover:border-white transition-colors`}
+          >
+            {sug}
+          </button>
+        ))}
       </div>
-      <p className="mt-3 font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500">
-        A sample of the feed. Yours is ranked against your résumé.
-      </p>
+
+      <div className={`mt-8 border ${RULE} bg-white dark:bg-black`}>
+        {!query ? (
+          <>
+            <div className={`flex items-center justify-between gap-4 px-4 sm:px-5 h-11 border-b ${RULE} bg-neutral-50 dark:bg-neutral-950`}>
+              <div className="flex items-center gap-2 font-geist-mono text-[11px] uppercase tracking-[0.14em]">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                Just checked on company boards
+              </div>
+              <span className="hidden sm:block font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500">Real postings · every 15 min</span>
+            </div>
+            {(justChecked.data?.jobs.length ?? 0) > 0
+              ? <PostingRows jobs={justChecked.data!.jobs} />
+              : <p className="px-5 py-6 text-sm text-neutral-500">Type a role above to see what's live.</p>}
+          </>
+        ) : search.isLoading ? (
+          <p className="px-5 py-10 font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500">Reading the market…</p>
+        ) : search.isError ? (
+          <p className="px-5 py-8 text-sm text-red-600 dark:text-red-400" role="alert">{(search.error as Error).message}</p>
+        ) : result && result.total === 0 ? (
+          <div className="px-5 py-8">
+            <p className="text-[15px]">No live <span className="font-medium">"{query.q}"</span> roles{where ? ` (${where})` : ""} right now.</p>
+            <p className="text-sm text-neutral-500 mt-1">Try a broader title, or drop the city.</p>
+          </div>
+        ) : result ? (
+          <>
+            <div className={`px-4 sm:px-5 py-4 border-b ${RULE} bg-neutral-50 dark:bg-neutral-950`}>
+              <div className="font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500 mb-3">
+                "{query.q}"{where ? ` · ${where}` : ""}
+              </div>
+              <dl className="grid grid-cols-3 gap-4">
+                {[
+                  [result.total.toLocaleString(), "live roles"],
+                  [result.thisWeek.toLocaleString(), "new this week"],
+                  [`${checkedPct}%`, `checked < ${result.checkWindowHours}h`],
+                ].map(([v, l]) => (
+                  <div key={l}>
+                    <dd className="font-geist-mono text-2xl sm:text-3xl tracking-tight">{v}</dd>
+                    <dt className="font-geist-mono text-[10px] sm:text-[11px] uppercase tracking-[0.14em] text-neutral-500 mt-1">{l}</dt>
+                  </div>
+                ))}
+              </dl>
+              {result.topCompanies.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 mt-4">
+                  <span className="font-geist-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500 mr-1">Hiring most</span>
+                  {result.topCompanies.map((c) => <Tag key={c.company}>{c.company} · {c.count}</Tag>)}
+                </div>
+              )}
+            </div>
+            {result.postings.length > 0 && <PostingRows jobs={result.postings} />}
+            <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-4 border-t ${RULE}`}>
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                That's {result.total.toLocaleString()} live {result.total === 1 ? "role" : "roles"}. Let us rank them against your résumé.
+              </p>
+              <PrimaryButton onClick={onStart}>
+                Rank these for me <ArrowRight className="w-4 h-4" />
+              </PrimaryButton>
+            </div>
+          </>
+        ) : null}
+      </div>
     </Band>
   );
 }
@@ -277,159 +424,114 @@ function WhyRecrutas() {
   );
 }
 
-// -- A real match: the production scorer on a sample résumé ------------------------------------------
+// -- Is this job still real? ------------------------------------------------------------------------
 
-interface SampleMatch {
-  persona: { id: string; label: string; summary: string };
-  title: string;
-  company: string;
-  location: string | null;
-  workType: string | null;
-  externalUrl: string | null;
-  lastLivenessCheck: string | null;
-  matchScore: number;
-  skillMatches: string[];
-  partialSkillMatches: string[];
-  aiExplanation: string;
+interface JobUrlCheck {
+  verdict: 'live' | 'unverified' | 'taken-down' | 'closed' | 'repost' | 'job-board' | 'not-indexed' | 'invalid';
+  host?: string;
+  job?: { title: string; company: string; location: string | null; lastSeen: string | null; postingUrl: string | null };
 }
 
-const PERSONAS: { id: string; label: string }[] = [
-  { id: "backend", label: "Backend engineer" },
-  { id: "data", label: "Data scientist" },
-  { id: "frontend", label: "Frontend engineer" },
-];
-
-const ANATOMY: { id: string; label: string; body: string }[] = [
-  { id: "score", label: "Match score", body: "How closely the role fits the résumé — titles, shared skills and seniority, weighed by the same engine that ranks your feed." },
-  { id: "why", label: "Why it fits", body: "The specific overlap: the skills the résumé shares with the posting, and the engine's own explanation of the match." },
-  { id: "live", label: "Live badge", body: "Shown only when the job was on the company's board in the last 36 hours. When a company takes a posting down, we close it too." },
-  { id: "link", label: "Direct link", body: "Apply goes to the posting on the company's own site — never a reposter or an aggregator." },
-];
-
-function Marker({ n, active }: { n: number; active: boolean }) {
-  return (
-    <span className={`inline-flex items-center justify-center w-5 h-5 font-geist-mono text-[10px] font-semibold shrink-0 transition-colors ${
-      active ? "bg-emerald-600 text-white" : "bg-neutral-200 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
-    }`}>{n}</span>
-  );
+function whenSeen(iso: string | null | undefined): string {
+  if (!iso) return "a while ago";
+  const hours = (Date.now() - new Date(iso).getTime()) / 3_600_000;
+  if (hours < 48) return timeAgo(iso);
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function MatchAnatomy() {
-  const [active, setActive] = useState(ANATOMY[0].id);
-  const [persona, setPersona] = useState(PERSONAS[0].id);
-  const { data, isLoading } = useQuery<{ match: SampleMatch | null }>({
-    queryKey: ['/api/platform/sample-match', persona],
-    queryFn: async () => {
-      const res = await fetch(`/api/platform/sample-match?persona=${persona}`);
-      if (!res.ok) throw new Error('sample match unavailable');
-      return res.json();
-    },
-    staleTime: 30 * 60 * 1000,
-    retry: false,
-    placeholderData: (previous) => previous,
-  });
-  const match = data?.match ?? null;
-  const isOn = (id: string) => active === id;
-  const ring = (id: string) => (isOn(id) ? "outline outline-1 outline-offset-2 outline-emerald-500" : "");
-  const skills = match ? [...match.skillMatches, ...match.partialSkillMatches] : [];
+const VERDICTS: Record<JobUrlCheck['verdict'], { tone: "live" | "warn" | "dead" | "neutral"; label: string; text: (r: JobUrlCheck) => string }> = {
+  "live": { tone: "live", label: "Live", text: (r) => `It's on ${r.job!.company}'s own board — we checked ${whenSeen(r.job!.lastSeen)}.` },
+  "unverified": { tone: "warn", label: "Not seen lately", text: (r) => `We last saw it on ${r.job!.company}'s board ${whenSeen(r.job!.lastSeen)}. It may already be gone.` },
+  "taken-down": { tone: "dead", label: "Taken down", text: (r) => `${r.job!.company} took this posting off its board (last seen ${whenSeen(r.job!.lastSeen)}). If it's still listed somewhere, that's a leftover.` },
+  "closed": { tone: "dead", label: "Closed", text: (r) => `It hasn't been on ${r.job!.company}'s board since ${whenSeen(r.job!.lastSeen)}.` },
+  "repost": { tone: "warn", label: "Repost", text: () => "This listing comes from a job reposter, not the company that's hiring. Look for the original on the company's own careers page." },
+  "job-board": { tone: "neutral", label: "Job-board link", text: (r) => `That's a ${r.host ?? "job-board"} link, not the company's own posting. Open it, click through to the company's careers page, and paste that link instead.` },
+  "not-indexed": { tone: "neutral", label: "Not in our index", text: (r) => `We don't track ${r.host ?? "that site"} yet — we check postings on 4,000+ companies' own career pages.` },
+  "invalid": { tone: "neutral", label: "Not a link", text: () => "Paste the full link to a job posting, starting with https://." },
+};
+
+const VERDICT_TONES = {
+  live: "border-emerald-600/40 text-emerald-700 dark:border-emerald-400/40 dark:text-emerald-400",
+  warn: "border-amber-600/40 text-amber-700 dark:border-amber-400/40 dark:text-amber-400",
+  dead: "border-red-600/40 text-red-700 dark:border-red-400/40 dark:text-red-400",
+  neutral: "border-neutral-300 text-neutral-600 dark:border-neutral-700 dark:text-neutral-400",
+} as const;
+
+function GhostCheck() {
+  const [url, setUrl] = useState("");
+  const [state, setState] = useState<"idle" | "checking" | "done" | "error">("idle");
+  const [result, setResult] = useState<JobUrlCheck | null>(null);
+  const [error, setError] = useState("");
+
+  const check = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!url.trim()) return;
+    setState("checking");
+    try {
+      const res = await fetch(`/api/platform/check-job?url=${encodeURIComponent(url.trim())}`);
+      const body = await res.json().catch(() => ({}));
+      if (res.status === 400) { setResult({ verdict: "invalid" }); setState("done"); return; }
+      if (!res.ok) throw new Error(res.status === 429 ? "Lots of checks in a short time — try again in a minute." : "The checker is unavailable right now.");
+      setResult(body);
+      setState("done");
+    } catch (err) {
+      setState("error");
+      setError(err instanceof Error ? err.message : "The checker is unavailable right now.");
+    }
+  };
+
+  const v = result ? VERDICTS[result.verdict] : null;
 
   return (
-    <Band inner="px-4 sm:px-10 py-14 sm:py-20">
-      <SectionLabel n="03">A real match</SectionLabel>
-      <div className={`grid lg:grid-cols-[1fr_1.1fr] border ${RULE}`}>
-        <div className={`lg:border-r ${RULE}`}>
-          <h2 className="text-2xl sm:text-3xl font-semibold tracking-[-0.03em] p-6 sm:p-8 pb-4 sm:pb-6">Every card tells you four things.</h2>
-          <ul>
-            {ANATOMY.map((a, i) => (
-              <li key={a.id} className={`border-t ${RULE}`}>
-                <button
-                  onClick={() => setActive(a.id)}
-                  onMouseEnter={() => setActive(a.id)}
-                  className={`w-full text-left flex gap-3 px-6 sm:px-8 py-4 transition-colors ${isOn(a.id) ? "bg-neutral-50 dark:bg-neutral-950" : ""}`}
-                >
-                  <Marker n={i + 1} active={isOn(a.id)} />
-                  <span>
-                    <span className="block font-geist-mono text-[11px] uppercase tracking-[0.14em] pt-0.5">{a.label}</span>
-                    {isOn(a.id) && <span className="block mt-2 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">{a.body}</span>}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
+    <Band id="ghost-check" inner="px-4 sm:px-10 py-14 sm:py-20">
+      <SectionLabel n="03">Ghost check</SectionLabel>
+      <h2 className="text-3xl sm:text-5xl font-semibold tracking-[-0.035em] max-w-3xl mb-3">Is this job still real?</h2>
+      <p className="text-lg text-neutral-600 dark:text-neutral-400 max-w-2xl mb-8">
+        Paste any job link. We'll tell you whether it's still on the company's own board.
+      </p>
+      <form onSubmit={check} className={`flex flex-col sm:flex-row border ${RULE}`}>
+        <label className="sr-only" htmlFor="ghost-url">Job link</label>
+        <input
+          id="ghost-url"
+          type="url"
+          inputMode="url"
+          value={url}
+          onChange={(e) => { setUrl(e.target.value); if (state !== "checking") setState("idle"); }}
+          placeholder="https://boards.greenhouse.io/company/jobs/123456"
+          className={`flex-1 min-w-0 h-12 px-4 bg-transparent font-geist-mono text-[13px] outline-none placeholder:text-neutral-400 border-b sm:border-b-0 sm:border-r ${RULE}`}
+        />
+        <button
+          type="submit"
+          disabled={state === "checking" || !url.trim()}
+          className="h-12 px-6 font-geist-mono text-[11px] uppercase tracking-[0.14em] bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-emerald-600 dark:hover:bg-emerald-400 disabled:opacity-50 transition-colors"
+        >
+          {state === "checking" ? "Checking…" : "Check it"}
+        </button>
+      </form>
 
-        <div className={`order-first lg:order-none flex flex-col p-5 sm:p-8 bg-neutral-50 dark:bg-neutral-950 border-b lg:border-b-0 ${RULE}`}>
-          <div className="font-geist-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500 mb-2">Try a sample résumé</div>
-          <div className={`flex flex-wrap border-t border-l ${RULE} mb-3`} role="tablist">
-            {PERSONAS.map((p) => (
-              <button
-                key={p.id}
-                role="tab"
-                aria-selected={persona === p.id}
-                onClick={() => setPersona(p.id)}
-                className={`flex-1 min-w-[110px] px-3 h-9 border-r border-b ${RULE} font-geist-mono text-[10px] uppercase tracking-[0.12em] transition-colors ${
-                  persona === p.id ? "bg-neutral-900 text-white dark:bg-white dark:text-black" : "text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
-                }`}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-          {match && (
-            <p className="text-xs text-neutral-500 mb-4">
-              <span className="font-geist-mono uppercase tracking-[0.12em] text-[10px]">Résumé:</span> {match.persona.summary}
-            </p>
-          )}
-
-          {match ? (
-            <div className={`border ${RULE} bg-white dark:bg-black p-5 ${isLoading ? "opacity-60" : ""} transition-opacity`}>
-              <div className="flex items-start justify-between gap-4 mb-4">
-                <div className="min-w-0">
-                  <div className="text-base font-semibold">{match.title}</div>
-                  <div className="text-sm text-neutral-500 truncate">{match.company} · {shortLocation(match.location, match.workType)}</div>
-                </div>
-                <span className={`flex items-center gap-2 shrink-0 ${ring("score")}`}>
-                  <Marker n={1} active={isOn("score")} />
-                  <span className="font-geist-mono text-sm font-medium border border-emerald-600/40 text-emerald-700 dark:text-emerald-400 px-2 py-0.5">{match.matchScore}%</span>
-                </span>
-              </div>
-              <div className={`flex gap-2 text-sm text-neutral-600 dark:text-neutral-400 mb-5 ${ring("why")}`}>
-                <Marker n={2} active={isOn("why")} />
-                <div className="min-w-0">
-                  {skills.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 mb-2">
-                      {skills.map((sk) => <Tag key={sk}>{sk}</Tag>)}
-                    </div>
-                  )}
-                  <span>{match.aiExplanation}</span>
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <span className={`flex items-center gap-2 ${ring("live")}`}>
-                  <Marker n={3} active={isOn("live")} />
-                  <Tag tone="live">● Live · checked {timeAgo(match.lastLivenessCheck)}</Tag>
-                </span>
-                <a
-                  href={match.externalUrl ?? undefined}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={`flex items-center gap-2 hover:underline ${ring("link")}`}
-                >
-                  <Marker n={4} active={isOn("link")} />
-                  <span className="inline-flex items-center gap-1 text-sm font-medium">Apply on company site <ArrowUpRight className="w-4 h-4" /></span>
-                </a>
-              </div>
-            </div>
-          ) : (
-            <div className={`border ${RULE} bg-white dark:bg-black p-5 text-sm text-neutral-500`}>
-              {isLoading ? "Scoring live jobs…" : "No live match right now — try another résumé."}
+      {state === "error" && <p className="mt-4 text-sm text-red-600 dark:text-red-400" role="alert">{error}</p>}
+      {state === "done" && result && v && (
+        <div className={`mt-4 border ${RULE} p-5`} role="status">
+          <span className={`inline-flex items-center gap-1.5 border px-2 py-0.5 font-geist-mono text-[11px] uppercase tracking-[0.14em] ${VERDICT_TONES[v.tone]}`}>
+            {v.tone === "live" ? "● " : ""}{v.label}
+          </span>
+          {result.job && (
+            <div className="mt-3">
+              <div className="font-semibold">{result.job.title}</div>
+              <div className="text-sm text-neutral-500">{result.job.company}{result.job.location ? ` · ${shortLocation(result.job.location, null)}` : ""}</div>
             </div>
           )}
-          <p className="mt-3 font-geist-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500">
-            A real live job, scored by the real engine for this sample résumé. Your feed uses yours.
-          </p>
+          <p className="mt-3 text-neutral-700 dark:text-neutral-300">{v.text(result)}</p>
+          {result.verdict === "live" && result.job?.postingUrl && (
+            <a href={result.job.postingUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 mt-3 font-geist-mono text-[11px] uppercase tracking-[0.14em] text-emerald-600 dark:text-emerald-400 hover:underline">
+              Open the company's posting <ArrowUpRight className="w-3.5 h-3.5" />
+            </a>
+          )}
         </div>
-      </div>
+      )}
+      <p className="mt-3 font-geist-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500">
+        We never open the link — we just look it up in our index of company boards.
+      </p>
     </Band>
   );
 }
