@@ -1,10 +1,11 @@
-import { useState, type ReactNode } from "react";
+import React, { useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
-import { Menu, X } from "lucide-react";
+import { Linkedin, Menu, MessageSquare, X } from "lucide-react";
 import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
 import RecrutasLogo from "@/components/recrutas-logo";
 import { ThemeToggleButton } from "@/components/theme-toggle-button";
+import { FeedbackDialog } from "@/components/FeedbackButton";
 
 // Shared chrome for the public marketing pages (home + manifesto). The look is
 // precise and flat — a framed column with hairline rules, square corners, mono
@@ -39,8 +40,32 @@ export function useSiteNav(): (href: string) => void {
 
 const RULE = "border-neutral-200 dark:border-neutral-800";
 
+// The X and Reddit marks aren't in lucide, so they're drawn inline.
+function XLogo({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} fill="currentColor">
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+    </svg>
+  );
+}
+
+function RedditLogo({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} fill="currentColor">
+      <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm6.67 13.34c.03.2.04.4.04.61 0 3.07-3.57 5.56-7.98 5.56S2.75 17.02 2.75 13.95c0-.21.01-.41.04-.61a1.6 1.6 0 0 1 .65-3.06c.43 0 .82.17 1.11.45 1.1-.79 2.61-1.3 4.29-1.37l.8-3.78a.34.34 0 0 1 .41-.26l2.66.57a1.14 1.14 0 1 1-.12.56l-2.38-.5-.72 3.4c1.65.07 3.13.58 4.21 1.36a1.6 1.6 0 1 1 1.95 2.63zM8.3 12.9a1.14 1.14 0 1 0 0 2.28 1.14 1.14 0 0 0 0-2.28zm6.24 3.49a.28.28 0 0 0-.39 0c-.54.53-1.39.79-2.15.79s-1.61-.26-2.15-.79a.28.28 0 0 0-.39.39c.67.66 1.68.96 2.54.96s1.87-.3 2.54-.96a.28.28 0 0 0 0-.39zm-.66-3.49a1.14 1.14 0 1 0 0 2.28 1.14 1.14 0 0 0 0-2.28z" />
+    </svg>
+  );
+}
+
+const SOCIALS: { label: string; href: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { label: "Recrutas on LinkedIn", href: "https://www.linkedin.com/company/recrutas/", icon: Linkedin },
+  { label: "Recrutas on X", href: "https://x.com/recrutasai", icon: XLogo },
+  { label: "Recrutas community on Reddit", href: "https://www.reddit.com/r/recrutas/", icon: RedditLogo },
+];
+
 export function SiteShell({ active, children }: { active: SiteSection; children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const go = useSiteNav();
   const nav = (href: string) => { setMenuOpen(false); go(href); };
 
@@ -106,22 +131,54 @@ export function SiteShell({ active, children }: { active: SiteSection; children:
       <main>{children}</main>
 
       <footer className={`border-t ${RULE}`}>
-        <div className={`mx-auto max-w-6xl px-4 sm:px-6 py-8 lg:border-x ${RULE} flex flex-col sm:flex-row gap-5 sm:items-center justify-between`}>
+        {/* Feedback lives here on the public pages — the floating button
+            covered page content. */}
+        <div className={`mx-auto max-w-6xl lg:border-x ${RULE} px-4 sm:px-6 py-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b ${RULE}`}>
+          <div>
+            <div className="font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500 mb-1">Feedback</div>
+            <div className="text-[15px]">Something off, or an idea? We read every message.</div>
+          </div>
+          <button
+            onClick={() => setFeedbackOpen(true)}
+            className={`shrink-0 inline-flex items-center justify-center gap-2 h-10 px-4 border ${RULE} font-geist-mono text-[11px] uppercase tracking-[0.14em] hover:border-neutral-900 dark:hover:border-white transition-colors`}
+          >
+            <MessageSquare className="w-3.5 h-3.5" /> Send feedback
+          </button>
+        </div>
+        <div className={`mx-auto max-w-6xl px-4 sm:px-6 py-8 lg:border-x ${RULE} flex flex-col md:flex-row gap-6 md:items-center justify-between`}>
           <div className="flex items-center gap-2.5 font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500">
             <RecrutasLogo size={18} />
             © {new Date().getFullYear()} Recrutas · Built for US job seekers
           </div>
-          <div className="flex flex-wrap gap-x-3 gap-y-2 font-geist-mono text-xs text-neutral-500">
-            <button onClick={() => nav("/manifesto")} className="hover:text-neutral-900 dark:hover:text-white">Manifesto</button>
-            <span aria-hidden>/</span>
-            <a href="/privacy" className="hover:text-neutral-900 dark:hover:text-white">Privacy</a>
-            <span aria-hidden>/</span>
-            <a href="/terms" className="hover:text-neutral-900 dark:hover:text-white">Terms</a>
-            <span aria-hidden>/</span>
-            <a href="https://www.reddit.com/r/recrutas/" target="_blank" rel="noopener noreferrer" className="hover:text-neutral-900 dark:hover:text-white">Community</a>
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+            <div className="flex flex-wrap gap-x-3 gap-y-2 font-geist-mono text-xs text-neutral-500">
+              <button onClick={() => nav("/manifesto")} className="hover:text-neutral-900 dark:hover:text-white">Manifesto</button>
+              <span aria-hidden>/</span>
+              <a href="/privacy" className="hover:text-neutral-900 dark:hover:text-white">Privacy</a>
+              <span aria-hidden>/</span>
+              <a href="/terms" className="hover:text-neutral-900 dark:hover:text-white">Terms</a>
+              <span aria-hidden>/</span>
+              <button onClick={() => setFeedbackOpen(true)} className="hover:text-neutral-900 dark:hover:text-white">Feedback</button>
+            </div>
+            <div className="flex items-center">
+              {SOCIALS.map(({ label, href, icon: Icon }) => (
+                <a
+                  key={label}
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={label}
+                  title={label}
+                  className={`flex items-center justify-center w-9 h-9 border ${RULE} -ml-px first:ml-0 text-neutral-500 hover:text-neutral-900 dark:hover:text-white hover:border-neutral-900 dark:hover:border-white hover:z-10 transition-colors`}
+                >
+                  <Icon className="w-4 h-4" />
+                </a>
+              ))}
+            </div>
           </div>
         </div>
       </footer>
+      <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
     </div>
   );
 }
