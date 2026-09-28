@@ -21,13 +21,13 @@ const STEPS: { n: string; status: string; live?: boolean; body: ReactNode }[] = 
   },
   {
     n: "step three",
-    status: "firefox live · chrome next",
-    body: <>Meet people wherever they apply. The Auto-Fill extension completes an application on the company's own site in one click.</>,
+    status: "started · extension live",
+    body: <>Be everywhere you already are. Recrutas stops being a site you visit and becomes a layer: on any application form, inside the AI tools you already use, through an open API, and on your phone. Your matches, one call away from wherever you are.<Fn n={7} /></>,
   },
   {
     n: "step four",
-    status: "later",
-    body: <>Put it in your pocket: your feed, your matches and every answer, on mobile.</>,
+    status: "where this goes",
+    body: <>Make searching disappear. An agent that works for you around the clock — watching every company's board, applying where you'd want to, and bringing back only answers and interviews. You don't look for work. The right work finds you.<Fn n={8} /></>,
   },
 ];
 
@@ -38,6 +38,8 @@ const NOTES: ReactNode[] = [
   <>The cover letter nobody reads is the whip socket of hiring.</>,
   <>Greenhouse, Lever, Ashby, SmartRecruiters and more. No aggregators, no reposters.</>,
   <>Built, and waiting for its first employers. We won't open it until we can keep the promise.</>,
+  <>The Auto-Fill extension is live on Firefox today. An MCP server and a public API are next.</>,
+  <>Nothing is ever sent in your name without your say-so. An agent you can't trust is just another way to be ignored.</>,
 ];
 
 export default function ManifestoPage() {
