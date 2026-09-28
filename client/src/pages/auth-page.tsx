@@ -18,7 +18,12 @@ export default function AuthPage() {
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const captchaRef = useRef<TurnstileHandle>(null);
   // Shown inline (not a toast) so it stays until the user edits a field.
-  const [signInError, setSignInError] = useState<null | { credentials: boolean; message: string }>(null);
+  // A failed Google sign-in comes back here with ?error_description=… (and the
+  // same in the hash) — show it instead of silently re-rendering the form.
+  const [signInError, setSignInError] = useState<null | { credentials: boolean; message: string }>(() => {
+    const oauthError = oauthErrorFromUrl(window.location);
+    return oauthError ? { credentials: false, message: `Google sign-in failed: ${oauthError}` } : null;
+  });
 
 
   // Forward ?code= param to signup links
@@ -194,4 +199,12 @@ export default function AuthPage() {
       </div>
     </div>
   );
+}
+export function oauthErrorFromUrl(loc: Pick<Location, "search" | "hash">): string | null {
+  for (const raw of [loc.search, loc.hash.replace(/^#/, "?")]) {
+    const params = new URLSearchParams(raw);
+    const message = params.get("error_description") || params.get("error");
+    if (message) return message;
+  }
+  return null;
 }
