@@ -6,9 +6,10 @@ import "@fontsource-variable/geist-mono";
 import RecrutasLogo from "@/components/recrutas-logo";
 import { ThemeToggleButton } from "@/components/theme-toggle-button";
 
-// Shared chrome for the public marketing pages (home + manifesto): a plain top
-// nav, a single content column and a simple footer. Geist for text, Geist Mono
-// only for live data, Recrutas green as the one accent.
+// Shared chrome for the public marketing pages (home + manifesto). The look is
+// precise and flat — a framed column with hairline rules, square corners, mono
+// labels — with Recrutas green as the one accent. Geist for text, Geist Mono
+// for labels and live data.
 
 export type SiteSection = "home" | "manifesto";
 
@@ -36,63 +37,66 @@ export function useSiteNav(): (href: string) => void {
   };
 }
 
+const RULE = "border-neutral-200 dark:border-neutral-800";
+
 export function SiteShell({ active, children }: { active: SiteSection; children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const go = useSiteNav();
   const nav = (href: string) => { setMenuOpen(false); go(href); };
 
   return (
-    <div className="min-h-screen bg-white text-neutral-900 dark:bg-[#0a0a0a] dark:text-neutral-100 font-geist antialiased">
-      <header className="sticky top-0 z-40 border-b border-neutral-200/80 dark:border-neutral-800/80 bg-white/85 dark:bg-[#0a0a0a]/85 backdrop-blur">
-        <div className="mx-auto max-w-6xl px-4 sm:px-6 h-16 flex items-center justify-between">
-          <button onClick={() => nav("/")} className="flex items-center gap-2.5" aria-label="Recrutas home">
-            <RecrutasLogo size={26} />
-            <span className="text-[17px] font-semibold tracking-tight">Recrutas</span>
+    <div className="min-h-screen bg-white text-neutral-900 dark:bg-black dark:text-neutral-100 font-geist antialiased">
+      <header className={`sticky top-0 z-40 border-b ${RULE} bg-white/85 dark:bg-black/85 backdrop-blur`}>
+        <div className={`mx-auto max-w-6xl h-14 flex items-stretch justify-between lg:border-x ${RULE}`}>
+          <button onClick={() => nav("/")} className="flex items-center gap-2.5 px-4 sm:px-6" aria-label="Recrutas home">
+            <RecrutasLogo size={24} />
+            <span className="text-[16px] font-semibold tracking-tight">Recrutas</span>
           </button>
-          <nav className="hidden md:flex items-center gap-1">
+          <nav className="hidden md:flex items-stretch">
             {NAV.map((n) => (
               <button
                 key={n.label}
                 onClick={() => nav(n.href)}
-                className={`px-3 py-2 rounded-md text-sm transition-colors ${
+                className={`px-5 border-l ${RULE} font-geist-mono text-[11px] uppercase tracking-[0.14em] transition-colors ${
                   active === "manifesto" && n.href === "/manifesto"
                     ? "text-neutral-900 dark:text-white"
-                    : "text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white"
+                    : "text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
                 }`}
               >
                 {n.label}
               </button>
             ))}
-            <div className="w-px h-5 bg-neutral-200 dark:bg-neutral-800 mx-2" />
-            <ThemeToggleButton />
+            <div className={`flex items-center px-3 border-l ${RULE}`}>
+              <ThemeToggleButton />
+            </div>
             <button
               onClick={() => nav("/auth")}
-              className="ml-2 h-9 px-4 rounded-md text-sm font-medium border border-neutral-300 dark:border-neutral-700 hover:border-neutral-900 dark:hover:border-neutral-300 transition-colors"
+              className="px-6 font-geist-mono text-[11px] uppercase tracking-[0.14em] bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-emerald-600 dark:hover:bg-emerald-400 transition-colors"
             >
               Sign in
             </button>
           </nav>
           <button
             aria-label={menuOpen ? "Close menu" : "Open menu"}
-            className="md:hidden p-2 -mr-2"
+            className="md:hidden px-4"
             onClick={() => setMenuOpen((o) => !o)}
           >
             {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
         </div>
         {menuOpen && (
-          <div className="md:hidden border-t border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#0a0a0a] px-4 pb-4">
+          <div className={`md:hidden border-t ${RULE} bg-white dark:bg-black`}>
             {[...NAV, { label: "Sign in", href: "/auth" }].map((n) => (
               <button
                 key={n.label}
                 onClick={() => nav(n.href)}
-                className="block w-full text-left py-3 border-b border-neutral-100 dark:border-neutral-900 text-[15px]"
+                className={`block w-full text-left px-4 py-4 border-b ${RULE} font-geist-mono text-xs uppercase tracking-[0.14em]`}
               >
                 {n.label}
               </button>
             ))}
-            <div className="pt-3 flex items-center justify-between">
-              <span className="text-sm text-neutral-500">Theme</span>
+            <div className="px-4 py-3 flex items-center justify-between">
+              <span className="font-geist-mono text-xs uppercase tracking-[0.14em] text-neutral-500">Theme</span>
               <ThemeToggleButton />
             </div>
           </div>
@@ -101,16 +105,19 @@ export function SiteShell({ active, children }: { active: SiteSection; children:
 
       <main>{children}</main>
 
-      <footer className="border-t border-neutral-200 dark:border-neutral-800">
-        <div className="mx-auto max-w-6xl px-4 sm:px-6 py-10 flex flex-col sm:flex-row gap-6 sm:items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <RecrutasLogo size={20} />
-            <span className="text-sm text-neutral-500">© {new Date().getFullYear()} Recrutas · Built for US job seekers</span>
+      <footer className={`border-t ${RULE}`}>
+        <div className={`mx-auto max-w-6xl px-4 sm:px-6 py-8 lg:border-x ${RULE} flex flex-col sm:flex-row gap-5 sm:items-center justify-between`}>
+          <div className="flex items-center gap-2.5 font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500">
+            <RecrutasLogo size={18} />
+            © {new Date().getFullYear()} Recrutas · Built for US job seekers
           </div>
-          <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-neutral-500">
+          <div className="flex flex-wrap gap-x-3 gap-y-2 font-geist-mono text-xs text-neutral-500">
             <button onClick={() => nav("/manifesto")} className="hover:text-neutral-900 dark:hover:text-white">Manifesto</button>
+            <span aria-hidden>/</span>
             <a href="/privacy" className="hover:text-neutral-900 dark:hover:text-white">Privacy</a>
+            <span aria-hidden>/</span>
             <a href="/terms" className="hover:text-neutral-900 dark:hover:text-white">Terms</a>
+            <span aria-hidden>/</span>
             <a href="https://www.reddit.com/r/recrutas/" target="_blank" rel="noopener noreferrer" className="hover:text-neutral-900 dark:hover:text-white">Community</a>
           </div>
         </div>
@@ -121,22 +128,37 @@ export function SiteShell({ active, children }: { active: SiteSection; children:
 
 // -- Small building blocks shared by both pages --------------------------------
 
-export function Container({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <div className={`mx-auto max-w-6xl px-4 sm:px-6 ${className}`}>{children}</div>;
+/** A full-width band with a hairline on top; its content sits in the framed column. */
+export function Band({ children, id, className = "", inner = "" }: {
+  children: ReactNode; id?: string; className?: string; inner?: string;
+}) {
+  return (
+    <section id={id} className={`scroll-mt-14 border-t ${RULE} ${className}`}>
+      <div className={`mx-auto max-w-6xl lg:border-x ${RULE} ${inner}`}>{children}</div>
+    </section>
+  );
 }
 
-export function Eyebrow({ children }: { children: ReactNode }) {
-  return <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400 mb-3">{children}</p>;
+/** Mono section label with a trailing rule: "01 · HOW IT WORKS ————". */
+export function SectionLabel({ n, children }: { n?: string; children: ReactNode }) {
+  return (
+    <div className="flex items-center gap-4 mb-8">
+      <span className="font-geist-mono text-[11px] uppercase tracking-[0.16em] text-neutral-500 shrink-0">
+        {n && <span className="text-emerald-600 dark:text-emerald-400">{n} · </span>}
+        {children}
+      </span>
+      <span className="h-px flex-1 bg-neutral-200 dark:bg-neutral-800" />
+    </div>
+  );
 }
 
-export function Pill({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "live" | "next" }) {
+export function Tag({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "live" }) {
   const tones = {
-    neutral: "bg-neutral-100 text-neutral-600 dark:bg-neutral-900 dark:text-neutral-400",
-    live: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400",
-    next: "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
+    neutral: "border-neutral-300 text-neutral-500 dark:border-neutral-700 dark:text-neutral-400",
+    live: "border-emerald-600/40 text-emerald-700 dark:border-emerald-400/40 dark:text-emerald-400",
   } as const;
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${tones[tone]}`}>
+    <span className={`inline-flex items-center gap-1.5 border px-1.5 py-0.5 font-geist-mono text-[10px] uppercase tracking-wider ${tones[tone]}`}>
       {children}
     </span>
   );
@@ -146,7 +168,18 @@ export function PrimaryButton({ children, onClick }: { children: ReactNode; onCl
   return (
     <button
       onClick={onClick}
-      className="inline-flex items-center justify-center gap-2 h-11 px-5 rounded-lg text-[15px] font-medium bg-emerald-600 text-white hover:bg-emerald-500 transition-colors shadow-sm"
+      className="inline-flex items-center justify-center gap-2 h-11 px-5 text-[15px] font-medium bg-emerald-600 text-white hover:bg-emerald-500 transition-colors"
+    >
+      {children}
+    </button>
+  );
+}
+
+export function OutlineButton({ children, onClick }: { children: ReactNode; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`inline-flex items-center justify-center gap-2 h-10 px-4 border ${RULE} font-geist-mono text-[11px] uppercase tracking-[0.14em] hover:border-neutral-900 dark:hover:border-white transition-colors`}
     >
       {children}
     </button>

@@ -6,7 +6,7 @@ import SkillsStep from '@/components/guided-setup/SkillsStep';
 import CompanyProfileStep from '@/components/guided-setup/CompanyProfileStep';
 import ResumeUploadStep from '@/components/guided-setup/ResumeUploadStep';
 import JobPostStep from '@/components/guided-setup/JobPostStep';
-import RoleSelectionStep from '@/components/guided-setup/RoleSelectionStep';
+import RoleSelectionStep, { EMPLOYER_SELF_SERVE } from '@/components/guided-setup/RoleSelectionStep';
 
 import { ChevronLeft, Loader2 } from 'lucide-react';
 import { SignOutButton } from '@/components/SignOutButton';
@@ -82,7 +82,10 @@ function GuidedSetupContent() {
   // never wired in. Ask instead of assuming.
   if (role === null) {
     return (
-      <SetupShell title="Welcome to Recrutas" subtitle="First, tell us how you'll be using Recrutas.">
+      <SetupShell
+        title="Welcome to Recrutas"
+        subtitle={EMPLOYER_SELF_SERVE ? "First, tell us how you'll be using Recrutas." : "Getting your account ready…"}
+      >
         <RoleSelectionStep />
       </SetupShell>
     );

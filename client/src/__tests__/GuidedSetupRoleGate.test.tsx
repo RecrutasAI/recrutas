@@ -39,6 +39,13 @@ vi.mock('@/components/theme-toggle-button', () => ({
   ThemeToggleButton: () => <button type="button">Theme</button>,
 }));
 
+// Role saves go through apiRequest; stub it so the gate can be driven offline.
+const mockApiRequest = vi.fn();
+vi.mock('@/lib/queryClient', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/queryClient')>()),
+  apiRequest: (...args: unknown[]) => mockApiRequest(...args),
+}));
+
 const mockSession = vi.fn();
 vi.mock('@supabase/auth-helpers-react', () => ({
   useSessionContext: () => mockSession(),
@@ -66,6 +73,8 @@ const sessionHydrating = () => ({ isLoading: true, session: null });
 describe('guided setup flow selection', () => {
   beforeEach(() => {
     mockSession.mockReset();
+    mockApiRequest.mockReset();
+    mockApiRequest.mockResolvedValue(new Response('{}'));
   });
 
   it('shows a candidate the résumé step, never the employer flow', async () => {
@@ -85,15 +94,32 @@ describe('guided setup flow selection', () => {
     expect(screen.queryByText('STEP_RESUME')).not.toBeInTheDocument();
   });
 
-  it('asks for a role when the account has none, instead of assuming employer', async () => {
+  it('makes a role-less account a candidate, never an employer', async () => {
+    // Employer signup is early access (its own page), so an account reaching
+    // onboarding with no role — a first "Continue with Google" — is a candidate.
+    // The old regression silently rendered the employer flow here.
     mockSession.mockReturnValue(sessionWithRole(undefined));
     renderSetup();
 
-    // The regression: with no role, the old code silently rendered the employer
-    // flow and offered no way to say "I'm a candidate".
-    await waitFor(() => expect(screen.getByText(/I'm a Candidate/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('STEP_RESUME')).toBeInTheDocument());
+    expect(mockApiRequest).toHaveBeenCalledWith('POST', '/api/auth/role', { role: 'candidate' });
+    expect(mockApiRequest).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/Talent Owner/i)).not.toBeInTheDocument();
     expect(screen.queryByText('STEP_COMPANY')).not.toBeInTheDocument();
     expect(screen.queryByText('STEP_JOBPOST')).not.toBeInTheDocument();
+  });
+
+  it('does not start the candidate flow until the role is saved', async () => {
+    mockApiRequest.mockRejectedValue(new Error('network down'));
+    mockSession.mockReturnValue(sessionWithRole(undefined));
+    renderSetup();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument());
+    expect(screen.queryByText('STEP_RESUME')).not.toBeInTheDocument();
+
+    mockApiRequest.mockResolvedValue(new Response('{}'));
+    await userEvent.click(screen.getByRole('button', { name: /try again/i }));
+    await waitFor(() => expect(screen.getByText('STEP_RESUME')).toBeInTheDocument());
   });
 
   it('waits while the session hydrates instead of guessing a flow', async () => {

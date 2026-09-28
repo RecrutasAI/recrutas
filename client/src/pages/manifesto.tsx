@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useLocation } from "wouter";
 import { Upload } from "lucide-react";
-import { SiteShell, Container, PrimaryButton } from "@/components/site/site-shell";
+import { SiteShell, Band, SectionLabel, PrimaryButton } from "@/components/site/site-shell";
 
 export default function ManifestoPage() {
   const [, setLocation] = useLocation();
@@ -9,9 +9,9 @@ export default function ManifestoPage() {
 
   return (
     <SiteShell active="manifesto">
-      <Container className="pt-16 pb-20 sm:pt-24 sm:pb-28">
+      <Band className="border-t-0" inner="px-4 sm:px-10 pt-16 pb-20 sm:pt-24 sm:pb-28">
         <article className="mx-auto max-w-2xl">
-          <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400 mb-6">Manifesto</p>
+          <SectionLabel>Manifesto</SectionLabel>
           <h1 className="text-4xl sm:text-6xl font-semibold tracking-[-0.04em] leading-[1.05] mb-12">
             No one should have to beg for the right to earn a living.
           </h1>
@@ -41,13 +41,13 @@ export default function ManifestoPage() {
             </p>
           </div>
 
-          <div className="mt-14 pt-8 border-t border-neutral-200 dark:border-neutral-800 flex flex-col sm:flex-row sm:items-center gap-5 sm:gap-8">
+          <div className="mt-14 pt-8 border-t border-neutral-200 dark:border-neutral-800">
             <PrimaryButton onClick={start}>
               <Upload className="w-4 h-4" /> Get your ranked feed
             </PrimaryButton>
           </div>
         </article>
-      </Container>
+      </Band>
     </SiteShell>
   );
 }

@@ -1,11 +1,20 @@
 
+import { useEffect, useRef } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
-import { Users, Building } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Users, Building, Loader2 } from 'lucide-react';
 import { useGuidedSetup } from '@/contexts/GuidedSetupContext';
 import { useMutation } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
 import { useLocation } from 'wouter';
+
+// Employer accounts are early access while phase 1 (candidates) is live:
+// employers sign up on the dedicated /signup/talent-owner page, which sets the
+// role itself and never reaches this screen. So an account that arrives here
+// without a role (e.g. a first "Continue with Google" from /auth) is a
+// candidate. Flip to true to offer the candidate / talent-owner choice again.
+export const EMPLOYER_SELF_SERVE = false;
 
 export default function RoleSelectionStep() {
   const [_location, _setLocation] = useLocation();
@@ -18,10 +27,12 @@ export default function RoleSelectionStep() {
       return role;
     },
     onSuccess: (_role) => {
-      toast({
-        title: 'Role selected!',
-        description: 'Your profile has been updated.',
-      });
+      if (EMPLOYER_SELF_SERVE) {
+        toast({
+          title: 'Role selected!',
+          description: 'Your profile has been updated.',
+        });
+      }
 
       // Step 1, not 2. This screen is a gate that runs BEFORE the step machine,
       // not its first step: once a role exists the flow becomes the 2-step
@@ -43,6 +54,37 @@ export default function RoleSelectionStep() {
     setRole(role);
     setRoleMutation.mutate(role);
   };
+
+  // Candidate-only mode: save the role once, and only move on when it is
+  // stored — setting it locally first would start the candidate flow for an
+  // account the server still has no role for.
+  const autoAssigned = useRef(false);
+  useEffect(() => {
+    if (EMPLOYER_SELF_SERVE || autoAssigned.current) {return;}
+    autoAssigned.current = true;
+    setRoleMutation.mutate('candidate', { onSuccess: () => setRole('candidate') });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (!EMPLOYER_SELF_SERVE) {
+    return (
+      <div className="flex flex-col items-center gap-4 py-10 text-center">
+        {setRoleMutation.isError ? (
+          <>
+            <p className="text-muted-foreground">We couldn't finish setting up your account.</p>
+            <Button onClick={() => setRoleMutation.mutate('candidate', { onSuccess: () => setRole('candidate') })}>
+              Try again
+            </Button>
+          </>
+        ) : (
+          <>
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            <p className="text-muted-foreground">Setting up your candidate account…</p>
+          </>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div>
