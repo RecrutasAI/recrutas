@@ -58,7 +58,7 @@ import {
   inviteCodeRedemptions,
   dailyUsageLimits,
 } from "../shared/schema.js";
-import { isRecentlyVerifiedLive } from "../shared/liveness.js";
+import { isRecentlyVerifiedLive, LIVE_BADGE_MAX_AGE_HOURS } from "../shared/liveness.js";
 import { db } from "./db";
 import { eq, desc, asc, and, or } from "drizzle-orm";
 import { getTableColumns } from "drizzle-orm/utils";
@@ -325,6 +325,20 @@ const AGGREGATOR_SOURCES = new Set(['Adzuna', 'JSearch', 'Jooble', 'Indeed', 'Ar
 // client") flags Accenture Federal Services at 100% — a real employer whose
 // consultants genuinely work with clients — and would wrongly bury it. Add a
 // company here only after confirming the postings are someone else's roles.
+// Landing-page ticker: recognisable employers and the tech roles the launch
+// is aimed at. Lowercased to match lower(company).
+// Keys are lower(company); values are how the company writes its own name
+// (company is often stored lowercased by ingestion).
+const JUST_CHECKED_DISPLAY_NAMES: Record<string, string> = {
+  'anthropic': 'Anthropic', 'openai': 'OpenAI', 'stripe': 'Stripe', 'databricks': 'Databricks',
+  'datadog': 'Datadog', 'anduril industries': 'Anduril Industries', 'waymo': 'Waymo',
+  'figma': 'Figma', 'ramp': 'Ramp', 'notion': 'Notion', 'coinbase': 'Coinbase',
+  'airbnb': 'Airbnb', 'robinhood': 'Robinhood', 'brex': 'Brex', 'plaid': 'Plaid',
+};
+const JUST_CHECKED_COMPANIES = Object.keys(JUST_CHECKED_DISPLAY_NAMES);
+const JUST_CHECKED_TITLE_REGEX =
+  '\\m(engineer|developer|scientist|machine learning|data|designer|product manager|sre|devops|security)\\M';
+
 const REPOSTER_COMPANIES = new Set([
   'jobgether',              // remote-work marketplace relisting other companies' roles
   'nexthire',               // recruiting agency
@@ -802,6 +816,51 @@ export class DatabaseStorage implements IStorage {
       console.error('Error fetching job posting:', error);
       throw error;
     }
+  }
+
+  /**
+   * A handful of real, recently re-checked US tech roles for the public
+   * landing page ticker — one per well-known employer. Uses the same
+   * eligibility rules as the feed (direct ATS board, no reposters, real job
+   * post URL, explicitly US location, inside the live-badge window).
+   */
+  async getJustCheckedJobs(limit = 6): Promise<Array<{
+    title: string; company: string; location: string | null; workType: string | null;
+    externalUrl: string | null; lastLivenessCheck: Date | null;
+  }>> {
+    const rows = await db.execute(sql`
+      SELECT * FROM (
+        SELECT DISTINCT ON (lower(${jobPostings.company}))
+          ${jobPostings.title} AS title,
+          ${jobPostings.company} AS company,
+          ${jobPostings.location} AS location,
+          ${jobPostings.workType} AS work_type,
+          ${jobPostings.externalUrl} AS external_url,
+          ${jobPostings.lastLivenessCheck} AS last_liveness_check
+        FROM ${jobPostings}
+        WHERE ${jobPostings.status} = 'active'
+          AND ${jobPostings.livenessStatus} = 'active'
+          AND ${jobPostings.trustScore} >= 90
+          AND ${jobPostings.source} LIKE 'ATS:%'
+          AND ${jobPostings.lastLivenessCheck} > now() - make_interval(hours => ${LIVE_BADGE_MAX_AGE_HOURS})
+          AND lower(${jobPostings.company}) IN (${sql.join(JUST_CHECKED_COMPANIES.map(c => sql`${c}`), sql`, `)})
+          AND ${jobPostings.title} ~* ${JUST_CHECKED_TITLE_REGEX}
+          AND ${reposterExclusion}
+          AND ${jobPostUrlRequirement}
+          AND ${usPriorityOrder} = 0
+        ORDER BY lower(${jobPostings.company}), ${jobPostings.lastLivenessCheck} DESC
+      ) per_company
+      ORDER BY last_liveness_check DESC
+      LIMIT ${limit}
+    `);
+    return (((rows as any).rows ?? rows) as any[]).map(r => ({
+      title: String(r.title).trim(),
+      company: JUST_CHECKED_DISPLAY_NAMES[String(r.company).toLowerCase()] ?? r.company,
+      location: r.location,
+      workType: r.work_type,
+      externalUrl: r.external_url,
+      lastLivenessCheck: r.last_liveness_check,
+    }));
   }
 
   async getExternalJobs(skills: string[] = [], filters: { jobTitle?: string; location?: string; workType?: string } = {}): Promise<JobPosting[]> {

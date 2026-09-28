@@ -785,6 +785,23 @@ export async function registerRoutes(app: Express): Promise<Express> {
     }
   }));
 
+  // Landing-page ticker: a few real roles recently re-checked on their
+  // company's board. ~0.7s, edge-cached for 15 minutes.
+  app.get('/api/platform/just-checked', asyncHandler(async (req, res) => {
+    if (!db) return res.status(503).json({ jobs: [] });
+    try {
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Just-checked query timeout')), 15000)
+      );
+      const jobs = await Promise.race([storage.getJustCheckedJobs(6), timeout]);
+      res.set('Cache-Control', 'public, max-age=120, s-maxage=900, stale-while-revalidate=900, stale-if-error=86400');
+      res.json({ jobs });
+    } catch (error) {
+      console.error('Error fetching just-checked jobs:', error);
+      res.status(503).json({ jobs: [] });
+    }
+  }));
+
   // Auth routes
 
   // Extension login — proxies email/password to Supabase, returns JWT tokens.
