@@ -4,6 +4,7 @@ import { SessionContextProvider } from "@supabase/auth-helpers-react";
 import { supabase } from "@/lib/supabase-client";
 import AppProviders from '@/components/AppProviders';
 import Landing from "@/pages/landing-responsive";
+import ManifestoPage from "@/pages/manifesto";
 import AuthPage from "@/pages/auth-page";
 import ForgotPasswordPage from "@/pages/forgot-password";
 import ResetPasswordPage from "@/pages/reset-password";
@@ -54,6 +55,7 @@ function App() {
         <AccountEmailSync />
         <Switch>
           <Route path="/" component={Landing} />
+          <Route path="/manifesto" component={ManifestoPage} />
           <Route path="/auth" component={AuthPage} />
           <Route path="/signup/candidate" component={SignUpCandidatePage} />
           <Route path="/signup/talent-owner" component={SignUpTalentPage} />

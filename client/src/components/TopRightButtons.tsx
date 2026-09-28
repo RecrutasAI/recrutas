@@ -18,6 +18,8 @@ export function TopRightButtons() {
 
   // Hide on admin pages — admin dashboard has its own header with sign out
   if (location.startsWith('/admin')) return null;
+  // The public site pages carry their own navigation and theme toggle.
+  if (location === '/' || location === '/manifesto') return null;
 
   const handleHomeClick = () => {
     if (session) {

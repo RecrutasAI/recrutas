@@ -51,6 +51,8 @@
     "delay": "2500"
   },
   "dependencies": {
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
     "@hookform/resolvers": "^3.10.0",
     "@huggingface/transformers": "^4.2.0",
     "@mendable/firecrawl-js": "^4.15.0",

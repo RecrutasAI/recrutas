@@ -41,6 +41,7 @@ import { CompanyJob } from '../server/company-jobs-aggregator';
 import { externalJobsScheduler } from './services/external-jobs-scheduler';
 import { jobIngestionService } from './services/job-ingestion.service';
 import { getModelInfo } from './ml-matching';
+import { LIVE_BADGE_MAX_AGE_HOURS } from "../shared/liveness.js";
 import { sendWelcomeEmail, sendEmail } from './email-service';
 import { sendEmail as sendTransactionalEmail, employerWelcomeEmail, employerNewApplicantEmail } from './lib/email';
 import { track as serverTrack } from './lib/analytics';
@@ -746,6 +747,40 @@ export async function registerRoutes(app: Express): Promise<Express> {
       res.json(stats);
     } catch (error) {
       console.error('Error fetching platform stats:', error);
+      res.status(503).json({ message: 'Stats temporarily unavailable' });
+    }
+  }));
+
+  // Public supply numbers for the landing page. Only job counts — never user
+  // counts. ~0.4s over the active set, so it is cached at the edge for an hour.
+  app.get('/api/platform/live-stats', asyncHandler(async (req, res) => {
+    if (!db) return res.status(503).json({ message: 'Database not available' });
+    try {
+      const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Live stats query timeout')), 15000)
+      );
+      const rows = await Promise.race([
+        db.execute(sql`
+          SELECT count(*)::int AS active_jobs,
+                 count(DISTINCT lower(company))::int AS companies,
+                 count(*) FILTER (
+                   WHERE last_liveness_check > now() - make_interval(hours => ${LIVE_BADGE_MAX_AGE_HOURS})
+                 )::int AS recently_checked
+          FROM job_postings
+          WHERE status = 'active'
+        `),
+        timeout,
+      ]) as any;
+      const row = (rows.rows ?? rows)[0] ?? {};
+      res.set('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=3600, stale-if-error=86400');
+      res.json({
+        activeJobs: row.active_jobs ?? 0,
+        companies: row.companies ?? 0,
+        recentlyChecked: row.recently_checked ?? 0,
+        checkWindowHours: LIVE_BADGE_MAX_AGE_HOURS,
+      });
+    } catch (error) {
+      console.error('Error fetching live stats:', error);
       res.status(503).json({ message: 'Stats temporarily unavailable' });
     }
   }));
