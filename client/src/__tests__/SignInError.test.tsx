@@ -61,4 +61,11 @@ describe('sign-in failure message', () => {
     expect(alert).toHaveTextContent('Email rate limit exceeded');
     expect(alert).not.toHaveTextContent('support@recrutas.ai');
   });
+
+  it('shows a failed Google sign-in that Supabase sent back in the URL', () => {
+    window.history.replaceState(null, '', '/auth?error=server_error&error_description=Unable+to+exchange+external+code%3A+x#error=server_error');
+    render(<AuthPage />);
+    expect(screen.getByRole('alert')).toHaveTextContent('Google sign-in failed: Unable to exchange external code: x');
+    window.history.replaceState(null, '', '/');
+  });
 });
