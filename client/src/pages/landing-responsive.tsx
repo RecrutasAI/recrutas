@@ -277,11 +277,31 @@ function WhyRecrutas() {
   );
 }
 
-// -- Anatomy of a match -----------------------------------------------------------------------
+// -- A real match: the production scorer on a sample résumé ------------------------------------------
+
+interface SampleMatch {
+  persona: { id: string; label: string; summary: string };
+  title: string;
+  company: string;
+  location: string | null;
+  workType: string | null;
+  externalUrl: string | null;
+  lastLivenessCheck: string | null;
+  matchScore: number;
+  skillMatches: string[];
+  partialSkillMatches: string[];
+  aiExplanation: string;
+}
+
+const PERSONAS: { id: string; label: string }[] = [
+  { id: "backend", label: "Backend engineer" },
+  { id: "data", label: "Data scientist" },
+  { id: "frontend", label: "Frontend engineer" },
+];
 
 const ANATOMY: { id: string; label: string; body: string }[] = [
-  { id: "score", label: "Match score", body: "How closely the role fits you — what your experience means next to the posting, the skills you share, your titles and seniority." },
-  { id: "why", label: "Why it fits", body: "The specific overlap: the skills you share with the posting and how your experience lines up." },
+  { id: "score", label: "Match score", body: "How closely the role fits the résumé — titles, shared skills and seniority, weighed by the same engine that ranks your feed." },
+  { id: "why", label: "Why it fits", body: "The specific overlap: the skills the résumé shares with the posting, and the engine's own explanation of the match." },
   { id: "live", label: "Live badge", body: "Shown only when the job was on the company's board in the last 36 hours. When a company takes a posting down, we close it too." },
   { id: "link", label: "Direct link", body: "Apply goes to the posting on the company's own site — never a reposter or an aggregator." },
 ];
@@ -296,14 +316,28 @@ function Marker({ n, active }: { n: number; active: boolean }) {
 
 function MatchAnatomy() {
   const [active, setActive] = useState(ANATOMY[0].id);
+  const [persona, setPersona] = useState(PERSONAS[0].id);
+  const { data, isLoading } = useQuery<{ match: SampleMatch | null }>({
+    queryKey: ['/api/platform/sample-match', persona],
+    queryFn: async () => {
+      const res = await fetch(`/api/platform/sample-match?persona=${persona}`);
+      if (!res.ok) throw new Error('sample match unavailable');
+      return res.json();
+    },
+    staleTime: 30 * 60 * 1000,
+    retry: false,
+    placeholderData: (previous) => previous,
+  });
+  const match = data?.match ?? null;
   const isOn = (id: string) => active === id;
   const ring = (id: string) => (isOn(id) ? "outline outline-1 outline-offset-2 outline-emerald-500" : "");
+  const skills = match ? [...match.skillMatches, ...match.partialSkillMatches] : [];
 
   return (
     <Band inner="px-4 sm:px-10 py-14 sm:py-20">
-      <SectionLabel n="03">Anatomy of a match</SectionLabel>
+      <SectionLabel n="03">A real match</SectionLabel>
       <div className={`grid lg:grid-cols-[1fr_1.1fr] border ${RULE}`}>
-        <div className={`border-b lg:border-b-0 lg:border-r ${RULE}`}>
+        <div className={`lg:border-r ${RULE}`}>
           <h2 className="text-2xl sm:text-3xl font-semibold tracking-[-0.03em] p-6 sm:p-8 pb-4 sm:pb-6">Every card tells you four things.</h2>
           <ul>
             {ANATOMY.map((a, i) => (
@@ -323,34 +357,77 @@ function MatchAnatomy() {
             ))}
           </ul>
         </div>
-        <div className="flex flex-col justify-center p-5 sm:p-10 bg-neutral-50 dark:bg-neutral-950">
-          <div className={`border ${RULE} bg-white dark:bg-black p-5`}>
-            <div className="flex items-start justify-between gap-4 mb-4">
-              <div>
-                <div className="text-base font-semibold">Senior Backend Engineer</div>
-                <div className="text-sm text-neutral-500">Example Co · Remote (US)</div>
-              </div>
-              <span className={`flex items-center gap-2 ${ring("score")}`}>
-                <Marker n={1} active={isOn("score")} />
-                <span className="font-geist-mono text-sm font-medium border border-emerald-600/40 text-emerald-700 dark:text-emerald-400 px-2 py-0.5">87%</span>
-              </span>
-            </div>
-            <div className={`flex gap-2 text-sm text-neutral-600 dark:text-neutral-400 mb-5 ${ring("why")}`}>
-              <Marker n={2} active={isOn("why")} />
-              <span><span className="text-neutral-900 dark:text-white font-medium">Why it fits:</span> Go, PostgreSQL, Kubernetes · 6 years backend · senior title match</span>
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <span className={`flex items-center gap-2 ${ring("live")}`}>
-                <Marker n={3} active={isOn("live")} />
-                <Tag tone="live">● Live · checked 3h ago</Tag>
-              </span>
-              <span className={`flex items-center gap-2 ${ring("link")}`}>
-                <Marker n={4} active={isOn("link")} />
-                <span className="inline-flex items-center gap-1 text-sm font-medium">Apply on company site <ArrowUpRight className="w-4 h-4" /></span>
-              </span>
-            </div>
+
+        <div className={`order-first lg:order-none flex flex-col p-5 sm:p-8 bg-neutral-50 dark:bg-neutral-950 border-b lg:border-b-0 ${RULE}`}>
+          <div className="font-geist-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500 mb-2">Try a sample résumé</div>
+          <div className={`flex flex-wrap border-t border-l ${RULE} mb-3`} role="tablist">
+            {PERSONAS.map((p) => (
+              <button
+                key={p.id}
+                role="tab"
+                aria-selected={persona === p.id}
+                onClick={() => setPersona(p.id)}
+                className={`flex-1 min-w-[110px] px-3 h-9 border-r border-b ${RULE} font-geist-mono text-[10px] uppercase tracking-[0.12em] transition-colors ${
+                  persona === p.id ? "bg-neutral-900 text-white dark:bg-white dark:text-black" : "text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
           </div>
-          <p className="mt-3 font-geist-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500 text-center">Example card — your feed uses your résumé</p>
+          {match && (
+            <p className="text-xs text-neutral-500 mb-4">
+              <span className="font-geist-mono uppercase tracking-[0.12em] text-[10px]">Résumé:</span> {match.persona.summary}
+            </p>
+          )}
+
+          {match ? (
+            <div className={`border ${RULE} bg-white dark:bg-black p-5 ${isLoading ? "opacity-60" : ""} transition-opacity`}>
+              <div className="flex items-start justify-between gap-4 mb-4">
+                <div className="min-w-0">
+                  <div className="text-base font-semibold">{match.title}</div>
+                  <div className="text-sm text-neutral-500 truncate">{match.company} · {shortLocation(match.location, match.workType)}</div>
+                </div>
+                <span className={`flex items-center gap-2 shrink-0 ${ring("score")}`}>
+                  <Marker n={1} active={isOn("score")} />
+                  <span className="font-geist-mono text-sm font-medium border border-emerald-600/40 text-emerald-700 dark:text-emerald-400 px-2 py-0.5">{match.matchScore}%</span>
+                </span>
+              </div>
+              <div className={`flex gap-2 text-sm text-neutral-600 dark:text-neutral-400 mb-5 ${ring("why")}`}>
+                <Marker n={2} active={isOn("why")} />
+                <div className="min-w-0">
+                  {skills.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                      {skills.map((sk) => <Tag key={sk}>{sk}</Tag>)}
+                    </div>
+                  )}
+                  <span>{match.aiExplanation}</span>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span className={`flex items-center gap-2 ${ring("live")}`}>
+                  <Marker n={3} active={isOn("live")} />
+                  <Tag tone="live">● Live · checked {timeAgo(match.lastLivenessCheck)}</Tag>
+                </span>
+                <a
+                  href={match.externalUrl ?? undefined}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`flex items-center gap-2 hover:underline ${ring("link")}`}
+                >
+                  <Marker n={4} active={isOn("link")} />
+                  <span className="inline-flex items-center gap-1 text-sm font-medium">Apply on company site <ArrowUpRight className="w-4 h-4" /></span>
+                </a>
+              </div>
+            </div>
+          ) : (
+            <div className={`border ${RULE} bg-white dark:bg-black p-5 text-sm text-neutral-500`}>
+              {isLoading ? "Scoring live jobs…" : "No live match right now — try another résumé."}
+            </div>
+          )}
+          <p className="mt-3 font-geist-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500">
+            A real live job, scored by the real engine for this sample résumé. Your feed uses yours.
+          </p>
         </div>
       </div>
     </Band>

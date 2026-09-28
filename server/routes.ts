@@ -7,7 +7,7 @@ import path from "path";
 import fs from "fs";
 import { z } from "zod";
 
-import { storage } from "./storage";
+import { storage, SAMPLE_PERSONA_IDS } from "./storage";
 import { isAuthenticated } from "./middleware/auth";
 import { companyJobsAggregator } from "./company-jobs-aggregator";
 import { universalJobScraper } from "./universal-job-scraper";
@@ -782,6 +782,27 @@ export async function registerRoutes(app: Express): Promise<Express> {
     } catch (error) {
       console.error('Error fetching live stats:', error);
       res.status(503).json({ message: 'Stats temporarily unavailable' });
+    }
+  }));
+
+  // Landing-page "real match" card: the production scorer run for a fixed
+  // sample résumé against live jobs. ~0.5s, edge-cached for an hour.
+  app.get('/api/platform/sample-match', asyncHandler(async (req, res) => {
+    const persona = typeof req.query.persona === 'string' ? req.query.persona : '';
+    if (!SAMPLE_PERSONA_IDS.includes(persona)) {
+      return res.status(400).json({ message: `persona must be one of: ${SAMPLE_PERSONA_IDS.join(', ')}` });
+    }
+    if (!db) return res.status(503).json({ match: null });
+    try {
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Sample match timeout')), 15000)
+      );
+      const match = await Promise.race([storage.getSampleMatch(persona), timeout]);
+      res.set('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=3600, stale-if-error=86400');
+      res.json({ match });
+    } catch (error) {
+      console.error('Error computing sample match:', error);
+      res.status(503).json({ match: null });
     }
   }));
 

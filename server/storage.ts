@@ -339,6 +339,76 @@ const JUST_CHECKED_COMPANIES = Object.keys(JUST_CHECKED_DISPLAY_NAMES);
 const JUST_CHECKED_TITLE_REGEX =
   '\\m(engineer|developer|scientist|machine learning|data|designer|product manager|sre|devops|security)\\M';
 
+// Fixed sample résumés for the landing page's "real match" card. Synthetic
+// people, real jobs, real scorer.
+interface SamplePersona {
+  label: string;
+  summary: string;
+  titles: string[];
+  skills: string[];
+  experienceLevel: string;
+  titlePattern: string;
+}
+const SAMPLE_PERSONAS: Record<string, SamplePersona> = {
+  backend: {
+    label: 'Backend engineer',
+    summary: 'Senior backend engineer · 6 yrs · Go, PostgreSQL, Kubernetes',
+    titles: ['Senior Backend Engineer', 'Software Engineer'],
+    skills: ['Go', 'Python', 'PostgreSQL', 'Kubernetes', 'AWS', 'Docker', 'gRPC', 'Kafka', 'Redis', 'Microservices'],
+    experienceLevel: 'senior',
+    titlePattern: '\\m(backend|back-end|back end|software engineer|platform engineer)\\M',
+  },
+  data: {
+    label: 'Data scientist',
+    summary: 'Data scientist · 4 yrs · Python, SQL, machine learning',
+    titles: ['Data Scientist', 'Machine Learning Engineer'],
+    skills: ['Python', 'SQL', 'Machine Learning', 'Pandas', 'scikit-learn', 'PyTorch', 'Statistics', 'A/B Testing', 'Spark'],
+    experienceLevel: 'mid',
+    titlePattern: '\\m(data scientist|machine learning|ml engineer|applied scientist)\\M',
+  },
+  frontend: {
+    label: 'Frontend engineer',
+    summary: 'Frontend engineer · 5 yrs · React, TypeScript, design systems',
+    titles: ['Senior Frontend Engineer', 'Software Engineer'],
+    skills: ['React', 'TypeScript', 'JavaScript', 'Next.js', 'CSS', 'HTML', 'GraphQL', 'Accessibility', 'Design Systems'],
+    experienceLevel: 'senior',
+    titlePattern: '\\m(frontend|front-end|front end|ui engineer|web engineer)\\M',
+  },
+};
+export const SAMPLE_PERSONA_IDS = Object.keys(SAMPLE_PERSONAS);
+
+// Ingestion often stores company lowercased ("roku", "anduril industries").
+// Known names get their real spelling; other all-lowercase names are
+// title-cased; anything with capitals is left as the company wrote it.
+// A job title often spells the name properly ("Front-End Engineer, IXL
+// Product" for "ixl learning"), so words found there take its casing.
+function displayCompanyName(company: string, titleHint = ''): string {
+  const known = JUST_CHECKED_DISPLAY_NAMES[String(company).toLowerCase()];
+  if (known) {return known;}
+  if (company !== company.toLowerCase()) {return company;}
+  const hintWords = new Map(
+    (titleHint.match(/\p{L}[\p{L}\d]*/gu) ?? []).map(w => [w.toLowerCase(), w] as [string, string]),
+  );
+  return company.replace(/\p{L}[\p{L}\d]*/gu, w => {
+    const fromTitle = hintWords.get(w);
+    return fromTitle && fromTitle !== w ? fromTitle : w.charAt(0).toUpperCase() + w.slice(1);
+  });
+}
+
+export interface SampleMatch {
+  persona: { id: string; label: string; summary: string };
+  title: string;
+  company: string;
+  location: string | null;
+  workType: string | null;
+  externalUrl: string | null;
+  lastLivenessCheck: Date | null;
+  matchScore: number;
+  skillMatches: string[];
+  partialSkillMatches: string[];
+  aiExplanation: string;
+}
+
 const REPOSTER_COMPANIES = new Set([
   'jobgether',              // remote-work marketplace relisting other companies' roles
   'nexthire',               // recruiting agency
@@ -855,12 +925,72 @@ export class DatabaseStorage implements IStorage {
     `);
     return (((rows as any).rows ?? rows) as any[]).map(r => ({
       title: String(r.title).trim(),
-      company: JUST_CHECKED_DISPLAY_NAMES[String(r.company).toLowerCase()] ?? r.company,
+      company: displayCompanyName(r.company, String(r.title)),
       location: r.location,
       workType: r.work_type,
       externalUrl: r.external_url,
       lastLivenessCheck: r.last_liveness_check,
     }));
+  }
+
+  /**
+   * The landing page's "real match" card: run the production scorer for one
+   * of a few fixed sample résumés against live, recently checked US jobs and
+   * return the best match. Same eligibility as the feed. No résumé embedding
+   * (Vercel never embeds), so scoreJob takes its no-semantic path — the same
+   * one real candidates hit before their embedding lands.
+   */
+  async getSampleMatch(personaId: string): Promise<SampleMatch | null> {
+    const persona = SAMPLE_PERSONAS[personaId];
+    if (!persona) {return null;}
+
+    const rows = await db
+      .select({
+        title: jobPostings.title,
+        company: jobPostings.company,
+        location: jobPostings.location,
+        workType: jobPostings.workType,
+        skills: jobPostings.skills,
+        externalUrl: jobPostings.externalUrl,
+        lastLivenessCheck: jobPostings.lastLivenessCheck,
+      })
+      .from(jobPostings)
+      .where(and(
+        eq(jobPostings.status, 'active'),
+        eq(jobPostings.livenessStatus, 'active'),
+        sql`${jobPostings.trustScore} >= 90`,
+        sql`${jobPostings.source} LIKE 'ATS:%'`,
+        sql`${jobPostings.lastLivenessCheck} > now() - make_interval(hours => ${LIVE_BADGE_MAX_AGE_HOURS})`,
+        sql`${jobPostings.title} ~* ${persona.titlePattern}`,
+        sql`jsonb_typeof(${jobPostings.skills}) = 'array' AND jsonb_array_length(${jobPostings.skills}) > 0`,
+        reposterExclusion,
+        jobPostUrlRequirement,
+        sql`${usPriorityOrder} = 0`,
+      ))
+      .orderBy(desc(jobPostings.lastLivenessCheck))
+      .limit(300);
+
+    let best: SampleMatch | null = null;
+    for (const job of rows) {
+      const skills = Array.isArray(job.skills) ? (job.skills as string[]) : [];
+      const score = scoreJob(persona.skills, persona.experienceLevel, { ...job, skills }, undefined, persona.titles);
+      if (!best || score.matchScore > best.matchScore) {
+        best = {
+          persona: { id: personaId, label: persona.label, summary: persona.summary },
+          title: String(job.title).trim(),
+          company: displayCompanyName(job.company, String(job.title)),
+          location: job.location,
+          workType: job.workType,
+          externalUrl: job.externalUrl,
+          lastLivenessCheck: job.lastLivenessCheck,
+          matchScore: score.matchScore,
+          skillMatches: score.skillMatches,
+          partialSkillMatches: score.partialSkillMatches,
+          aiExplanation: score.aiExplanation,
+        };
+      }
+    }
+    return best;
   }
 
   async getExternalJobs(skills: string[] = [], filters: { jobTitle?: string; location?: string; workType?: string } = {}): Promise<JobPosting[]> {
