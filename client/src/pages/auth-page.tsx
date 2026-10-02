@@ -27,6 +27,20 @@ export default function AuthPage() {
   });
 
 
+  // Google sends the user back to /auth#access_token=…, and Supabase reads
+  // that hash a moment after the first render — so the sign-in form flashed
+  // up before the redirect, looking like the sign-in had bounced. Hold the
+  // loading screen while a return is being finished; fall back to the form if
+  // no session arrives (a bad or expired token).
+  const [finishingOAuth, setFinishingOAuth] = useState(
+    () => isOAuthReturn(window.location) && !oauthErrorFromUrl(window.location),
+  );
+  useEffect(() => {
+    if (!finishingOAuth) {return;}
+    const t = setTimeout(() => setFinishingOAuth(false), 10_000);
+    return () => clearTimeout(t);
+  }, [finishingOAuth]);
+
   // Forward ?code= param to signup links
   const codeParam = new URLSearchParams(window.location.search).get('code');
   const codeSuffix = codeParam ? `?code=${encodeURIComponent(codeParam)}` : '';
@@ -67,7 +81,7 @@ export default function AuthPage() {
 
 
 
-  if (session) {
+  if (session || finishingOAuth) {
     // Show creative loading state while redirecting — same component as the
     // role-guard so the sign-in → dashboard transition feels continuous.
     return (
@@ -196,6 +210,16 @@ export default function AuthPage() {
     </div>
   );
 }
+/**
+ * Whether this page load is Google handing a session back: implicit flow puts
+ * the tokens in the hash; PKCE (if ever enabled) sends ?code=<uuid>. The uuid
+ * shape matters — /auth?code=REDDIT-A1B2 is a signup attribution tag.
+ */
+export function isOAuthReturn(loc: Pick<Location, "search" | "hash">): boolean {
+  return /(^|[#&])access_token=/.test(loc.hash)
+    || /[?&]code=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(&|$)/i.test(loc.search);
+}
+
 export function oauthErrorFromUrl(loc: Pick<Location, "search" | "hash">): string | null {
   for (const raw of [loc.search, loc.hash.replace(/^#/, "?")]) {
     const params = new URLSearchParams(raw);
