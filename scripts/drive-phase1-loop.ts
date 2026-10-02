@@ -207,6 +207,35 @@ async function main() {
       check('no raw markup leaking into descriptions', rendered === 0, `${rendered} with markup`);
     }
 
+    // ── 7b. Feed actions + the Saved / Applications tabs ────────────────────
+    section('7b. Save / hide / apply, and the tabs that read them back');
+    if (matches.length >= 3) {
+      const [saveJob, hideJob, applyJob] = matches.slice(0, 3).map((m: any) => m.job.id);
+      const post = (path: string, body?: unknown) => fetch(`${BASE}${path}`, {
+        method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
+        body: body === undefined ? '{}' : JSON.stringify(body),
+      });
+      check('save a job', (await post('/api/candidate/saved-jobs', { jobId: saveJob })).ok);
+      check('hide a job', (await post('/api/candidate/hidden-jobs', { jobId: hideJob })).ok);
+      check('apply to a job', (await post(`/api/candidate/apply/${applyJob}`)).ok);
+
+      const actions = await (await fetch(`${BASE}/api/candidate/job-actions`, { headers: auth })).json();
+      check('job-actions reports the save', (actions.saved || []).includes(saveJob));
+      check('job-actions reports the application', (actions.applied || []).includes(applyJob));
+
+      const saved = await (await fetch(`${BASE}/api/candidate/saved-jobs`, { headers: auth })).json();
+      check('Saved tab lists the saved job', Array.isArray(saved) && saved.some((j: any) => j.id === saveJob));
+      const apps = await (await fetch(`${BASE}/api/candidate/applications`, { headers: auth })).json();
+      check('Applications tab lists the application', Array.isArray(apps) && apps.some((a: any) => a.jobId === applyJob));
+
+      const after = await (await fetch(`${BASE}/api/ai-matches?page=1&limit=100&visit=0`, { headers: auth })).json();
+      const ids = new Set((after.jobs || []).map((m: any) => m.job?.id));
+      check('hidden job leaves the feed', !ids.has(hideJob));
+      check('applied job leaves the feed', !ids.has(applyJob));
+    } else {
+      check('enough matches to exercise feed actions', false, `${matches.length} matches`);
+    }
+
     // ── 8. Profile surface ──────────────────────────────────────────────────
     section('8. Profile');
     check('profile readable', !!profile, `skills=${skills.length}`);
@@ -216,6 +245,14 @@ async function main() {
     section('Cleanup');
     if (KEEP) {
       console.log(`  ⏭️  --keep: leaving user ${userId} (${email}) in place`);
+    } else if (userId && !/localhost|127\.0\.0\.1/.test(BASE)) {
+      // Remote target: its database is not the one .env points at, so clean up
+      // through the app itself. This is also the account-deletion flow users get.
+      const del = await fetch(`${BASE}/api/account`, {
+        method: 'DELETE', headers: { apikey: ANON, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: 'DELETE' }),
+      });
+      check('DELETE /api/account removes the account', del.ok, `HTTP ${del.status}`);
     } else if (userId) {
       const del = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${userId}`, {
         method: 'DELETE', headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },

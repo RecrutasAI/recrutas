@@ -17,7 +17,7 @@ export default function SkillsStep() {
 
   return (
     <div>
-      <ProfileWizard onComplete={handleComplete} />
+      <ProfileWizard onComplete={handleComplete} skipResumeStep />
     </div>
   );
 }

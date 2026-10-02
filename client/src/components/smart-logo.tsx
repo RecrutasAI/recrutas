@@ -1,5 +1,6 @@
 import { useSession } from "@supabase/auth-helpers-react";
 import RecrutasLogo, { RecrutasLogoCompact } from "./recrutas-logo";
+import { getUserRole } from "@/lib/auth-role";
 
 interface SmartLogoProps {
   size?: number;
@@ -14,7 +15,7 @@ export default function SmartLogo({ size = 32, className = "", showText = true }
   const handleClick = () => {
     let target = "/";
     if (user) {
-      const role = (user as any)?.user_metadata?.role || (user as any)?.role;
+      const role = getUserRole(user);
       target = role === "talent_owner" || role === "recruiter"
         ? "/talent-dashboard"
         : "/candidate-dashboard";

@@ -3,6 +3,7 @@ import { useLocation } from 'wouter';
 import { useAuth } from '@/hooks/use-auth';
 import { useToast } from '@/hooks/use-toast';
 import { LoadingHype, SIGN_IN_MESSAGES } from '@/components/loading-hype';
+import { getUserRole } from '@/lib/auth-role';
 
 interface RoleGuardProps {
   allowedRoles: ('candidate' | 'talent_owner' | 'recruiter')[];
@@ -15,7 +16,7 @@ export function RoleGuard({ allowedRoles, children, fallbackPath = '/' }: RoleGu
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
-  const userRole = user?.user_metadata?.role || user?.app_metadata?.role;
+  const userRole = getUserRole(user as any);
 
   useEffect(() => {
     if (isLoading) {return;}

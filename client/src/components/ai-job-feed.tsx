@@ -433,35 +433,43 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
     },
   });
 
+  // External jobs are applied to on the company's site, so opening the posting
+  // is not an application. It used to be recorded as one on click — before the
+  // candidate had seen the form — so "Applied" meant "clicked". Now the card
+  // asks once they've been to the posting.
+  const [confirmApplyFor, setConfirmApplyFor] = useState<number | null>(null);
+
   const handleApply = (e: React.MouseEvent, match: AIJobMatch) => {
     e.stopPropagation();
     if (appliedJobIds.has(match.job.id)) {return;}
-    const isInternal = !match.job.externalUrl;
+    if (match.job.externalUrl) {
+      const isCareerPage = isCareerPageLink(match.job.externalUrl, match.job.careerPageUrl);
+      const url = isCareerPage && match.job.careerPageUrl ? match.job.careerPageUrl : match.job.externalUrl;
+      // Opened inside the click handler itself: Safari blocks window.open from
+      // a timer, which is where this used to run.
+      window.open(url, '_blank', 'noopener,noreferrer');
+      track('external_apply_opened', { job_id: match.job.id });
+      setConfirmApplyFor(match.job.id);
+      return;
+    }
     applyMutation.mutate(match.job.id, {
       onSuccess: () => {
-        if (isInternal && match.job.hasExam) {
+        if (match.job.hasExam) {
           setLocation(`/exam/${match.job.id}`);
+        } else {
+          toast({
+            title: "Application Submitted",
+            description: `Your application for ${match.job.title} at ${match.job.company} has been sent.`,
+          });
         }
       },
     });
-    if (match.job.externalUrl) {
-      const isCareerPage = isCareerPageLink(match.job.externalUrl, match.job.careerPageUrl);
-      toast({
-        title: isCareerPage ? 'Opening Company Career Page' : 'Opening External Application',
-        description: isCareerPage 
-          ? `You'll be redirected to ${match.job.company}'s career page to find this position.`
-          : `You'll be redirected to ${match.job.company}'s job posting. We've tracked this application for you.`,
-      });
-      setTimeout(() => {
-        const url = isCareerPage && match.job.careerPageUrl ? match.job.careerPageUrl : match.job.externalUrl;
-        window.open(url, '_blank');
-      }, 500);
-    } else if (!match.job.hasExam) {
-      toast({
-        title: "Application Submitted",
-        description: `Your application for ${match.job.title} at ${match.job.company} has been sent.`,
-      });
-    }
+  };
+
+  const confirmExternalApply = (e: React.MouseEvent, jobId: number) => {
+    e.stopPropagation();
+    setConfirmApplyFor(null);
+    applyMutation.mutate(jobId);
   };
 
   const handleSaveToggle = (e: React.MouseEvent, match: AIJobMatch) => {
@@ -744,6 +752,11 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
             {visibleMatches!.map((match, idx) => {
               const isSaved = savedJobIds.has(match.job.id);
               const isApplied = appliedJobIds.has(match.job.id);
+              // Mutations are shared across cards; only the card being acted on spins.
+              const isApplying = applyMutation.isPending && applyMutation.variables === match.job.id;
+              const isSaving = (saveMutation.isPending && saveMutation.variables === match.job.id)
+                || (unsaveMutation.isPending && unsaveMutation.variables === match.job.id);
+              const isHiding = hideMutation.isPending && hideMutation.variables === match.job.id;
               // Trust badges come from the server (see formatJobMatch). Don't
               // re-derive them from trustScore here: that gate needed seven
               // liveness passes to open, so it silently hid both badges on every
@@ -836,11 +849,11 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
                             size="sm"
                             variant={isApplied ? "outline" : "default"}
                             onClick={(e) => handleApply(e, match)}
-                            disabled={isApplied || applyMutation.isPending}
+                            disabled={isApplied || isApplying}
                             className={`flex-1 sm:flex-none text-xs sm:text-sm ${isApplied ? 'border-green-400 text-green-700 dark:border-green-600 dark:text-green-400' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
                             title={match.job.externalUrl ? "Opens company career page in new tab" : isInternalJob && match.job.hasExam ? "Apply and take the screening exam" : "Submit application for this job"}
                           >
-                            {applyMutation.isPending
+                            {isApplying
                               ? <Loader2 className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2 animate-spin" />
                               : isApplied
                                 ? <Check className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
@@ -848,19 +861,19 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
                                   ? <FileText className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
                                   : <ExternalLink className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />}
                             <span className="hidden sm:inline">
-                              {applyMutation.isPending ? "Applying..." : isApplied ? "Applied" : isInternalJob && match.job.hasExam ? "Apply & Take Exam" : match.job.externalUrl ? "Apply Externally" : "Apply Now"}
+                              {isApplying ? "Applying..." : isApplied ? "Applied" : isInternalJob && match.job.hasExam ? "Apply & Take Exam" : match.job.externalUrl ? "Apply Externally" : "Apply Now"}
                             </span>
-                            <span className="sm:hidden">{applyMutation.isPending ? "..." : isApplied ? "Applied" : isInternalJob && match.job.hasExam ? "Exam" : "Apply"}</span>
+                            <span className="sm:hidden">{isApplying ? "..." : isApplied ? "Applied" : isInternalJob && match.job.hasExam ? "Exam" : "Apply"}</span>
                           </Button>
                           <div className="flex items-center gap-1 sm:gap-1.5 lg:gap-2">
                             <Button
                               size="sm"
                               variant="outline"
                               onClick={(e) => handleSaveToggle(e, match)}
-                              disabled={saveMutation.isPending || unsaveMutation.isPending}
+                              disabled={isSaving}
                               className="px-2 sm:px-2.5"
                             >
-                              {(saveMutation.isPending || unsaveMutation.isPending)
+                              {isSaving
                                 ? <Loader2 className="h-3 w-3 sm:h-4 sm:w-4 animate-spin" />
                                 : <Bookmark className={`h-3 w-3 sm:h-4 sm:w-4 ${isSaved ? "fill-current text-yellow-500" : ""}`} />}
                             </Button>
@@ -868,10 +881,10 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
                               size="sm"
                               variant="outline"
                               onClick={(e) => handleHide(e, match)}
-                              disabled={hideMutation.isPending}
+                              disabled={isHiding}
                               className="px-2 sm:px-2.5"
                             >
-                              {hideMutation.isPending
+                              {isHiding
                                 ? <Loader2 className="h-3 w-3 sm:h-4 sm:w-4 animate-spin" />
                                 : <EyeOff className="h-3 w-3 sm:h-4 sm:w-4" />}
                             </Button>
@@ -886,6 +899,17 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
                           </div>
                         </div>
                       </div>
+                      {confirmApplyFor === match.job.id && !isApplied && (
+                        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-blue-50 dark:bg-blue-950/30 px-3 py-2 text-xs sm:text-sm">
+                          <span className="text-gray-700 dark:text-gray-300">Did you apply at {match.job.company}?</span>
+                          <Button size="sm" className="h-7 text-xs bg-blue-600 hover:bg-blue-700 text-white" onClick={(e) => confirmExternalApply(e, match.job.id)}>
+                            Yes, mark applied
+                          </Button>
+                          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={(e) => { e.stopPropagation(); setConfirmApplyFor(null); }}>
+                            Not yet
+                          </Button>
+                        </div>
+                      )}
                       {match.job.externalUrl && (
                         <div className="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
                           <div className="flex items-center">
