@@ -11,6 +11,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { getUserRole } from '@/lib/auth-role';
 
 export function TopRightButtons() {
   const session = useSession();
@@ -23,8 +24,7 @@ export function TopRightButtons() {
 
   const handleHomeClick = () => {
     if (session) {
-      // Get role from user metadata
-      const role = session.user?.user_metadata?.role || session.user?.app_metadata?.role;
+      const role = getUserRole(session.user);
 
       if (role === 'talent_owner' || role === 'recruiter') {
         setLocation('/talent-dashboard');

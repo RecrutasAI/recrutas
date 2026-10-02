@@ -6,6 +6,7 @@ import { ArrowRight, ArrowUpRight, Upload } from "lucide-react";
 import {
   SiteShell, Band, SectionLabel, Tag, PrimaryButton, useSiteNav,
 } from "@/components/site/site-shell";
+import { getUserRole } from "@/lib/auth-role";
 
 const RULE = "border-neutral-200 dark:border-neutral-800";
 
@@ -44,7 +45,7 @@ export default function LandingResponsive() {
 
   const goToApp = () => {
     if (session) {
-      const role = (session.user as any)?.user_metadata?.role;
+      const role = getUserRole(session.user);
       setLocation(role === 'talent_owner' || role === 'recruiter' ? '/talent-dashboard' : '/candidate-dashboard');
     } else {
       // Preserve ?code= param so invite code flows through to signup
@@ -53,7 +54,7 @@ export default function LandingResponsive() {
     }
   };
 
-  if (session && !session.user?.user_metadata?.role) {
+  if (session && !getUserRole(session.user)) {
     setLocation('/role-selection');
     return null;
   }

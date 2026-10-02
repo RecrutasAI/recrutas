@@ -13,6 +13,7 @@ import { SignOutButton } from '@/components/SignOutButton';
 import { ThemeToggleButton } from '@/components/theme-toggle-button';
 import { Button } from '@/components/ui/button';
 import { useSessionContext } from '@supabase/auth-helpers-react';
+import { getUserRole } from '@/lib/auth-role';
 
 /** Shared page chrome, so the loading and role-gate states don't lose the header. */
 function SetupShell({ children, title, subtitle }: { children: React.ReactNode; title: string; subtitle: string }) {
@@ -43,8 +44,8 @@ function GuidedSetupContent() {
 
   // Initialize role from signup metadata if available
   useEffect(() => {
-    if (session?.user?.user_metadata?.role) {
-      const userRole = session.user.user_metadata.role;
+    const userRole = getUserRole(session?.user);
+    if (userRole) {
       if (userRole === 'candidate' || userRole === 'talent_owner') {
         setRole(userRole);
       }

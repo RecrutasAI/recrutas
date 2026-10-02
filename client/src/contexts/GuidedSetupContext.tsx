@@ -1,6 +1,7 @@
 
 import { createContext, useContext, useState, useEffect } from 'react';
 import { useSessionContext } from '@supabase/auth-helpers-react';
+import { getUserRole } from '@/lib/auth-role';
 
 interface GuidedSetupContextType {
   step: number;
@@ -28,7 +29,7 @@ export function GuidedSetupProvider({ children }: { children: React.ReactNode })
       setIsLoading(true);
       return;
     }
-    const userRole = session?.user?.user_metadata?.role;
+    const userRole = getUserRole(session?.user);
     if (userRole === 'candidate' || userRole === 'talent_owner') {
       setRole(userRole);
     }

@@ -5,9 +5,10 @@ import { Button } from '@/components/ui/button';
 import { Users, Building, Loader2 } from 'lucide-react';
 import { useGuidedSetup } from '@/contexts/GuidedSetupContext';
 import { useMutation } from '@tanstack/react-query';
-import { apiRequest } from '@/lib/queryClient';
+import { apiRequest, queryClient } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
 import { useLocation } from 'wouter';
+import { supabase } from '@/lib/supabase-client';
 
 // Employer access is closed while phase 1 (candidates) is live — employers
 // join the homepage interest list, and nothing public links to employer
@@ -23,7 +24,17 @@ export default function RoleSelectionStep() {
 
   const setRoleMutation = useMutation({
     mutationFn: async (role: 'candidate' | 'talent_owner') => {
-      await apiRequest('POST', '/api/auth/role', { role });
+      // apiRequest resolves on any HTTP status, so a failed save has to be
+      // turned into an error here or the flow starts with no role stored.
+      const res = await apiRequest('POST', '/api/auth/role', { role });
+      if (!res.ok) {throw new Error(`Role save failed (${res.status})`);}
+      // The server records the role in app_metadata, but this tab's token was
+      // minted before that. Without a fresh token RoleGuard sees no role at the
+      // end of onboarding and sends the user back to step 1 (it did, for an
+      // hour, until the token refreshed on its own). Not fatal: RoleGuard also
+      // reads the role from the users row.
+      await supabase.auth.refreshSession().catch(() => {});
+      await queryClient.invalidateQueries({ queryKey: ['/api/auth/user'] });
       return role;
     },
     onSuccess: (_role) => {

@@ -6,6 +6,7 @@ import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { GoogleSignInButton, OrDivider } from "@/components/google-sign-in-button";
 import { LoadingHype, SIGN_IN_MESSAGES } from "@/components/loading-hype";
 import { Turnstile, captchaEnabled, type TurnstileHandle } from "@/components/turnstile";
+import { getUserRole } from "@/lib/auth-role";
 
 export default function AuthPage() {
   const supabase = useSupabaseClient();
@@ -32,7 +33,7 @@ export default function AuthPage() {
 
   useEffect(() => {
     if (session) {
-      const userRole = session.user?.user_metadata?.role;
+      const userRole = getUserRole(session.user);
       if (userRole === 'candidate') {
         setLocation("/candidate-dashboard");
       } else if (userRole === 'talent_owner' || userRole === 'recruiter') {
