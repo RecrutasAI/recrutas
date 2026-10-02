@@ -34,13 +34,26 @@ function loadScript(): Promise<void> {
   return scriptPromise;
 }
 
+// Start downloading as soon as a form that needs it is imported, not when it
+// mounts — the check can't start until the script is here.
+if (captchaEnabled && typeof window !== "undefined") {loadScript().catch(() => {});}
+
+/** How long a submit waits for Cloudflare before giving up. */
+const TOKEN_WAIT_MS = 30_000;
+
 export interface TurnstileHandle {
+  /**
+   * The current token, or the next one once Cloudflare finishes its check.
+   * null when the check fails or times out. Forms stay clickable and await
+   * this on submit, instead of sitting disabled while the check runs.
+   */
+  getToken: () => Promise<string | null>;
   /** Tokens are single-use: call after every submit attempt. */
   reset: () => void;
 }
 
 interface TurnstileProps {
-  onToken: (token: string | null) => void;
+  onToken?: (token: string | null) => void;
 }
 
 /** Renders nothing when CAPTCHA is disabled. */
@@ -49,10 +62,32 @@ export const Turnstile = forwardRef<TurnstileHandle, TurnstileProps>(function Tu
   const widgetId = useRef<string | null>(null);
   const onTokenRef = useRef(onToken);
   onTokenRef.current = onToken;
+  const token = useRef<string | null>(null);
+  const waiters = useRef<((t: string | null) => void)[]>([]);
+
+  const settle = (t: string | null, wake: boolean) => {
+    token.current = t;
+    onTokenRef.current?.(t);
+    if (!wake) {return;}
+    const pending = waiters.current;
+    waiters.current = [];
+    pending.forEach((resolve) => resolve(t));
+  };
 
   useImperativeHandle(ref, () => ({
+    getToken: () => {
+      if (!captchaEnabled || token.current) {return Promise.resolve(token.current);}
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          waiters.current = waiters.current.filter((w) => w !== done);
+          resolve(null);
+        }, TOKEN_WAIT_MS);
+        const done = (t: string | null) => { clearTimeout(timer); resolve(t); };
+        waiters.current.push(done);
+      });
+    },
     reset: () => {
-      onTokenRef.current(null);
+      settle(null, false);
       if (widgetId.current && window.turnstile) {window.turnstile.reset(widgetId.current);}
     },
   }), []);
@@ -66,12 +101,12 @@ export const Turnstile = forwardRef<TurnstileHandle, TurnstileProps>(function Tu
         widgetId.current = window.turnstile.render(container.current, {
           sitekey: TURNSTILE_SITE_KEY,
           appearance: "interaction-only", // invisible unless Cloudflare needs a click
-          callback: (token: string) => onTokenRef.current(token),
-          "expired-callback": () => onTokenRef.current(null),
-          "error-callback": () => onTokenRef.current(null),
+          callback: (t: string) => settle(t, true),
+          "expired-callback": () => settle(null, false),
+          "error-callback": () => settle(null, true),
         });
       })
-      .catch(() => onTokenRef.current(null));
+      .catch(() => settle(null, true));
     return () => {
       cancelled = true;
       if (widgetId.current && window.turnstile) {window.turnstile.remove(widgetId.current);}

@@ -16,7 +16,6 @@ export default function AuthPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [signInLoading, setSignInLoading] = useState(false);
-  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const captchaRef = useRef<TurnstileHandle>(null);
   // Shown inline (not a toast) so it stays until the user edits a field.
   // A failed Google sign-in comes back here with ?error_description=… (and the
@@ -63,6 +62,9 @@ export default function AuthPage() {
     setSignInLoading(true);
     setSignInError(null);
     try {
+      // The button is live before Cloudflare's check finishes; wait for it here.
+      const captchaToken = captchaEnabled ? await captchaRef.current?.getToken() : null;
+      if (captchaEnabled && !captchaToken) {throw new Error("We couldn't verify this browser. Refresh the page and try again.");}
       const { error } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -181,12 +183,12 @@ export default function AuthPage() {
               </div>
             )}
 
-            <Turnstile ref={captchaRef} onToken={setCaptchaToken} />
+            <Turnstile ref={captchaRef} />
 
             <div className="flex flex-col items-center space-y-4">
               <button
                 type="submit"
-                disabled={signInLoading || (captchaEnabled && !captchaToken)}
+                disabled={signInLoading}
                 className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-primary-foreground bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring"
               >
                 {signInLoading ? (
