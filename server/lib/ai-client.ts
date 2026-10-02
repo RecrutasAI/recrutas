@@ -18,8 +18,8 @@ export interface CallAIOptions {
  *     Metered — free tier caps requests/day (429 when exhausted). A retired
  *     model returns 404, which is NOT a quota error and never recovers on its
  *     own. Supports text + image + PDF.
- *   - groq: open-weights `llama-3.3-70b-versatile` on Groq's free tier, rate-
- *     limited via groq-limiter. Text only.
+ *   - groq: open-weights `openai/gpt-oss-20b` on Groq's free tier (GROQ_MODEL
+ *     overrides), rate-limited via groq-limiter. Text only.
  *   - openrouter: OpenAI-compatible gateway over open-weights models (Llama 3.x/4,
  *     Qwen, DeepSeek, Gemma…). Text + image (vision); PDF via multimodal file part.
  *     Avoids single-vendor lock-in — switch models or BYOK without code changes.
@@ -42,6 +42,25 @@ const CAPABLE: Record<Modality, Provider[]> = {
 function configuredProvider(): Provider {
   const p = (process.env.AI_PROVIDER || 'gemini').toLowerCase();
   return p === 'openrouter' ? 'openrouter' : p === 'groq' ? 'groq' : 'gemini';
+}
+
+/**
+ * The Groq model every caller uses. `llama-3.3-70b-versatile` was retired by
+ * Groq (404 "model_not_found") and, hard-coded in four places, silently pushed
+ * every résumé to the rule engine for weeks. Measured 2026-10-02 on 10 real
+ * résumés: gpt-oss-20b at low reasoning effort returned valid JSON 10/10 in
+ * 0.5–2s. Override with GROQ_MODEL when this one is retired too.
+ */
+export const groqModel = (): string => process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
+
+/**
+ * gpt-oss is a reasoning model: by default it spends 300–1,900 tokens thinking
+ * before answering, which counts against max_tokens (a long résumé hit the
+ * 2,500 cap) and the 8,000 tokens/min free-tier budget. Extraction doesn't need
+ * it — low effort gave the same titles and skills in a third of the time.
+ */
+export function groqReasoningParams(model: string): { reasoning_effort?: 'low' } {
+  return model.startsWith('openai/gpt-oss') ? { reasoning_effort: 'low' } : {};
 }
 
 function getGroqClient(): Groq | null {
@@ -117,7 +136,10 @@ async function withFallback(
           await new Promise(r => setTimeout(r, backoffMs));
           continue;
         }
-        errors.push(`${p}: ${msg}`);
+        // Bounded per provider: the joined message is stored truncated, and one
+        // long error (OpenRouter's 404 body) used to crowd out every provider
+        // after it, so Gemini's failures were never recorded.
+        errors.push(`${p}: ${msg.replace(/\s+/g, ' ').slice(0, 160)}`);
         console.warn(`[AIClient] ${modality} via ${p} failed (${msg})${chain.indexOf(p) < chain.length - 1 ? ' — trying next provider' : ''}`);
         break;
       }
@@ -143,7 +165,7 @@ async function withFallback(
 // EMBED_PROVIDER. Resolving once at import made GEMINI_MODEL unusable as an
 // operational lever: swapping the model would have needed a redeploy, which is
 // precisely the slow path you do NOT want when Google retires a model under you.
-const geminiModel = () => process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+export const geminiModel = (): string => process.env.GEMINI_MODEL || 'gemini-3.5-flash';
 const geminiUrl = () =>
   `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel()}:generateContent`;
 
@@ -192,10 +214,11 @@ const callGeminiPDF = (system: string, user: string, pdfBuffer: Buffer, opts: Ca
 async function callGroqText(systemPrompt: string, userPrompt: string, opts: CallAIOptions): Promise<string> {
   const groqClient = getGroqClient();
   if (!groqClient) throw new Error('GROQ_API_KEY not set');
-  const model = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+  const model = groqModel();
   const completion = await throttledGroqRequest(
     () => groqClient.chat.completions.create({
       model,
+      ...groqReasoningParams(model),
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },

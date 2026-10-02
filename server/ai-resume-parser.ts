@@ -3,7 +3,7 @@ import { extractText, getDocumentProxy, renderPageAsImage } from 'unpdf';
 import Tesseract from 'tesseract.js';
 import Groq from 'groq-sdk';
 import { parseResumeWithIntelligence } from './skill-intelligence';
-import { callAIWithPDF, isAIAvailable } from './lib/ai-client';
+import { callAIWithPDF, isAIAvailable, groqModel, groqReasoningParams } from './lib/ai-client';
 import { throttledGroqRequest, type GroqPriority } from './lib/groq-limiter';
 
 // Lazy-initialize Groq client to ensure env vars are loaded (ESM imports hoist before dotenv.config)
@@ -88,6 +88,9 @@ interface ParsedResume {
   primaryError?: string;
 }
 
+/** Below this, a PDF's text layer is treated as missing (a scanned image). */
+const MIN_TEXT_LAYER_CHARS = 200;
+
 const RESUME_EXTRACTION_PROMPT = `Extract the following information from this resume and return as JSON:
 
 {
@@ -152,38 +155,53 @@ export class AIResumeParser {
       // result carries WHY it was downgraded rather than just that it was.
       let primaryError: string | undefined;
 
-      // Path 1: PDF — try Gemini multimodal FIRST (reads raw bytes, handles all PDF types)
+      // PDFs: text layer → Groq first, Gemini multimodal only when that can't work.
+      //
+      // Gemini used to go first, but its free tier allows 20 requests/day per
+      // model (shared with every other feature on the key) and its models keep
+      // being retired or overloaded; with OpenRouter configured ahead of it,
+      // every upload spent its budget on two dead providers before reaching
+      // text extraction. Text-based PDFs — almost every résumé — parse fine from
+      // their text layer (measured 10/10 on real résumés with gpt-oss-20b).
+      // Multimodal is kept for what text can't do: scanned PDFs with no text
+      // layer, and as a second chance when the text model fails.
       if (typeof fileContent !== 'string' || fileContent !== 'text-input') {
-        if (mimeType === 'application/pdf' && isAIAvailable('pdf')) {
-          try {
-            console.log('[AIResumeParser] PDF detected — trying multimodal AI (primary)');
-            const jsonStr = await callAIWithPDF(
-              'You are an expert resume parser. Extract structured data and return ONLY valid JSON.',
-              RESUME_EXTRACTION_PROMPT,
-              fileContent as Buffer,
-              { priority: 'high', maxOutputTokens: 2500 }
-            );
-            const aiExtracted = this.parseAIResponse(jsonStr);
-            const confidence = this.calculateConfidence(aiExtracted);
-            const totalSkills = (aiExtracted.skills?.technical?.length || 0) +
-              (aiExtracted.skills?.soft?.length || 0) +
-              (aiExtracted.skills?.tools?.length || 0);
-            console.log(`[AIResumeParser] Gemini multimodal succeeded: ${totalSkills} skills, confidence ${confidence}`);
-            // Also try to extract text for storage (best-effort, non-blocking)
-            let text = '[extracted via Gemini multimodal]';
-            try {
-              const extracted = await this.extractText(fileContent as Buffer, mimeType);
-              if (extracted && extracted.trim().length >= 50) text = extracted;
-            } catch { /* text extraction is optional here */ }
+        if (mimeType === 'application/pdf') {
+          const layer = await this.pdfTextLayer(fileContent as Buffer);
+          if (layer.length >= MIN_TEXT_LAYER_CHARS) {
+            const viaText = await this.extractWithAI(layer);
+            if (viaText.extractor === 'ai-text') {
+              return {
+                text: layer, aiExtracted: viaText.data, confidence: this.calculateConfidence(viaText.data),
+                processingTime: Date.now() - startTime, extractor: 'ai-text', degraded: false,
+              };
+            }
+            primaryError = `text: ${viaText.aiError ?? 'empty result'}`.slice(0, 300);
+            const viaPdf = await this.tryMultimodal(fileContent as Buffer);
+            if (viaPdf.ok) {
+              return {
+                text: layer, aiExtracted: viaPdf.data, confidence: this.calculateConfidence(viaPdf.data),
+                processingTime: Date.now() - startTime, extractor: 'gemini-multimodal', degraded: false,
+              };
+            }
+            primaryError = `${primaryError} | pdf: ${viaPdf.error}`.slice(0, 600);
+            // Both AI engines failed: keep the rule engine's answer, flagged.
             return {
-              text, aiExtracted, confidence,
-              processingTime: Date.now() - startTime,
-              extractor: 'gemini-multimodal', degraded: false,
+              text: layer, aiExtracted: viaText.data, confidence: this.calculateConfidence(viaText.data),
+              processingTime: Date.now() - startTime, extractor: viaText.extractor, degraded: true, primaryError,
             };
-          } catch (geminiErr) {
-            primaryError = (geminiErr as Error).message.slice(0, 300);
-            console.warn('[AIResumeParser] Gemini multimodal failed, falling back to text extraction:', (geminiErr as Error).message);
           }
+          // No usable text layer — a scanned PDF. Only a multimodal model can read it.
+          const viaPdf = await this.tryMultimodal(fileContent as Buffer);
+          if (viaPdf.ok) {
+            return {
+              text: layer || '[extracted via multimodal AI]', aiExtracted: viaPdf.data,
+              confidence: this.calculateConfidence(viaPdf.data),
+              processingTime: Date.now() - startTime, extractor: 'gemini-multimodal', degraded: false,
+            };
+          }
+          primaryError = `pdf: ${viaPdf.error}`.slice(0, 600);
+          // Fall through to OCR → text model → rules.
         }
 
         // Path 2: text extraction → AI (fallback for PDFs, primary for DOCX/TXT)
@@ -195,16 +213,20 @@ export class AIResumeParser {
           console.warn('[AIResumeParser] Text extraction failed, trying rules anyway:', (extractErr as Error).message);
           text = ''; // Will use rules on empty text
         }
-        const { data: aiExtracted, extractor } = await this.extractWithAI(text || ' ');
+        const { data: aiExtracted, extractor, aiError } = await this.extractWithAI(text || ' ');
+        if (extractor !== 'ai-text' && aiError) {
+          primaryError = [primaryError, `text: ${aiError}`].filter(Boolean).join(' | ').slice(0, 600);
+        }
         const confidence = this.calculateConfidence(aiExtracted);
         return {
           text: text || '[no text extracted - using rule-based parsing]',
           aiExtracted, confidence,
           processingTime: Date.now() - startTime,
           extractor,
-          // A PDF reaching here already lost its best engine; anything the rule
-          // engine answers is degraded regardless of input type.
-          degraded: primaryError !== undefined || extractor !== 'ai-text',
+          // Degraded means the rule engine answered. A scanned PDF read by OCR
+          // and then the text model is a real AI parse, even though multimodal
+          // failed first — primaryError still records that.
+          degraded: extractor !== 'ai-text',
           primaryError,
         };
       }
@@ -398,7 +420,7 @@ English (Native), Spanish (Conversational)`;
    * provenance: `rules` and `ai-text` are not interchangeable in quality, and
    * without a label a degraded parse is indistinguishable from a good one.
    */
-  private async extractWithAI(text: string): Promise<{ data: AIExtractedData; extractor: ResumeExtractor }> {
+  private async extractWithAI(text: string): Promise<{ data: AIExtractedData; extractor: ResumeExtractor; aiError?: string }> {
     // Balanced approach: run rules and AI in parallel, use whichever succeeds
     // AI gets 15s max — if circuit breaker is open or provider is slow, rules win fast
     const rulePromise = this.extractWithFallback(text);
@@ -465,7 +487,40 @@ English (Native), Spanish (Conversational)`;
     // If this looks like a CS/tech resume (>= 2 CS languages), strip
     // healthcare skills that LLMs hallucinate from noisy OCR text or
     // that rules infer from substring matches.
-    return { data: this.applyDomainCoherenceFilter(winner), extractor };
+    const aiError = extractor === 'ai-text' ? undefined
+      : aiResult.status === 'rejected' ? String((aiResult as PromiseRejectedResult).reason?.message ?? 'unknown').slice(0, 300)
+      : 'empty result';
+    return { data: this.applyDomainCoherenceFilter(winner), extractor, aiError };
+  }
+
+  /** The PDF's own text layer, without OCR — empty for a scanned PDF. */
+  private async pdfTextLayer(fileBuffer: Buffer): Promise<string> {
+    try {
+      const pdf = await getDocumentProxy(new Uint8Array(fileBuffer));
+      const { text } = await extractText(pdf, { mergePages: true });
+      return (text || '').trim();
+    } catch (err) {
+      console.warn('[AIResumeParser] PDF text layer unreadable:', (err as Error).message);
+      return '';
+    }
+  }
+
+  /** Raw PDF bytes → a multimodal model (Gemini; OpenRouter if configured). */
+  private async tryMultimodal(fileBuffer: Buffer): Promise<{ ok: true; data: AIExtractedData } | { ok: false; error: string }> {
+    if (!isAIAvailable('pdf')) {return { ok: false, error: 'no multimodal provider configured' };}
+    try {
+      console.log('[AIResumeParser] Trying multimodal AI on the raw PDF');
+      const jsonStr = await callAIWithPDF(
+        'You are an expert resume parser. Extract structured data and return ONLY valid JSON.',
+        RESUME_EXTRACTION_PROMPT,
+        fileBuffer,
+        { priority: 'high', maxOutputTokens: 2500 },
+      );
+      return { ok: true, data: this.parseAIResponse(jsonStr) };
+    } catch (err) {
+      console.warn('[AIResumeParser] Multimodal AI failed:', (err as Error).message);
+      return { ok: false, error: (err as Error).message.slice(0, 400) };
+    }
   }
 
   private applyDomainCoherenceFilter(result: AIExtractedData): AIExtractedData {
@@ -541,12 +596,27 @@ English (Native), Spanish (Conversational)`;
       throw new Error('No AI API keys configured');
     }
 
-    // Try Groq first (free, fast)
-    try {
-      console.log('[AIResumeParser] Trying Groq API...');
-      return await this.extractWithGroq(text);
-    } catch (aiError: any) {
-      console.warn('[AIResumeParser] Groq failed:', aiError.message);
+    // Each provider's reason, so the stored primaryError says WHY — a bare
+    // "All AI providers failed" is what hid the retired Groq model for weeks.
+    const reasons: string[] = [];
+
+    // Try Groq first (free, fast). Asked twice if the first answer is valid
+    // JSON with nothing in it — gpt-oss does that about 1 call in 25 (seen in a
+    // dry run over real résumés); a second call costs ~1.5s and has come back
+    // full every time.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        console.log(`[AIResumeParser] Trying Groq API (attempt ${attempt})...`);
+        const data = await this.extractWithGroq(text);
+        const found = (data.skills?.technical?.length || 0) + (data.skills?.tools?.length || 0)
+          + (data.skills?.soft?.length || 0) + (data.experience?.positions?.length || 0);
+        if (found > 0 || attempt === 2) {return data;}
+        console.warn('[AIResumeParser] Groq returned an empty extraction — asking again');
+      } catch (aiError: any) {
+        console.warn('[AIResumeParser] Groq failed:', aiError.message);
+        reasons.push(`groq: ${String(aiError.message).replace(/\s+/g, ' ').slice(0, 160)}`);
+        break;
+      }
     }
 
     // Try Ollama (local)
@@ -558,6 +628,7 @@ English (Native), Spanish (Conversational)`;
         return await this.extractWithOllama(text, ollamaUrl, ollamaModel);
       } catch (ollamaError: any) {
         console.warn('[AIResumeParser] Ollama failed:', ollamaError.message);
+        reasons.push(`ollama: ${String(ollamaError.message).slice(0, 120)}`);
       }
     }
 
@@ -569,10 +640,11 @@ English (Native), Spanish (Conversational)`;
         return await this.extractWithHF(text, hfApiKey);
       } catch (hfError: any) {
         console.warn('[AIResumeParser] Hugging Face failed:', hfError.message);
+        reasons.push(`hf: ${String(hfError.message).slice(0, 120)}`);
       }
     }
 
-    throw new Error('All AI providers failed');
+    throw new Error(`All AI providers failed — ${reasons.join(' | ') || 'none configured'}`);
   }
 
   private async extractWithHF(text: string, apiKey: string): Promise<AIExtractedData> {
@@ -816,9 +888,11 @@ Return JSON with this exact structure:
 Resume text:
 ${truncatedText}`;
 
+    const model = groqModel();
     const completion = await throttledGroqRequest(
       () => groqClient.chat.completions.create({
-        model: 'llama-3.3-70b-versatile',
+        model,
+        ...groqReasoningParams(model),
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
@@ -828,7 +902,10 @@ ${truncatedText}`;
         max_tokens: 2500,
       }),
       'high',
-      4000
+      // Measured at low effort on 10 real résumés: ≤1,800 prompt + ≤1,300
+      // completion tokens. 4,000 against the limiter's per-minute bucket made
+      // a second upload in the same minute wait past the 15s AI race.
+      3000
     );
 
     const content = completion.choices[0]?.message?.content;

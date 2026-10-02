@@ -711,6 +711,12 @@ export class DatabaseStorage implements IStorage {
             // Treat "has a résumé but no parse result" as retryable too.
             or(
               eq(candidateProfiles.resumeProcessingStatus, 'failed'),
+              // A rule-engine fallback that found any skills is saved as
+              // 'completed', so it was never retried: every résumé uploaded
+              // while the AI providers were down kept rule-engine positions
+              // ("Full-stack delivery: building" as a job title) for good.
+              sql`(${candidateProfiles.resumeParsingData}->>'degraded') = 'true'
+                AND (${candidateProfiles.resumeParsingData}->>'extractor') IN ('rules', 'none')`,
               and(
                 sql`${candidateProfiles.parsedAt} IS NULL`,
                 or(

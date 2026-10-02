@@ -1,6 +1,7 @@
 /**
  * Retry failed resume parses — standalone cron script
- * Retries up to 3 candidates per run with Gemini multimodal PDF parsing.
+ * Retries up to 3 candidates per run (RETRY_PARSE_LIMIT overrides): failed or
+ * never-parsed résumés, and rule-engine parses left behind by an AI outage.
  *
  * Usage: npx tsx scripts/retry-failed-parses.ts
  */
@@ -12,7 +13,9 @@ import { runAsPipeline, type PipelineSummary } from '../server/services/pipeline
 async function main(): Promise<PipelineSummary> {
   console.log('[RetryParse] Looking for failed parses to retry...');
 
-  const candidates = await storage.getCandidatesForParseRetry(3);
+  // 3 a day by default; RETRY_PARSE_LIMIT raises it for a one-off backfill.
+  const limit = Math.max(1, Number(process.env.RETRY_PARSE_LIMIT) || 3);
+  const candidates = await storage.getCandidatesForParseRetry(limit);
   if (candidates.length === 0) {
     console.log('[RetryParse] No failed parses to retry');
     return { status: 'ok', itemsProcessed: 0, message: 'no failed parses to retry' };

@@ -10,7 +10,7 @@ import crypto from 'crypto';
 import Groq from 'groq-sdk';
 import { ScrapedJob, CompanyConfig, JobLocation } from '../types.js';
 import { logger } from '../utils/logger.js';
-import { callAI } from '../../lib/ai-client.js';
+import { callAI, groqModel, groqReasoningParams } from '../../lib/ai-client.js';
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024; // 5MB
 
@@ -256,8 +256,10 @@ async function callGroqForExtraction(html: string, company: CompanyConfig): Prom
   // Same 12,000-token per-request ceiling as the unified client path above.
   const truncatedHtml = truncateForAI(html);
 
+  const model = groqModel();
   const completion = await groq.chat.completions.create({
-    model: 'llama-3.3-70b-versatile',
+    model,
+    ...groqReasoningParams(model),
     messages: [
       { role: 'system', content: systemPrompt },
       {

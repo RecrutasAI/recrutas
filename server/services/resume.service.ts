@@ -6,6 +6,33 @@ import { sendInngestEvent } from '../inngest-service.js';
 import { captureException } from '../error-monitoring';
 import { invalidateCandidateEmbedding } from './candidate-embedding.service';
 import { track } from '../lib/analytics';
+import { groqModel, geminiModel } from '../lib/ai-client';
+
+/**
+ * A stored résumé's real type, from its first bytes. Storage paths carry no
+ * extension (`resume-1790360826866-3c7tb26fdz4`), so the extension check this
+ * replaced sent every Word upload down the PDF path on retry — 4 of the last
+ * 10 résumés — where it parsed to nothing.
+ */
+export function sniffResumeMime(buf: Buffer, path = ''): string {
+  const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  const head = buf.subarray(0, 4).toString('latin1');
+  if (head === '%PDF') {return 'application/pdf';}
+  if (head.startsWith('PK')) {return DOCX;}            // .docx is a zip
+  if (buf.subarray(0, 4).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0]))) {return 'application/msword';} // legacy .doc
+  const ext = path.split('?')[0].split('.').pop()?.toLowerCase();
+  if (ext === 'docx') {return DOCX;}
+  if (ext === 'doc') {return 'application/msword';}
+  return 'application/pdf';
+}
+
+// Which model produced a parse. This recorded GEMINI_MODEL unconditionally, so
+// rule-engine results claimed to come from Gemini.
+function modelFor(extractor: string | undefined): string {
+  if (extractor === 'ai-text') {return groqModel();}
+  if (extractor === 'gemini-multimodal') {return geminiModel();}
+  return extractor ?? 'none';
+}
 
 /** Recursively strip PostgreSQL-illegal null bytes (\0) from all strings in a value. */
 function stripNullBytes<T>(val: T): T {
@@ -268,7 +295,7 @@ export class ResumeService {
           extractor: parseResult?.extractor ?? 'none',
           degraded: parseResult?.degraded ?? true,
           ...(parseResult?.primaryError ? { primaryError: parseResult.primaryError } : {}),
-          parsedWithModel: process.env.GEMINI_MODEL || 'gemini-3.5-flash',
+          parsedWithModel: modelFor(parseResult?.extractor),
           extractedSkillsCount: (aiExtracted.skills?.technical?.length || 0) +
             (aiExtracted.skills?.soft?.length || 0) +
             (aiExtracted.skills?.tools?.length || 0),
@@ -431,6 +458,12 @@ export class ResumeService {
   ): Promise<{ userId: string; success: boolean; skills: number; error?: string }> {
     console.log(`[ResumeService] Retrying failed parse for user: ${userId}, url: ${resumeUrl}`);
 
+    // A profile that already holds a (degraded) parse is being UPGRADED, not
+    // repaired: the user may have edited skills since. Write only an AI result,
+    // and merge skills instead of replacing them.
+    const existing = await this.storage.getCandidateUser(userId).catch(() => undefined);
+    const upgrading = existing?.resumeProcessingStatus === 'completed';
+
     // Increment attempts before retrying — crash-safe
     await this.storage.incrementParseAttempts(userId);
 
@@ -444,12 +477,7 @@ export class ResumeService {
       const arrayBuffer = await response.arrayBuffer();
       const fileBuffer = Buffer.from(arrayBuffer);
 
-      // Infer mimetype from storage path extension (strip query params from signed URL)
-      const ext = resumeUrl.split('.').pop()?.toLowerCase();
-      let mimetype = 'application/pdf';
-      if (ext === 'docx') {
-        mimetype = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-      }
+      const mimetype = sniffResumeMime(fileBuffer, resumeUrl);
 
       // Run AI parsing
       const parseResult = await this.aiResumeParser.parseFile(fileBuffer, mimetype);
@@ -475,6 +503,14 @@ export class ResumeService {
         ...(aiExtracted.skills?.tools || []),
       ];
 
+      const byAI = (parseResult?.extractor === 'ai-text' || parseResult?.extractor === 'gemini-multimodal')
+        && (extractedSkills.length > 0 || (aiExtracted.experience?.positions?.length ?? 0) > 0);
+      if (upgrading && !byAI) {
+        // Still the rule engine: rewriting would only churn the profile.
+        console.log(`[ResumeService] Upgrade retry for ${userId} still degraded (${parseResult?.extractor}) — left as is`);
+        return { userId, success: false, skills: 0, error: `still degraded: ${parseResult?.primaryError ?? parseResult?.extractor}` };
+      }
+
       // Build profile update
       const profileUpdate: any = {
         userId,
@@ -487,7 +523,7 @@ export class ResumeService {
           extractor: parseResult?.extractor ?? 'none',
           degraded: parseResult?.degraded ?? true,
           ...(parseResult?.primaryError ? { primaryError: parseResult.primaryError } : {}),
-          parsedWithModel: process.env.GEMINI_MODEL || 'gemini-3.5-flash',
+          parsedWithModel: modelFor(parseResult?.extractor),
           parsingError: parsingSuccess ? null : 'AI parsing failed on retry',
           positions: (aiExtracted.experience?.positions || []).slice(0, 6).map((p: any) => ({
             title: p.title || '',
@@ -500,9 +536,13 @@ export class ResumeService {
       if (parseResult?.text) {
         profileUpdate.resumeText = parseResult.text;
       }
-      // Skills: always wipe and replace on retry — stale skills pollute matches
-      profileUpdate.skills = extractedSkills.length > 0
-        ? normalizeSkills(extractedSkills).slice(0, 30)
+      // A repair replaces skills (stale ones pollute matches). An upgrade keeps
+      // what the profile already has after the AI's list, so skills the user
+      // added or kept by hand survive.
+      const existingSkills: string[] = upgrading && Array.isArray(existing?.skills) ? existing!.skills as string[] : [];
+      const skillPool = [...extractedSkills, ...existingSkills];
+      profileUpdate.skills = skillPool.length > 0
+        ? normalizeSkills(skillPool).slice(0, 30)
         : [];
       if (aiExtracted.experience?.level) {
         profileUpdate.experienceLevel = aiExtracted.experience.level;

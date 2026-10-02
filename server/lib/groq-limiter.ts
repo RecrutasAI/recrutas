@@ -3,7 +3,7 @@
  *
  * Coordinates all Groq API calls across the application with:
  * - Priority queue (critical > high > medium > low)
- * - Token bucket (5,000 tokens/min, 25 req/min — conservative below free tier limits)
+ * - Token bucket (7,000 tokens/min, 25 req/min — a margin below the free tier's 8,000/min)
  * - Circuit breaker (60s pause on 429, 5 min on 3 consecutive 429s)
  * - LRU cache (500 entries) for job summaries to avoid re-processing same descriptions
  */
@@ -12,9 +12,13 @@ import { createHash } from 'crypto';
 
 export type GroqPriority = 'critical' | 'high' | 'medium' | 'low';
 
-// Token bucket parameters (conservative below Groq free tier: 6k tokens/min, 30 req/min)
-const TOKEN_BUCKET_CAPACITY = 5000;
-const TOKEN_REFILL_RATE = 5000 / 60; // tokens per second
+// Token bucket, a margin below Groq's free tier for the gpt-oss models:
+// 8,000 tokens/min and 1,000 requests/day (read from x-ratelimit-limit-*
+// headers, 2026-10-02). It was 5,000, sized for an older 6k limit, which with
+// a 4,000-token résumé estimate made every second upload in a minute wait
+// ~36s — past the parser's 15s AI race, so the rule engine won by default.
+const TOKEN_BUCKET_CAPACITY = 7000;
+const TOKEN_REFILL_RATE = 7000 / 60; // tokens per second
 const REQ_BUCKET_CAPACITY = 25;
 const REQ_REFILL_RATE = 25 / 60; // requests per second
 
