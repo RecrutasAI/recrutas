@@ -13,12 +13,14 @@ import { Turnstile, captchaEnabled, type TurnstileHandle } from "@/components/tu
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("")
   const [isSubmitted, setIsSubmitted] = useState(false)
-  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
   const captchaRef = useRef<TurnstileHandle>(null)
   const { toast } = useToast()
 
   const resetPasswordMutation = useMutation({
     mutationFn: async (email: string) => {
+      // The button is live before Cloudflare's check finishes; wait for it here.
+      const captchaToken = captchaEnabled ? await captchaRef.current?.getToken() : null
+      if (captchaEnabled && !captchaToken) {throw new Error("We couldn't verify this browser. Refresh the page and try again.")}
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: `${window.location.origin}/reset-password`,
         ...(captchaToken ? { captchaToken } : {}),
@@ -129,12 +131,12 @@ export default function ForgotPasswordPage() {
                 />
               </div>
 
-              <Turnstile ref={captchaRef} onToken={setCaptchaToken} />
+              <Turnstile ref={captchaRef} />
 
               <Button
                 type="submit"
                 className="w-full bg-primary text-primary-foreground hover:bg-primary/90 transition-colors duration-200 h-11"
-                disabled={resetPasswordMutation.isPending || !email || (captchaEnabled && !captchaToken)}
+                disabled={resetPasswordMutation.isPending || !email}
               >
                 {resetPasswordMutation.isPending ? (
                   <>

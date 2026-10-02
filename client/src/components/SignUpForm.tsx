@@ -45,7 +45,6 @@ export default function SignUpForm({ role }: SignUpFormProps) {
   const [inviteCode, setInviteCode] = useState(getCodeFromURL);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const captchaRef = useRef<TurnstileHandle>(null);
 
   // Also pick up code if user navigates with ?code= after initial render
@@ -60,6 +59,9 @@ export default function SignUpForm({ role }: SignUpFormProps) {
     e.preventDefault();
     setLoading(true);
     try {
+      // The button is live before Cloudflare's check finishes; wait for it here.
+      const captchaToken = captchaEnabled ? await captchaRef.current?.getToken() : null;
+      if (captchaEnabled && !captchaToken) {throw new Error("We couldn't verify this browser. Refresh the page and try again.");}
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -263,12 +265,12 @@ export default function SignUpForm({ role }: SignUpFormProps) {
         )}
       </div>
 
-      <Turnstile ref={captchaRef} onToken={setCaptchaToken} />
+      <Turnstile ref={captchaRef} />
 
       <div>
         <button
           type="submit"
-          disabled={loading || (captchaEnabled && !captchaToken)}
+          disabled={loading}
           className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-primary-foreground bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring"
         >
           {loading ? (
