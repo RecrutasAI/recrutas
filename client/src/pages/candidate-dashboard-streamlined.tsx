@@ -190,8 +190,12 @@ export default function CandidateStreamlinedDashboard() {
     if ((profile as any).skills && (profile as any).skills.length > 0) {completed++;}
     if ((profile as any).experience) {completed++;}
     if ((profile as any).location) {completed++;}
-    if ((profile as any).workType) {completed++;}
-    if ((profile as any).salaryMin && (profile as any).salaryMax) {completed++;}
+    // Onboarding saves work type and salary into jobPreferences; the old
+    // top-level columns are only set on accounts from before it, so reading
+    // just those capped almost everyone below 100%.
+    const prefs = (profile as any).jobPreferences || {};
+    if ((profile as any).workType || prefs.workTypes?.length > 0) {completed++;}
+    if (((profile as any).salaryMin && (profile as any).salaryMax) || prefs.salaryMin || prefs.salaryMax) {completed++;}
 
     return Math.round((completed / total) * 100);
   }, [profile]);
