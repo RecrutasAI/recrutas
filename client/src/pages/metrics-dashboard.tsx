@@ -343,7 +343,7 @@ export function MetricsContent({ secret: externalSecret }: { secret?: string }) 
                     </div>
                   </div>
                   <p className="text-xs text-muted-foreground mt-3">
-                    Only top scorers unlock direct chat — ensuring employers only see qualified candidates.
+                    Only top scorers unlock direct chat, so employers only see qualified candidates.
                   </p>
                 </>
               )}
@@ -558,7 +558,7 @@ export function MetricsContent({ secret: externalSecret }: { secret?: string }) 
         <CardHeader><CardTitle className="flex items-center gap-2"><BarChart3 className="h-5 w-5" />Endpoint Latency (last {timeRange}h)</CardTitle></CardHeader>
         <CardContent>
           {latency.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No data yet — metrics accumulate over time (20% sampling).</p>
+            <p className="text-muted-foreground text-sm">No data yet. Metrics accumulate over time (20% sampling).</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

@@ -12,12 +12,12 @@ const STEPS: { n: string; status: string; live?: boolean; body: ReactNode }[] = 
     n: "step one",
     status: "live today",
     live: true,
-    body: <>Give job seekers a feed they can trust: live US roles, straight from the source, ranked against their résumé — each one telling you why it fits.</>,
+    body: <>Give job seekers a feed they can trust: live US roles, straight from the source, ranked against their résumé, each one telling you why it fits.</>,
   },
   {
     n: "step two",
     status: "next",
-    body: <>Open the other side. Companies post roles on Recrutas, and candidates take a short exam generated from the job itself — the company's own bar, not a generic test. Everyone who passes hears back within 24 hours, with a direct line to the hiring manager.<Fn n={6} /></>,
+    body: <>Open the other side. Companies post roles on Recrutas, and candidates take a short exam generated from the job itself: the company's own bar, not a generic test. Everyone who passes hears back within 24 hours, with a direct line to the hiring manager.<Fn n={6} /></>,
   },
   {
     n: "step three",
@@ -27,13 +27,13 @@ const STEPS: { n: string; status: string; live?: boolean; body: ReactNode }[] = 
   {
     n: "step four",
     status: "where this goes",
-    body: <>Make searching disappear. An agent that works for you around the clock — watching every company's board, applying where you'd want to, and bringing back only answers and interviews. You don't look for work. The right work finds you.<Fn n={8} /></>,
+    body: <>Make searching disappear. An agent that works for you around the clock, watching every company's board, applying where you'd want to, and bringing back only answers and interviews. You don't look for work. The right work finds you.<Fn n={8} /></>,
   },
 ];
 
 const NOTES: ReactNode[] = [
   <>Not on who you know, which keywords you guessed, or how many times you can retype the same work history.</>,
-  <>An answer means a reply to every application — even a no.</>,
+  <>An answer means a reply to every application, even a no.</>,
   <>As of September 2026, counting only roles we read directly from employers' own career pages. US roles only, for now.</>,
   <>The cover letter nobody reads is the whip socket of hiring.</>,
   <>Greenhouse, Lever, Ashby, SmartRecruiters and more. No aggregators, no reposters.</>,
@@ -57,7 +57,7 @@ export default function ManifestoPage() {
           <Prose>
             <p>
               Our mission is to make finding honest work depend on what you can do, not on how many forms
-              you can survive<Fn n={1} /> — by turning hiring from a black box into a system that
+              you can survive<Fn n={1} />, by turning hiring from a black box into a system that
               answers.<Fn n={2} />
             </p>
           </Prose>
@@ -65,7 +65,7 @@ export default function ManifestoPage() {
           <Section label="we already have the jobs">
             <p>
               The problem was never a shortage of openings. On any given day we track more than 140,000
-              live roles from over 4,000 companies<Fn n={3} /> — and those are only the ones employers post
+              live roles from over 4,000 companies<Fn n={3} />, and those are only the ones employers post
               themselves.
             </p>
             <p>
@@ -101,7 +101,7 @@ export default function ManifestoPage() {
           <Section label="trust before scale">
             <p>
               You only act on what you trust. A listing is worth your evening only if the job is real,
-              still open, and actually fits — and an application is worth sending only if someone will
+              still open, and actually fits. And an application is worth sending only if someone will
               answer it.
             </p>
             <p>

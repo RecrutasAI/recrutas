@@ -605,7 +605,7 @@ export function scoreJob(
   }
 
   if (explanationParts.length === 0) {
-    explanationParts.push('Limited match — different role or skill set');
+    explanationParts.push('Limited match: different role or skill set');
   }
 
   const explanation = explanationParts.join('. ');

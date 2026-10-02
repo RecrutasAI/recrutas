@@ -63,7 +63,7 @@ describe('UsOnlyGate', () => {
     renderGate();
     await userEvent.type(await screen.findByLabelText(/email when we expand/), 'lavan@example.com');
     await userEvent.click(screen.getByRole('button', { name: 'Notify me' }));
-    expect(await screen.findByText(/we'll email you when Recrutas covers India/)).toBeInTheDocument();
+    expect(await screen.findByText(/We'll email you when Recrutas covers India/)).toBeInTheDocument();
     const call = fetchMock.mock.calls.find(([u]) => u === '/api/waitlist')!;
     expect(JSON.parse(String(call[1]!.body))).toEqual({ email: 'lavan@example.com', source: 'non-us:IN' });
   });

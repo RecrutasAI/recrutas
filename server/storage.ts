@@ -1521,7 +1521,7 @@ export class DatabaseStorage implements IStorage {
     // tokens from seeing "No matches yet" despite having uploaded a resume.
     if (candidateSkills.length === 0) {
       console.log(`Candidate ${candidateId} has skills but none normalized - returning discovery feed`);
-      return this.getDiscoveryFeed(excludeIds, "We couldn't recognize specific skills from your resume — here are recent roles to explore", undefined, feedFilterConditions(filters));
+      return this.getDiscoveryFeed(excludeIds, "We couldn't recognize specific skills from your resume. Here are recent roles to explore.", undefined, feedFilterConditions(filters));
     }
 
     // Extract candidate's previous job titles from resume parsing data

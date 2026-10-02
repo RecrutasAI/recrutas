@@ -19,67 +19,67 @@ const SITE = 'Recrutas';
 
 const ROUTES: Record<string, RouteMeta> = {
   '/': {
-    title: `${SITE} — Real jobs. Made to fit you.`,
+    title: `${SITE} | Real jobs. Made to fit you.`,
     description:
-      'Upload your résumé once. Get live US roles from company career pages, ranked by how well you fit — and why. Free for candidates.',
+      'Upload your résumé once. Get live US roles from company career pages, ranked by how well you fit, and why. Free for candidates.',
   },
   '/manifesto': {
-    title: `Manifesto — ${SITE}`,
+    title: `Manifesto | ${SITE}`,
     description:
       'No one should have to beg for the right to earn a living. Real jobs, pulled straight from the source, made to fit you. No ghosts. No leftovers. No silence.',
   },
   '/pricing': {
-    title: `Pricing — ${SITE}`,
+    title: `Pricing | ${SITE}`,
     description:
-      'Simple, transparent pricing for candidates and recruiters. Start free — no credit card required.',
+      'Simple, transparent pricing for candidates and recruiters. Start free. No credit card required.',
   },
   '/signup/candidate': {
-    title: `Join as a Candidate — ${SITE}`,
+    title: `Join as a Candidate | ${SITE}`,
     description:
       'Create your profile and get AI-matched to top full-time roles instantly. No more endless applications.',
   },
   '/signup/talent-owner': {
-    title: `Post Jobs & Hire — ${SITE}`,
+    title: `Post Jobs & Hire | ${SITE}`,
     description:
       'Find pre-screened, AI-matched candidates for your open roles. Post a job and start interviewing today.',
   },
   '/auth': {
-    title: `Sign In — ${SITE}`,
+    title: `Sign In | ${SITE}`,
     description: 'Sign in to your Recrutas account to continue your job search or manage your hiring pipeline.',
     noindex: true,
   },
   '/forgot-password': {
-    title: `Reset Password — ${SITE}`,
+    title: `Reset Password | ${SITE}`,
     description: 'Reset your Recrutas account password.',
     noindex: true,
   },
   '/reset-password': {
-    title: `Set New Password — ${SITE}`,
+    title: `Set New Password | ${SITE}`,
     description: 'Choose a new password for your Recrutas account.',
     noindex: true,
   },
   '/privacy': {
-    title: `Privacy Policy — ${SITE}`,
+    title: `Privacy Policy | ${SITE}`,
     description: 'Learn how Recrutas collects, uses, and protects your personal data.',
   },
   '/terms': {
-    title: `Terms of Service — ${SITE}`,
+    title: `Terms of Service | ${SITE}`,
     description: 'Read the terms governing your use of the Recrutas AI hiring platform.',
   },
   '/candidate-dashboard': {
-    title: `Candidate Dashboard — ${SITE}`,
-    description: 'Your AI-matched jobs, applications, and chats — all in one place.',
+    title: `Candidate Dashboard | ${SITE}`,
+    description: 'Your AI-matched jobs, applications, and chats, all in one place.',
     noindex: true,
   },
   '/talent-dashboard': {
-    title: `Recruiter Dashboard — ${SITE}`,
+    title: `Recruiter Dashboard | ${SITE}`,
     description: 'Manage job postings, review candidates, and track your hiring pipeline.',
     noindex: true,
   },
 };
 
 const DEFAULT: RouteMeta = {
-  title: `${SITE} — AI-Driven Hiring Platform`,
+  title: `${SITE} | AI-Driven Hiring Platform`,
   description:
     'AI-powered instant job matching that connects qualified candidates with full-time roles in real-time.',
 };

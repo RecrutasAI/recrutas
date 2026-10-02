@@ -80,7 +80,7 @@ export const enforceSLAFunction = inngest.createFunction(
           await notificationService.createNotification({
             userId: candidateId,
             type: 'application_rejected',
-            title: 'Application Closed — No Response',
+            title: 'Application Closed: No Response',
             message: `${company} did not respond to your ${jobTitle} application within 24 hours.`,
             priority: 'high',
             relatedApplicationId: applicationId,
@@ -116,7 +116,7 @@ export const enforceSLAFunction = inngest.createFunction(
             : 'A candidate';
           await sendEmail({
             to: employer.email,
-            subject: `⏰ ${hoursLeft}h left to respond to ${candidateName} — ${jobTitle}`,
+            subject: `⏰ ${hoursLeft}h left to respond to ${candidateName} for ${jobTitle}`,
             html: employerSLAWarningEmail(
               (employer as any).firstName,
               candidateName,

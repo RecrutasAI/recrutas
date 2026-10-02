@@ -390,7 +390,7 @@ class NotificationService {
 
   async notifyExamCompleted(talentOwnerId: string, candidateName: string, jobTitle: string, score: number, applicationId: number, passed = false) {
     const priority = passed ? 'urgent' : score >= 80 ? 'high' : 'medium';
-    const title = passed ? '⏰ Candidate Passed — Respond Within 24h' : 'Screening Exam Completed';
+    const title = passed ? '⏰ Candidate Passed: Respond Within 24h' : 'Screening Exam Completed';
     const message = passed
       ? `${candidateName} passed the ${jobTitle} exam with ${score}%. You have 24 hours to respond.`
       : `${candidateName} completed the ${jobTitle} screening exam with ${score}% score`;
@@ -408,7 +408,7 @@ class NotificationService {
 
   async notifyCandidateExamResult(candidateId: string, jobTitle: string, score: number, passed: boolean, passingScore: number, applicationId: number, examFeedback?: string, company?: string, ranking?: number, totalCandidates?: number) {
     const priority = passed ? 'high' : 'medium';
-    const title = passed ? 'Exam Passed — Chat Unlocked!' : 'Exam Result';
+    const title = passed ? 'Exam Passed: Chat Unlocked!' : 'Exam Result';
     const message = passed
       ? `You scored ${score}% on the ${jobTitle} screening (threshold: ${passingScore}%). You've unlocked chat with the hiring team!`
       : `You scored ${score}% on the ${jobTitle} screening (threshold: ${passingScore}%). Unfortunately you didn't meet the threshold this time.`;
@@ -433,7 +433,7 @@ class NotificationService {
           : candidateExamFailEmail(candidateName, jobTitle, company || '', score, passingScore, examFeedback);
         await sendTransactionalEmail({
           to: user.email,
-          subject: passed ? `You passed the ${jobTitle} exam — chat unlocked` : `Your ${jobTitle} exam result`,
+          subject: passed ? `You passed the ${jobTitle} exam. Chat unlocked!` : `Your ${jobTitle} exam result`,
           html,
         });
 

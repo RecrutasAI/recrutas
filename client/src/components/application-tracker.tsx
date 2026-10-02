@@ -51,7 +51,7 @@ interface ApplicationStatus {
 }
 
 const statusConfig: Record<string, { label: string; color: string; progress: number }> = {
-  queued: { label: "Queued — submitting in ~5 min", color: "bg-amber-500", progress: 3 },
+  queued: { label: "Queued: submitting in ~5 min", color: "bg-amber-500", progress: 3 },
   submitting: { label: "Submitting...", color: "bg-amber-500", progress: 5 },
   applied: { label: "Submitted", color: "bg-blue-500", progress: 10 },
   submitted: { label: "Submitted", color: "bg-blue-500", progress: 10 },

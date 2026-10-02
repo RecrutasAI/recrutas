@@ -113,11 +113,11 @@ function Hero({ onStart }: { onStart: () => void }) {
           <span className="whitespace-nowrap text-emerald-600 dark:text-emerald-400">Made to fit you.</span>
         </h1>
         <p className="mt-6 text-lg sm:text-xl leading-relaxed text-neutral-600 dark:text-neutral-400 max-w-2xl">
-          Upload your résumé once. Get live US roles, ranked by how well you fit — and why.
+          Upload your résumé once. Get live US roles, ranked by how well you fit, and why.
         </p>
         <div className="mt-9 flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
           <PrimaryButton onClick={onStart}>
-            <Upload className="w-4 h-4" /> Upload résumé — it's free
+            <Upload className="w-4 h-4" /> Upload résumé. It's free
           </PrimaryButton>
           <span className="font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500">Free for candidates · US roles only</span>
         </div>
@@ -230,7 +230,7 @@ function LiveSearch({ onStart }: { onStart: () => void }) {
       if (query!.remote) params.set('remote', '1');
       const res = await fetch(`/api/platform/live-search?${params}`);
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(res.status === 429 ? 'Lots of searches in a short time — try again in a minute.' : body.message || 'Search is unavailable right now.');
+      if (!res.ok) throw new Error(res.status === 429 ? 'Lots of searches in a short time. Try again in a minute.' : body.message || 'Search is unavailable right now.');
       return body;
     },
     staleTime: 10 * 60 * 1000,
@@ -249,7 +249,7 @@ function LiveSearch({ onStart }: { onStart: () => void }) {
     <Band id="live" inner="px-4 sm:px-10 py-14 sm:py-20">
       <SectionLabel>Live right now</SectionLabel>
       <h2 className="text-3xl sm:text-5xl font-semibold tracking-[-0.035em] max-w-3xl mb-3">What's live for you right now?</h2>
-      <p className="text-lg text-neutral-600 dark:text-neutral-400 max-w-2xl mb-8">Type a role. No résumé, no account — just the real market, today.</p>
+      <p className="text-lg text-neutral-600 dark:text-neutral-400 max-w-2xl mb-8">Type a role. No résumé, no account. Just the real market, today.</p>
 
       <form
         onSubmit={(e) => { e.preventDefault(); run(); }}
@@ -367,9 +367,9 @@ function LiveSearch({ onStart }: { onStart: () => void }) {
 
 function HowItWorks() {
   const steps = [
-    { title: "Upload your résumé", body: "We read your titles, skills and seniority — no forms to fill in." },
-    { title: "Get a ranked feed", body: "Live roles from company career pages, best fit first — each with the reason it matched." },
-    { title: "Apply on the company's site", body: "Every match links straight to the real posting on the employer's own site — no reposters in between." },
+    { title: "Upload your résumé", body: "We read your titles, skills and seniority. No forms to fill in." },
+    { title: "Get a ranked feed", body: "Live roles from company career pages, best fit first, each with the reason it matched." },
+    { title: "Apply on the company's site", body: "Every match links straight to the real posting on the employer's own site. No reposters in between." },
   ];
   return (
     <Band id="how" inner="px-4 sm:px-10 py-14 sm:py-20">
@@ -393,11 +393,11 @@ function HowItWorks() {
 // -- Why Recrutas ------------------------------------------------------------------------
 
 const REASONS: { title: string; body: string; tags: string[] }[] = [
-  { title: "Matched on what you've done.", body: "Your titles, skills and seniority — not keyword overlap. A senior backend engineer sees senior backend roles.", tags: ["titles", "skills", "seniority"] },
+  { title: "Matched on what you've done.", body: "Your titles, skills and seniority, not keyword overlap. A senior backend engineer sees senior backend roles.", tags: ["titles", "skills", "seniority"] },
   { title: "Direct from the company.", body: "Pulled from each employer's own hiring system. No reposters, no aggregator spam.", tags: ["greenhouse", "lever", "ashby"] },
   { title: "Live, and checked.", body: "Every board is re-read every few hours. A job gets the live badge only if we saw it in the last 36 hours.", tags: ["● live · checked"] },
   { title: "Every match explains itself.", body: "A score and the reasons behind it, so an 85 and a 60 look different and you know where to spend your time.", tags: ["score", "why it fits"] },
-  { title: "Filters that mean it.", body: "City, remote / hybrid / onsite and date posted run over your whole match set — not just the first page.", tags: ["seattle", "remote", "past 3 days"] },
+  { title: "Filters that mean it.", body: "City, remote / hybrid / onsite and date posted run over your whole match set, not just the first page.", tags: ["seattle", "remote", "past 3 days"] },
   { title: "Free for candidates.", body: "No subscription, no premium tier for job seekers. Companies will pay; people looking for work don't.", tags: ["$0"] },
 ];
 
@@ -448,7 +448,7 @@ function EmployerInterest() {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || "Something went wrong. Try again in a minute.");
       setState("done");
-      setMessage("Thanks — you're on the list. We'll email you when employer access opens.");
+      setMessage("Thanks, you're on the list. We'll email you when employer access opens.");
     } catch (err) {
       setState("error");
       setMessage(err instanceof Error ? err.message : "Something went wrong. Try again in a minute.");

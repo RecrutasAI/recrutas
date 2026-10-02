@@ -215,7 +215,8 @@ async function generateExamQuestions(job: any) {
   if (isAIAvailable()) {
     try {
       const systemPrompt = `You are an expert technical recruiter creating a screening exam for job candidates.
-Generate exactly 5 questions that test real competence for the role — not self-assessments.
+Generate exactly 5 questions that test real competence for the role, not self-assessments.
+Do not use em dashes (—) anywhere in the questions or options; candidates read them as AI-written.
 
 Rules:
 - 3 multiple-choice questions (4 options each, one correct answer)
@@ -1435,7 +1436,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     } catch (error: any) {
       console.error(`[account-delete] DB delete failed for ${userId}:`, error?.message);
       return res.status(500).json({
-        message: 'We could not delete your account. Nothing was removed — please try again or email support@recrutas.ai.',
+        message: 'We could not delete your account. Nothing was removed. Please try again or email support@recrutas.ai.',
       });
     }
 
@@ -1528,7 +1529,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
         const firstName = req.user.user_metadata?.first_name;
         sendTransactionalEmail({
           to: req.user.email,
-          subject: 'Welcome to Recrutas — post your first job',
+          subject: 'Welcome to Recrutas: post your first job',
           html: employerWelcomeEmail(firstName),
         }).catch((err: Error) => console.error('[Email] employer welcome failed:', err));
       }
@@ -2936,7 +2937,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
           await notificationService.createNotification({
             userId: candidateId,
             type: 'application_rejected',
-            title: 'Application Closed — No Response',
+            title: 'Application Closed: No Response',
             message: `${company} did not respond to your ${jobTitle} application within 24 hours. The application has been automatically closed.`,
             priority: 'high',
             relatedApplicationId: applicationId,
@@ -3455,7 +3456,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     await sendEmail({
       to: 'support@recrutas.ai',
       from: 'noreply@recrutas.ai',
-      subject: `[Recrutas Feedback] ${feedbackType} — ${safeEmail || 'anonymous'}`,
+      subject: `[Recrutas Feedback] ${feedbackType} | ${safeEmail || 'anonymous'}`,
       html: `
         <p><strong>Type:</strong> ${feedbackType}</p>
         <p><strong>From:</strong> ${from}</p>
@@ -3503,22 +3504,22 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       html: employer
         ? `
         <p>Hi,</p>
-        <p>Thanks for your interest in hiring through <strong>Recrutas</strong>. Employer access isn't open yet — we're starting with candidates.</p>
+        <p>Thanks for your interest in hiring through <strong>Recrutas</strong>. Employer access isn't open yet. We're starting with candidates.</p>
         <p>We'll email you when it opens. No other emails in the meantime.</p>
-        <p>— The Recrutas Team</p>
+        <p>The Recrutas Team</p>
       `
         : nonUs
         ? `
         <p>Hi,</p>
         <p>Thanks for your interest in <strong>Recrutas</strong>. Right now every job we list comes from a US employer, so we can't match you with roles where you are yet.</p>
         <p>We'll email you once Recrutas covers your country. No other emails in the meantime.</p>
-        <p>— The Recrutas Team</p>
+        <p>The Recrutas Team</p>
       `
         : `
         <p>Hey${firstName ? ` ${firstName.trim()}` : ''},</p>
         <p>Thanks for signing up for early access to <strong>Recrutas</strong>.</p>
         <p>We're letting people in on a rolling basis. You'll get an invite code in your inbox as soon as a spot opens up.</p>
-        <p>— The Recrutas Team</p>
+        <p>The Recrutas Team</p>
       `,
     }).catch((err: Error) => console.error('[Waitlist] Failed to send confirmation email:', err));
 

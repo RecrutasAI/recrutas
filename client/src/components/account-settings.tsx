@@ -47,7 +47,7 @@ export function AccountSettings() {
       <Row
         icon={<KeyRound className="h-4 w-4" />}
         title="Password"
-        detail={hasPassword ? "••••••••" : "No password yet — you sign in with Google"}
+        detail={hasPassword ? "••••••••" : "No password yet. You sign in with Google."}
         action={panel === "password" ? "Cancel" : hasPassword ? "Change" : "Set password"}
         onAction={() => toggle("password")}
       />
@@ -116,7 +116,7 @@ function ChangeEmail({ currentEmail, onDone }: { currentEmail: string; onDone: (
     onSuccess: (next) => {
       toast({
         title: "Check your inbox",
-        description: `We sent a confirmation link to ${next}. Your email changes once you click it — you may also need to confirm from ${currentEmail}.`,
+        description: `We sent a confirmation link to ${next}. Your email changes once you click it. You may also need to confirm from ${currentEmail}.`,
       });
       onDone();
     },

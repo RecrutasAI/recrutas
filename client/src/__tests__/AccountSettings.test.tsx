@@ -133,7 +133,7 @@ describe('AccountSettings — password', () => {
 
   it('lets a Google sign-up set a password without asking for a current one', async () => {
     renderAccount(googleUser);
-    expect(screen.getByText(/you sign in with Google/)).toBeInTheDocument();
+    expect(screen.getByText(/You sign in with Google/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Set password' }));
     expect(screen.queryByLabelText('Current password')).not.toBeInTheDocument();
 

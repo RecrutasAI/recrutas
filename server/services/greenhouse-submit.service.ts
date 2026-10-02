@@ -245,7 +245,8 @@ async function generateCoverLetter(
 ): Promise<string | null> {
   const systemPrompt = `Write a concise cover letter (3-4 paragraphs, under 250 words) for a job application.
 Use the candidate's actual experience from their resume. Be specific about the company and role.
-Do not fabricate credentials. Write in first person. No salutation or sign-off — just the body text.`;
+Do not fabricate credentials. Write in first person. No salutation or sign-off, just the body text.
+Do not use em dashes (—); recruiters read them as AI-written. Use commas or periods instead.`;
 
   const cleanDescription = jobDescription.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1500);
   const resumeSnippet = candidate.resumeText?.slice(0, 2000) || '';
@@ -299,7 +300,7 @@ export async function submitToGreenhouse(
     // Validate: expired signed URLs return tiny HTML/JSON errors, not real documents
     const contentType = resumeRes.headers.get('content-type') || '';
     if (resumeBuffer.length < 500 && !contentType.includes('pdf')) {
-      return { success: false, error: 'Resume URL may have expired — downloaded file is too small' };
+      return { success: false, error: 'Resume URL may have expired: downloaded file is too small' };
     }
 
     const urlPath = candidate.resumeUrl.split('?')[0];

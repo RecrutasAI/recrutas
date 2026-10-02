@@ -677,7 +677,7 @@ export default function TalentDashboard() {
       <Dialog open={scheduleInterviewOpen} onOpenChange={setScheduleInterviewOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Schedule Interview{scheduleApplicant?.name ? ` — ${scheduleApplicant.name}` : ''}</DialogTitle>
+            <DialogTitle>Schedule Interview{scheduleApplicant?.name ? `: ${scheduleApplicant.name}` : ''}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
