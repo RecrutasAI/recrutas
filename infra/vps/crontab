@@ -50,6 +50,11 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # Discover Companies — daily 02:00 (phases continue on error, like GHA)
 0 2 * * * $RUN discover-companies 90 bash -c 'npx tsx scripts/discover-companies.ts --phase=discover; npx tsx scripts/discover-companies.ts --phase=apollo; npx tsx scripts/discover-companies.ts --phase=probe --limit=1500'
 
+# AI model check — daily 02:50, just before retry-failed-parses needs them.
+# Fails (→ alert email) when the primary Groq model or the Gemini backup is
+# retired; model retirements broke résumé parsing silently three times.
+50 2 * * * $RUN check-ai-models 3 npx tsx scripts/check-ai-models.ts
+
 # Retry Failed Parses — daily 03:00
 0 3 * * * $RUN retry-failed-parses 10 npx tsx scripts/retry-failed-parses.ts
 

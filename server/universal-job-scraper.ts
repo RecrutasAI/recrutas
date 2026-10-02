@@ -1,4 +1,5 @@
 import Groq from "groq-sdk";
+import { groqModel, groqReasoningParams } from "./lib/ai-client";
 
 interface UniversalJob {
   id: string;
@@ -483,9 +484,11 @@ export class UniversalJobScraper {
   }
 
   private async runGroq(prompt: string): Promise<string> {
+    const model = groqModel();
     const chatCompletion = await this.groq.chat.completions.create({
       messages: [{ role: 'user', content: prompt }],
-      model: 'llama-3.3-70b-versatile',
+      model,
+      ...groqReasoningParams(model),
     });
     return chatCompletion.choices[0]?.message?.content || '';
   }
