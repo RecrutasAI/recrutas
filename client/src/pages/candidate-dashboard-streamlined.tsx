@@ -139,7 +139,7 @@ export default function CandidateStreamlinedDashboard() {
     meta: {
       onError: (error: Error) => {
         if (isUnauthorizedError(error)) {
-          setLocation("/api/login");
+          setLocation("/auth");
         }
       },
     },
@@ -970,12 +970,18 @@ function SavedJobsList() {
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white leading-tight">{job.title}</h3>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{job.company}</p>
               <p className="text-xs text-gray-400 dark:text-gray-500">{job.location}</p>
+              {job.isClosed && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                  No longer listed — the company has taken this posting down.
+                </p>
+              )}
             </div>
             <div className="flex gap-2 shrink-0">
               <Button
                 size="sm"
                 variant="outline"
                 className="h-8 text-xs border-gray-200 dark:border-gray-700"
+                disabled={job.isClosed}
                 onClick={() => {
                   if (job.externalUrl) {
                     window.open(job.externalUrl, '_blank');

@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { eq } from "drizzle-orm";
+import { getTableColumns } from "drizzle-orm/utils";
 import { inArray } from "drizzle-orm/sql/expressions";
 import { sql } from "drizzle-orm/sql";
 import multer from "multer";
@@ -1757,12 +1758,21 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       const { db } = await import('./db.js');
       const { jobPostings } = await import('../shared/schema.js');
 
+      // The page shows title/company/location and a link; the embedding
+      // columns are two 384-dim vectors per row the browser never reads.
+      const { embedding: _omitEmbedding, vectorEmbedding: _omitVectorEmbedding, ...slimColumns } =
+        getTableColumns(jobPostings);
       const savedJobs = await db
-        .select()
+        .select(slimColumns)
         .from(jobPostings)
         .where(inArray(jobPostings.id, savedJobIds));
-      
-      res.json(savedJobs);
+
+      // Jobs close once their board stops listing them (snapshot expiry), so a
+      // saved job can outlive its posting. Say so instead of linking to a 404.
+      res.json(savedJobs.map(job => ({
+        ...job,
+        isClosed: job.status !== 'active' || job.livenessStatus === 'removed' || job.livenessStatus === 'stale',
+      })));
     } catch (error) {
       console.error("Error fetching saved jobs:", error);
       res.status(500).json({ message: "Failed to fetch saved jobs" });
