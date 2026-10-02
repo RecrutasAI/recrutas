@@ -66,6 +66,12 @@ interface ExtractedInfo {
 
 interface ProfileWizardProps {
   onComplete?: () => void;
+  /**
+   * Onboarding has its own résumé step right before this wizard, so there the
+   * wizard starts at Profile and leaves Résumé out of its step indicator. It
+   * still renders step 1 if the user asks to re-upload (e.g. "Clear all").
+   */
+  skipResumeStep?: boolean;
 }
 
 interface JobPreferences {
@@ -88,10 +94,11 @@ const STEPS = [
   { id: 5, title: "Done", description: "Ready to match!" },
 ];
 
-export default function ProfileWizard({ onComplete }: ProfileWizardProps) {
+export default function ProfileWizard({ onComplete, skipResumeStep = false }: ProfileWizardProps) {
   const { session } = useSessionContext();
   const [, setNavigate] = useLocation();
-  const [currentStep, setCurrentStep] = useState(1);
+  const firstStep = skipResumeStep ? 2 : 1;
+  const [currentStep, setCurrentStep] = useState(firstStep);
   const [profileLinks, setProfileLinks] = useState({
     linkedinUrl: '',
     githubUrl: '',
@@ -225,7 +232,7 @@ export default function ProfileWizard({ onComplete }: ProfileWizardProps) {
 
         // If skills were cleared, stay on step 1 so user can re-upload
         if (savedSkills.length === 0 && !savedExperienceLevel) {
-          setCurrentStep(1);
+          setCurrentStep(skipResumeStep ? 2 : 1);
         } else {
           setCurrentStep(2);
           // Populate parsedResumeData from saved profile so step 2 shows existing skills/experience
@@ -384,7 +391,7 @@ export default function ProfileWizard({ onComplete }: ProfileWizardProps) {
   };
 
   const handleBack = () => {
-    if (currentStep > 1) {
+    if (currentStep > firstStep) {
       setCurrentStep(currentStep - 1);
     }
   };
@@ -394,7 +401,9 @@ export default function ProfileWizard({ onComplete }: ProfileWizardProps) {
     setCurrentStep(5);
   };
 
-  const progress = (currentStep / 5) * 100;
+  const visibleSteps = STEPS.filter(step => !(skipResumeStep && step.id === 1 && currentStep !== 1));
+  const stepIndex = Math.max(0, visibleSteps.findIndex(step => step.id === currentStep));
+  const progress = ((stepIndex + 1) / visibleSteps.length) * 100;
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
@@ -402,7 +411,7 @@ export default function ProfileWizard({ onComplete }: ProfileWizardProps) {
       <div className="space-y-2">
         <div className="flex items-center justify-between text-sm">
           <span className="font-medium text-gray-900 dark:text-white">
-            Step {currentStep} of 5
+            Step {stepIndex + 1} of {visibleSteps.length}
           </span>
           <span className="text-gray-500">{Math.round(progress)}% complete</span>
         </div>
@@ -410,7 +419,7 @@ export default function ProfileWizard({ onComplete }: ProfileWizardProps) {
         
         {/* Step Indicators */}
         <div className="flex justify-between pt-2">
-          {STEPS.map((step) => (
+          {visibleSteps.map((step, idx) => (
             <div 
               key={step.id}
               className={`flex flex-col items-center ${
@@ -428,7 +437,7 @@ export default function ProfileWizard({ onComplete }: ProfileWizardProps) {
                     ? 'bg-emerald-500 text-white' 
                     : 'bg-gray-100 dark:bg-gray-800'
               }`}>
-                {step.id < currentStep ? <Check className="w-4 h-4" /> : step.id}
+                {step.id < currentStep ? <Check className="w-4 h-4" /> : idx + 1}
               </div>
               <span className="text-xs mt-1 hidden sm:block">{step.title}</span>
             </div>
@@ -653,10 +662,32 @@ export default function ProfileWizard({ onComplete }: ProfileWizardProps) {
             ) : (
               <div className="text-center py-8">
                 <FileText className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-                <p className="text-gray-500">No resume data available</p>
-                <Button variant="outline" onClick={() => setCurrentStep(1)} className="mt-3">
-                  Go back to upload
-                </Button>
+                <p className="text-gray-500">No résumé yet. Upload one, or add your skills yourself.</p>
+                <div className="mt-3 flex flex-col sm:flex-row gap-2 justify-center">
+                  <Button variant="outline" onClick={() => setCurrentStep(1)}>
+                    Upload a résumé
+                  </Button>
+                  {/* Skipping the résumé used to dead-end here: skills could only
+                      be edited on top of parsed résumé data. */}
+                  <Button
+                    variant="outline"
+                    onClick={() => setParsedResumeData({
+                      skills: { technical: [...((profile as any)?.skills || [])], soft: [], tools: [] },
+                      experience: { level: (profile as any)?.experienceLevel || '', years: 0, positions: [] },
+                      education: [],
+                      certifications: [],
+                      projects: [],
+                      personalInfo: { name: '', email: '', phone: '', location: '', linkedin: '', github: '', website: '' },
+                      skillsCount: ((profile as any)?.skills || []).length,
+                      workHistoryCount: 0,
+                      educationCount: 0,
+                      certificationsCount: 0,
+                      projectsCount: 0,
+                    })}
+                  >
+                    Add skills manually
+                  </Button>
+                </div>
               </div>
             )}
 
@@ -913,7 +944,7 @@ export default function ProfileWizard({ onComplete }: ProfileWizardProps) {
           <Button 
             variant="outline" 
             onClick={handleBack}
-            disabled={currentStep === 1}
+            disabled={currentStep <= firstStep}
           >
             <ArrowLeft className="mr-2 h-4 w-4" /> Back
           </Button>

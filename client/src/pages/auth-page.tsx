@@ -142,14 +142,9 @@ export default function AuthPage() {
                   )}
                 </button>
               </div>
-              <div className="flex items-center justify-between mt-2">
-                <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-                  <input
-                    type="checkbox"
-                    className="w-4 h-4 rounded border-input bg-input text-primary focus:ring-primary"
-                  />
-                  Remember me
-                </label>
+              {/* No "Remember me": it was an unwired checkbox, and Supabase keeps
+                  the session in localStorage either way. */}
+              <div className="flex items-center justify-end mt-2">
                 <a href="/forgot-password" className="text-sm font-medium text-primary hover:text-primary/90">
                   Forgot password?
                 </a>

@@ -133,6 +133,9 @@ function GuidedSetupContent() {
           </p>
         </div>
         <Card>
+          {/* The candidate Profile step is a multi-step wizard with its own
+              indicator; showing this one too stacked two progress bars. */}
+          {!(isCandidate && clampedStep === 2) && (
           <CardHeader>
             <div className="flex justify-between items-center mb-6">
               {steps.map((s, idx) => {
@@ -166,7 +169,8 @@ function GuidedSetupContent() {
             </div>
             <Progress value={progress} className="w-full" />
           </CardHeader>
-          <CardContent>
+          )}
+          <CardContent className={isCandidate && clampedStep === 2 ? 'pt-6' : undefined}>
             {currentStep.component}
           </CardContent>
         </Card>
