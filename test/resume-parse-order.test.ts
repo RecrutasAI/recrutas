@@ -85,6 +85,29 @@ describe('PDF résumé parse order', () => {
     expect(callAIWithPDF).not.toHaveBeenCalled();
   });
 
+  it('asks Groq again when its first answer is malformed or cut off', async () => {
+    for (const first of [
+      () => groqCreate.mockRejectedValueOnce(new Error('400 {"error":{"code":"json_validate_failed"}}')),
+      () => groqCreate.mockResolvedValueOnce({ choices: [{ message: { content: '{"skills":' }, finish_reason: 'length' }] }),
+    ]) {
+      groqCreate.mockReset();
+      first();
+      groqCreate.mockResolvedValueOnce({ choices: [{ message: { content: JSON.stringify(EXTRACTED) } }] });
+      const r = await new (await loadParser())().parseFile(PDF, 'application/pdf');
+
+      expect(groqCreate).toHaveBeenCalledTimes(2);
+      expect(r.extractor).toBe('ai-text');
+    }
+  });
+
+  it('does not re-ask Groq on a provider error', async () => {
+    groqCreate.mockRejectedValue(Object.assign(new Error('400 context_length_exceeded'), { status: 400 }));
+    callAIWithPDF.mockRejectedValue(new Error('gemini quota'));
+    await new (await loadParser())().parseFile(PDF, 'application/pdf');
+
+    expect(groqCreate).toHaveBeenCalledTimes(1);
+  });
+
   it('gives multimodal a second chance when the text model fails', async () => {
     groqCreate.mockRejectedValue(Object.assign(new Error('model_not_found'), { status: 404 }));
     callAIWithPDF.mockResolvedValue(JSON.stringify(EXTRACTED));

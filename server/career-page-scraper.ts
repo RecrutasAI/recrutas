@@ -705,7 +705,8 @@ Return a JSON object with a "jobs" array containing objects with these fields:
 Only include actual job postings, not navigation links or other content.
 Return maximum 15 jobs. If no jobs found, return {"jobs": []}.`,
         `Extract job listings from this ${company.name} careers page HTML:\n\n${truncatedHtml}`,
-        { priority: 'low', estimatedTokens: 5000, temperature: 0.1, maxOutputTokens: 4000 }
+        // No Groq: its daily token budget is reserved for résumé parsing.
+        { priority: 'low', estimatedTokens: 5000, temperature: 0.1, maxOutputTokens: 4000, skipGroq: true }
       );
 
       if (!content) {return [];}

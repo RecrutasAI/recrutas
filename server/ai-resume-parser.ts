@@ -75,6 +75,12 @@ export type ResumeExtractor =
   | 'rules'              // deterministic engine; skills OK, positions unreliable on PDFs
   | 'none';              // nothing produced usable output
 
+/** A bad answer from a working model — worth one more ask, unlike a 4xx/429. */
+export function isMalformedGroqOutput(error: unknown): boolean {
+  const message = String((error as Error)?.message ?? error);
+  return /json_validate_failed|Failed to parse AI JSON|cut off at max_tokens/.test(message);
+}
+
 interface ParsedResume {
   text: string;
   aiExtracted: AIExtractedData;
@@ -603,7 +609,9 @@ English (Native), Spanish (Conversational)`;
     // Try Groq first (free, fast). Asked twice if the first answer is valid
     // JSON with nothing in it — gpt-oss does that about 1 call in 25 (seen in a
     // dry run over real résumés); a second call costs ~1.5s and has come back
-    // full every time.
+    // full every time. Also asked twice when the answer isn't valid JSON: on
+    // long résumés gpt-oss occasionally closes an object with `}]` (Groq's
+    // json_validate_failed) — 1 of 10 in the 2026-10-02 retry run.
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         console.log(`[AIResumeParser] Trying Groq API (attempt ${attempt})...`);
@@ -614,6 +622,7 @@ English (Native), Spanish (Conversational)`;
         console.warn('[AIResumeParser] Groq returned an empty extraction — asking again');
       } catch (aiError: any) {
         console.warn('[AIResumeParser] Groq failed:', aiError.message);
+        if (attempt === 1 && isMalformedGroqOutput(aiError)) {continue;}
         reasons.push(`groq: ${String(aiError.message).replace(/\s+/g, ' ').slice(0, 160)}`);
         break;
       }
@@ -899,7 +908,9 @@ ${truncatedText}`;
         ],
         response_format: { type: 'json_object' },
         temperature: 0.1,
-        max_tokens: 2500,
+        // Reasoning tokens count against this too. 2,500 cut off long résumés
+        // mid-JSON; the cap only bounds the worst case, it isn't spent.
+        max_tokens: 4000,
       }),
       'high',
       // Measured at low effort on 10 real résumés: ≤1,800 prompt + ≤1,300
@@ -909,6 +920,9 @@ ${truncatedText}`;
     );
 
     const content = completion.choices[0]?.message?.content;
+    if (completion.choices[0]?.finish_reason === 'length') {
+      throw new Error('Groq output cut off at max_tokens');
+    }
     if (!content) throw new Error('Groq returned no content');
 
     console.log('[AIResumeParser] AI response received, parsing JSON...');
