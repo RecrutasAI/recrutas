@@ -263,6 +263,38 @@ export class JobIngestionService {
         (existingRows as any[]).map((r: any) => `${r.external_id}::${r.source}`)
       );
 
+      // ATS jobs are keyed on the vendor's job id (see lib/ats-job-key). A row
+      // that already holds this posting's URL under another key is adopted the
+      // first time the board is read: it takes the key, the board's source and
+      // company, and from there is updated, reopened and snapshot-expired like
+      // any ATS row. Two kinds of row hit this:
+      //   - ATS rows written before the key change (external_id = URL);
+      //   - rows from the older vendor scrapers (source 'greenhouse', company
+      //     'Stripe'). The cross-source URL check below skipped these postings
+      //     as already stored — and when that row was closed, a job the board
+      //     still listed stayed hidden for good (275 of Stripe's 714 openings,
+      //     2026-10-02).
+      // Skipped when another row already holds the key: that row wins, and the
+      // unique index would refuse the update anyway.
+      const adoptable = chunk.filter(j =>
+        j.externalUrl && j.effectiveExternalId !== j.externalUrl
+        && !existingSet.has(`${j.effectiveExternalId}::${j.source ?? 'unknown'}`));
+      if (adoptable.length > 0) {
+        const values = sql.join(adoptable.map(j => sql`(${j.source ?? 'unknown'}, ${j.company ?? ''}, ${j.externalUrl}, ${j.effectiveExternalId}, ${getSourceTrustScore(j.source)})`), sql`, `);
+        const adopted = await db.execute(sql`
+          UPDATE job_postings AS jp
+          SET external_id = v.key, source = v.source, company = v.company,
+              trust_score = v.trust::int, updated_at = NOW()
+          FROM (VALUES ${values}) AS v(source, company, url, key, trust)
+          WHERE jp.external_url = v.url
+            AND jp.source <> 'platform'
+            AND NOT EXISTS (
+              SELECT 1 FROM job_postings x WHERE x.source = v.source AND x.external_id = v.key)
+          RETURNING jp.external_id, jp.source
+        `) as any[];
+        for (const r of adopted) existingSet.add(`${r.external_id}::${r.source}`);
+      }
+
       // ── Cross-source URL dedup ──────────────────────────────────────────
       // The same posting arrives under different source labels with different
       // external_ids (sota-scraper emits bare `greenhouse`; scrape-all-company
@@ -341,6 +373,23 @@ export class JobIngestionService {
               OR last_liveness_check < NOW() - INTERVAL '20 hours')
         `));
         stats.duplicates += toUpdate.length;
+
+        // A row matched by vendor job id may be listed under a new URL now (the
+        // board moved to a custom careers domain). Follow it, so Apply opens the
+        // live page. Gated on an actual change — Postgres rewrites no-op
+        // UPDATEs — and skipped if another row already owns the URL.
+        const moved = toUpdate.filter(j => j.externalUrl && j.effectiveExternalId !== j.externalUrl);
+        if (moved.length > 0) {
+          const values = sql.join(moved.map(j =>
+            sql`(${j.effectiveExternalId}, ${j.source ?? 'unknown'}, ${j.externalUrl})`), sql`, `);
+          await db.execute(sql`
+            UPDATE job_postings AS jp SET external_url = v.url, updated_at = NOW()
+            FROM (VALUES ${values}) AS v(key, source, url)
+            WHERE jp.external_id = v.key AND jp.source = v.source
+              AND jp.external_url IS DISTINCT FROM v.url
+              AND NOT EXISTS (SELECT 1 FROM job_postings x WHERE x.external_url = v.url)
+          `);
+        }
 
         // Self-heal: backfill description/skills for existing rows that were
         // ingested as stubs (empty description/skills) before the lister carried
@@ -578,7 +627,7 @@ export class JobIngestionService {
 
       for (const g of chunk) {
         const active = byGroup.get(groupKey(g.source, g.company)) ?? [];
-        const plan = planBoardExpiry(active, g.seen);
+        const plan = planBoardExpiry(active, g);
         reports.push(describeBoardExpiry(g, active, plan));
         if (plan.action === 'close') {
           toClose.push(...plan.closeIds);

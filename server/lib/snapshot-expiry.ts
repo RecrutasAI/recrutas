@@ -1,3 +1,5 @@
+import { atsJobKey } from './ats-job-key';
+
 /**
  * Snapshot expiry: close a job once its employer's board stops listing it.
  *
@@ -33,7 +35,10 @@ export interface SnapshotGroup {
   /** False when ANY board writing to this (source, company) failed or was partial. */
   usable: boolean;
   reason?: 'failed' | 'incomplete';
+  /** atsJobKey of every posting the board listed — ids, not URLs (see ats-job-key). */
   seen: Set<string>;
+  /** One listed URL, for the run log. */
+  sampleUrl?: string;
 }
 
 export const groupKey = (source: string, company: string): string => `${source}\u0000${company}`;
@@ -60,7 +65,10 @@ export function groupSnapshots(boards: BoardSnapshot[]): Map<string, SnapshotGro
       g.usable = false;
       g.reason ??= 'incomplete';
     }
-    for (const u of b.seenUrls) g.seen.add(u);
+    for (const u of b.seenUrls) {
+      g.seen.add(atsJobKey(b.source, b.company, u));
+      g.sampleUrl ??= u;
+    }
   }
   return groups;
 }
@@ -70,18 +78,30 @@ export interface ActiveJobRow {
   externalUrl: string | null;
 }
 
+/**
+ * Whether the board still lists a row. Compared by vendor job id, so a board
+ * that changed its URLs (custom careers domain) still matches its postings
+ * instead of looking like it dropped all of them.
+ */
+function listed(row: ActiveJobRow, group: { source: string; company: string; seen: Set<string> }): boolean {
+  return !row.externalUrl || group.seen.has(atsJobKey(group.source, group.company, row.externalUrl));
+}
+
 export type SnapshotDecision =
   | { action: 'close'; closeIds: number[] }
   | { action: 'skip'; reason: 'empty-board' | 'mass-drop'; wouldClose: number };
 
-export function planBoardExpiry(active: ActiveJobRow[], seen: Set<string>): SnapshotDecision {
+export function planBoardExpiry(
+  active: ActiveJobRow[],
+  group: { source: string; company: string; seen: Set<string> },
+): SnapshotDecision {
   // A row without a URL can't be matched against the board, so it's never closed here.
-  const missing = active.filter(r => r.externalUrl && !seen.has(r.externalUrl));
+  const missing = active.filter(r => !listed(r, group));
   if (missing.length === 0) return { action: 'close', closeIds: [] };
 
   // A 200 with zero postings is how several ATSes answer for a board that was
   // renamed or moved — indistinguishable from "not hiring". Leave it to age expiry.
-  if (seen.size === 0) return { action: 'skip', reason: 'empty-board', wouldClose: missing.length };
+  if (group.seen.size === 0) return { action: 'skip', reason: 'empty-board', wouldClose: missing.length };
 
   if (active.length >= SNAPSHOT_GUARD_MIN_ACTIVE
       && missing.length / active.length > SNAPSHOT_MAX_CLOSE_FRACTION) {
@@ -107,11 +127,11 @@ export interface BoardExpiryReport {
 }
 
 export function describeBoardExpiry(
-  group: Pick<SnapshotGroup, 'source' | 'company' | 'seen'>,
+  group: Pick<SnapshotGroup, 'source' | 'company' | 'seen' | 'sampleUrl'>,
   active: ActiveJobRow[],
   plan: SnapshotDecision,
 ): BoardExpiryReport {
-  const missing = active.filter(r => r.externalUrl && !group.seen.has(r.externalUrl));
+  const missing = active.filter(r => !listed(r, group));
   return {
     source: group.source,
     company: group.company,
@@ -119,7 +139,7 @@ export function describeBoardExpiry(
     missing: missing.length,
     outcome: plan.action === 'close' ? 'close' : plan.reason,
     sampleMissing: missing[0]?.externalUrl ?? undefined,
-    sampleSeen: group.seen.values().next().value,
+    sampleSeen: group.sampleUrl,
   };
 }
 

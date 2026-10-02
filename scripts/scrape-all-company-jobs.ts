@@ -14,6 +14,7 @@
 import 'dotenv/config';
 import postgres from 'postgres';
 import { fetchAtsBoard } from '../server/lib/adzuna-link-resolver';
+import { atsJobKey } from '../server/lib/ats-job-key';
 import { jobIngestionService } from '../server/services/job-ingestion.service';
 import { runAsPipeline, type PipelineSummary } from '../server/services/pipeline-run.service';
 import type { BoardSnapshot } from '../server/lib/snapshot-expiry';
@@ -107,7 +108,9 @@ async function main(): Promise<PipelineSummary> {
             skills: [],
             workType: 'hybrid',
             source: `ATS:${r.value.atsType}`,
-            externalId: j.url,
+            // Vendor job id, not the URL: a board moving to a custom domain
+            // rewrites every URL, which used to re-insert every job.
+            externalId: atsJobKey(`ATS:${r.value.atsType}`, r.value.company, j.url),
             externalUrl: j.url,
             postedDate: new Date().toISOString(),
           });
