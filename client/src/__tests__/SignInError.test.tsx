@@ -3,7 +3,7 @@
  * form: it's shown only after Supabase rejects the credentials, and goes away
  * as soon as the user edits a field.
  */
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -60,6 +60,32 @@ describe('sign-in failure message', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Email rate limit exceeded');
     expect(alert).not.toHaveTextContent('support@recrutas.ai');
+  });
+
+  it('holds the loading screen, not the form, while a Google return is finished', () => {
+    // Supabase parses #access_token after the first render; the form used to
+    // flash up in between, which read as the sign-in bouncing back.
+    window.history.replaceState(null, '', '/auth#access_token=abc&refresh_token=def&token_type=bearer');
+    render(<AuthPage />);
+    expect(screen.queryByLabelText('Email')).not.toBeInTheDocument();
+    window.history.replaceState(null, '', '/');
+  });
+
+  it('falls back to the form if the Google return never yields a session', () => {
+    vi.useFakeTimers();
+    window.history.replaceState(null, '', '/auth#access_token=abc');
+    render(<AuthPage />);
+    act(() => { vi.advanceTimersByTime(10_000); });
+    expect(screen.getByLabelText('Email')).toBeInTheDocument();
+    vi.useRealTimers();
+    window.history.replaceState(null, '', '/');
+  });
+
+  it('treats ?code=REDDIT-… as an attribution tag, not a Google return', () => {
+    window.history.replaceState(null, '', '/auth?code=REDDIT-A1B2');
+    render(<AuthPage />);
+    expect(screen.getByLabelText('Email')).toBeInTheDocument();
+    window.history.replaceState(null, '', '/');
   });
 
   it('shows a failed Google sign-in that Supabase sent back in the URL', () => {
