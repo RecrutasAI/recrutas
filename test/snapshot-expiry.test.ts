@@ -12,43 +12,46 @@ import { fetchAtsBoard, listAtsJobs } from '../server/lib/adzuna-link-resolver';
 
 const rows = (urls: string[]) => urls.map((u, i) => ({ id: i + 1, externalUrl: u }));
 const urls = (n: number, prefix = 'https://x/jobs/') => Array.from({ length: n }, (_, i) => `${prefix}${i}`);
+// 'ATS:test' has no id pattern, so atsJobKey falls back to the URL and these
+// cases compare plain strings, as before.
+const grp = (seen: Iterable<string>) => ({ source: 'ATS:test', company: 'acme', seen: new Set(seen) });
 
 describe('planBoardExpiry', () => {
   it('closes only the jobs the board no longer lists', () => {
-    const plan = planBoardExpiry(rows(['a', 'b', 'c']), new Set(['a', 'c', 'new']));
+    const plan = planBoardExpiry(rows(['a', 'b', 'c']), grp(['a', 'c', 'new']));
     expect(plan).toEqual({ action: 'close', closeIds: [2] });
   });
 
   it('closes nothing when every active job is still listed', () => {
-    expect(planBoardExpiry(rows(['a', 'b']), new Set(['a', 'b']))).toEqual({ action: 'close', closeIds: [] });
+    expect(planBoardExpiry(rows(['a', 'b']), grp(['a', 'b']))).toEqual({ action: 'close', closeIds: [] });
   });
 
   it('never trusts an empty board', () => {
-    const plan = planBoardExpiry(rows(['a', 'b']), new Set());
+    const plan = planBoardExpiry(rows(['a', 'b']), grp([]));
     expect(plan).toEqual({ action: 'skip', reason: 'empty-board', wouldClose: 2 });
   });
 
   it('skips a board that would lose more than half its jobs at once', () => {
     const active = rows(urls(SNAPSHOT_GUARD_MIN_ACTIVE * 2));
-    const seen = new Set(urls(SNAPSHOT_GUARD_MIN_ACTIVE - 1)); // just over half missing
-    const plan = planBoardExpiry(active, seen);
+    const seen = urls(SNAPSHOT_GUARD_MIN_ACTIVE - 1); // just over half missing
+    const plan = planBoardExpiry(active, grp(seen));
     expect(plan.action).toBe('skip');
     expect(plan.action === 'skip' && plan.reason).toBe('mass-drop');
   });
 
   it('allows exactly half to close', () => {
     const active = rows(urls(SNAPSHOT_GUARD_MIN_ACTIVE * 2));
-    const plan = planBoardExpiry(active, new Set(urls(SNAPSHOT_GUARD_MIN_ACTIVE)));
+    const plan = planBoardExpiry(active, grp(urls(SNAPSHOT_GUARD_MIN_ACTIVE)));
     expect(plan.action === 'close' && plan.closeIds.length).toBe(SNAPSHOT_GUARD_MIN_ACTIVE);
   });
 
   it('lets a small board churn past the fraction guard', () => {
-    const plan = planBoardExpiry(rows(['a', 'b', 'c', 'd']), new Set(['a']));
+    const plan = planBoardExpiry(rows(['a', 'b', 'c', 'd']), grp(['a']));
     expect(plan).toEqual({ action: 'close', closeIds: [2, 3, 4] });
   });
 
   it('never closes a row it cannot match (no URL)', () => {
-    const plan = planBoardExpiry([{ id: 1, externalUrl: null }, { id: 2, externalUrl: 'a' }], new Set(['a']));
+    const plan = planBoardExpiry([{ id: 1, externalUrl: null }, { id: 2, externalUrl: 'a' }], grp(['a']));
     expect(plan).toEqual({ action: 'close', closeIds: [] });
   });
 });
@@ -132,24 +135,43 @@ describe('fetchAtsBoard', () => {
 });
 
 describe('board expiry reports', () => {
-  it('pairs a missing URL with a seen URL so a URL-shape change is visible', () => {
-    // A careers-domain move: the same postings, every URL changed. The guard
-    // skips it exactly like a real purge — only the samples tell them apart.
-    const active = rows(urls(12, 'https://www.acme.com/careers?gh_jid='));
-    const seen = new Set(urls(12, 'https://careers.acme.com/?gh_jid='));
-    const plan = planBoardExpiry(active, seen);
-    const r = describeBoardExpiry({ source: 'ATS:greenhouse', company: 'acme', seen }, active, plan);
-    expect(r).toEqual({
-      source: 'ATS:greenhouse', company: 'acme', active: 12, missing: 12, outcome: 'mass-drop',
-      sampleMissing: 'https://www.acme.com/careers?gh_jid=0',
-      sampleSeen: 'https://careers.acme.com/?gh_jid=0',
+  it('matches a careers-domain move by job id instead of treating it as a purge', () => {
+    // ionq, 2026-10-01: every Greenhouse URL moved to ionq.com with the same
+    // gh_jid. Keyed on URL this read as 12/12 missing (mass-drop) while the
+    // scrape re-inserted all 12 as new jobs.
+    const active = rows(urls(12, 'https://job-boards.greenhouse.io/acme/jobs/'));
+    const seenUrls = urls(12, 'https://acme.com/job?gh_jid=');
+    const g = groupSnapshots([{ source: 'ATS:greenhouse', company: 'acme', ok: true, complete: true, seenUrls }])
+      .get(groupKey('ATS:greenhouse', 'acme'))!;
+    const plan = planBoardExpiry(active, g);
+    expect(plan).toEqual({ action: 'close', closeIds: [] });
+    expect(describeBoardExpiry(g, active, plan)).toMatchObject({ missing: 0, outcome: 'close' });
+  });
+
+  it('still closes a posting whose id the board no longer lists', () => {
+    const active = rows(['https://jobs.lever.co/acme/11111111-1111-1111-1111-111111111111', 'https://jobs.lever.co/acme/22222222-2222-2222-2222-222222222222']);
+    const g = groupSnapshots([{ source: 'ATS:lever', company: 'acme', ok: true, complete: true,
+      seenUrls: ['https://jobs.lever.co/acme/11111111-1111-1111-1111-111111111111/apply'] }])
+      .get(groupKey('ATS:lever', 'acme'))!;
+    expect(planBoardExpiry(active, g)).toEqual({ action: 'close', closeIds: [2] });
+  });
+
+  it('pairs a missing URL with a seen URL in the report', () => {
+    const active = rows(urls(12, 'https://x/jobs/'));
+    const g = groupSnapshots([{ source: 'ATS:test', company: 'acme', ok: true, complete: true, seenUrls: urls(12, 'https://y/jobs/') }])
+      .get(groupKey('ATS:test', 'acme'))!;
+    const plan = planBoardExpiry(active, g);
+    expect(describeBoardExpiry(g, active, plan)).toEqual({
+      source: 'ATS:test', company: 'acme', active: 12, missing: 12, outcome: 'mass-drop',
+      sampleMissing: 'https://x/jobs/0',
+      sampleSeen: 'https://y/jobs/0',
     });
   });
 
   it('reports a clean board with nothing missing and no missing sample', () => {
     const active = rows(['a', 'b']);
-    const seen = new Set(['a', 'b']);
-    const r = describeBoardExpiry({ source: 'ATS:lever', company: 'x', seen }, active, planBoardExpiry(active, seen));
+    const g = { ...grp(['a', 'b']), sampleUrl: 'a' };
+    const r = describeBoardExpiry(g, active, planBoardExpiry(active, g));
     expect(r).toMatchObject({ outcome: 'close', missing: 0, sampleMissing: undefined, sampleSeen: 'a' });
   });
 
