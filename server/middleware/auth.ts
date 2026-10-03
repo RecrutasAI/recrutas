@@ -46,6 +46,9 @@ export const isAuthenticated = async (req: Request, res: Response, next: NextFun
     const user = {
       id: userId,
       email: payload.email,
+      // Seconds since epoch. Lets callers tell a token minted after a change
+      // (e.g. a confirmed email change) from an older one still in use.
+      issuedAt: typeof payload.iat === 'number' ? payload.iat : undefined,
       user_metadata: payload.user_metadata || {},
       app_metadata: payload.app_metadata || {},
     };

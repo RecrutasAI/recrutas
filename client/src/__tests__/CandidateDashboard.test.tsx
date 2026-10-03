@@ -232,4 +232,13 @@ describe('CandidateDashboard', () => {
     await waitFor(() => expect(screen.getByRole('heading', { name: /^Welcome/ })).toBeInTheDocument());
     expect(screen.queryByText(/jdoe1987/)).not.toBeInTheDocument();
   });
+
+  it('profile card is a button that says what is missing', async () => {
+    // "83%" alone left people guessing what to fill in (usually the optional
+    // salary range), and the card was a div keyboard users couldn't reach.
+    renderComponent();
+    const card = await screen.findByRole('button', { name: /^Profile \d+% complete/ });
+    expect(card).toHaveAccessibleName('Profile 50% complete. Add location, work type, salary range');
+    expect(card).toHaveTextContent('Add: location, work type, salary range');
+  });
 });

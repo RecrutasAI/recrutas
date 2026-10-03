@@ -180,24 +180,28 @@ export default function CandidateStreamlinedDashboard() {
 
 
 
-  const profileCompletion = useMemo(() => {
-    if (!profile) {return 0;}
-    let completed = 0;
-    const total = 6;
-
-    // Resume counts as 1 factor (most important)
-    if ((profile as any).resumeUrl) {completed++;}
-    if ((profile as any).skills && (profile as any).skills.length > 0) {completed++;}
-    if ((profile as any).experience) {completed++;}
-    if ((profile as any).location) {completed++;}
+  // Each check carries the label shown when it's missing, so the card can say
+  // what's left: "83%" alone left people guessing (it's usually the optional
+  // salary range, whose 50000/150000 are only placeholders).
+  const { profileCompletion, missingProfileItems } = useMemo(() => {
+    if (!profile) {return { profileCompletion: 0, missingProfileItems: [] as string[] };}
     // Onboarding saves work type and salary into jobPreferences; the old
     // top-level columns are only set on accounts from before it, so reading
     // just those capped almost everyone below 100%.
     const prefs = (profile as any).jobPreferences || {};
-    if ((profile as any).workType || prefs.workTypes?.length > 0) {completed++;}
-    if (((profile as any).salaryMin && (profile as any).salaryMax) || prefs.salaryMin || prefs.salaryMax) {completed++;}
-
-    return Math.round((completed / total) * 100);
+    const checks: [boolean, string][] = [
+      [!!(profile as any).resumeUrl, 'resume'],
+      [!!((profile as any).skills && (profile as any).skills.length > 0), 'skills'],
+      [!!(profile as any).experience, 'work history'],
+      [!!(profile as any).location, 'location'],
+      [!!((profile as any).workType || prefs.workTypes?.length > 0), 'work type'],
+      [!!(((profile as any).salaryMin && (profile as any).salaryMax) || prefs.salaryMin || prefs.salaryMax), 'salary range'],
+    ];
+    const missing = checks.filter(([done]) => !done).map(([, label]) => label);
+    return {
+      profileCompletion: Math.round(((checks.length - missing.length) / checks.length) * 100),
+      missingProfileItems: missing,
+    };
   }, [profile]);
 
   const hasResume = (profile as any)?.resumeUrl || false;
@@ -413,8 +417,10 @@ export default function CandidateStreamlinedDashboard() {
             </div>
             {/* Profile completion mini-bar - only show if not complete */}
             {profile && profileCompletion < 100 && (
-              <div
-                className="flex items-center gap-3 px-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 cursor-pointer hover:border-gray-300 dark:hover:border-gray-700 transition-colors shrink-0"
+              <button
+                type="button"
+                aria-label={`Profile ${profileCompletion}% complete. Add ${missingProfileItems.join(', ')}`}
+                className="flex items-center gap-3 px-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 cursor-pointer hover:border-gray-300 dark:hover:border-gray-700 transition-colors shrink-0 text-left focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 onClick={() => { setActiveTab('profile'); setIsEditingProfile(true); }}
               >
                 <div className="h-8 w-8 rounded-full bg-emerald-100 dark:bg-emerald-950 flex items-center justify-center text-sm font-semibold text-emerald-700 dark:text-emerald-400 shrink-0">
@@ -428,9 +434,14 @@ export default function CandidateStreamlinedDashboard() {
                     </span>
                   </div>
                   <Progress value={profileCompletion} className="h-1.5 w-full" />
+                  {missingProfileItems.length > 0 && (
+                    <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400 truncate max-w-[180px]">
+                      Add: {missingProfileItems.join(', ')}
+                    </p>
+                  )}
                 </div>
                 <ArrowRight className="h-3.5 w-3.5 text-gray-400 shrink-0" />
-              </div>
+              </button>
             )}
           </div>
         )}
@@ -626,7 +637,7 @@ export default function CandidateStreamlinedDashboard() {
                       ? 'Upload a resume to unlock AI-matched jobs'
                       : profileCompletion < 66
                         ? 'Add experience, location, or salary range to improve matches'
-                        : 'Almost there! Fill in the remaining fields for better matches.'}
+                        : `Almost there! Add your ${missingProfileItems.join(', ')} for better matches.`}
                   </p>
                 </div>
 
