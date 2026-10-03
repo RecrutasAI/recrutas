@@ -1,7 +1,6 @@
-import { beforeAll, afterEach, afterAll } from 'vitest';
+import { beforeAll, afterEach, afterAll, vi } from 'vitest';
 import { server } from './mocks/server';
 import '@testing-library/jest-dom';
-import { vi } from 'vitest';
 
 // No test may open a real socket. The dashboards connect to /ws on mount (DEV
 // is true under vitest); MSW can't serve that, so it let the connection through
