@@ -32,6 +32,7 @@ function setup(existing: Record<string, unknown>, parse: unknown) {
   const storage: any = {
     getCandidateUser: vi.fn().mockResolvedValue(existing),
     incrementParseAttempts: vi.fn().mockResolvedValue(undefined),
+    refundParseAttempt: vi.fn().mockResolvedValue(undefined),
     getResumeSignedUrl: vi.fn().mockResolvedValue('https://storage.example/resume.pdf'),
     upsertCandidateUser: vi.fn().mockResolvedValue(undefined),
   };
@@ -54,6 +55,26 @@ describe('retryFailedParse on a degraded (completed) profile', () => {
     expect(r.success).toBe(false);
     expect(storage.upsertCandidateUser).not.toHaveBeenCalled();
     expect(storage.incrementParseAttempts).toHaveBeenCalled(); // so it stops after 3 tries
+  });
+
+  it('gives the attempt back when the AI was only out of quota', async () => {
+    // The job runs hourly; a busy afternoon must not use up all 3 tries.
+    const { storage, service } = setup(
+      { resumeProcessingStatus: 'completed', skills: ['Python'] },
+      { ...aiParse(['Python'], 'rules'), primaryError: 'groq: Groq API error 429: Rate limit reached for tokens per day (TPD)' },
+    );
+    await service.retryFailedParse('u1', 'u1/resume.pdf');
+    expect(storage.incrementParseAttempts).toHaveBeenCalled();
+    expect(storage.refundParseAttempt).toHaveBeenCalledWith('u1');
+  });
+
+  it('still counts the attempt for errors that do not clear on their own', async () => {
+    const { storage, service } = setup(
+      { resumeProcessingStatus: 'completed', skills: ['Python'] },
+      { ...aiParse(['Python'], 'rules'), primaryError: 'gemini: HTTP 404 model not found' },
+    );
+    await service.retryFailedParse('u1', 'u1/resume.pdf');
+    expect(storage.refundParseAttempt).not.toHaveBeenCalled();
   });
 
   it('writes an AI result, keeping the skills the profile already had', async () => {

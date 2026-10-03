@@ -506,8 +506,14 @@ export class ResumeService {
       const byAI = (parseResult?.extractor === 'ai-text' || parseResult?.extractor === 'gemini-multimodal')
         && (extractedSkills.length > 0 || (aiExtracted.experience?.positions?.length ?? 0) > 0);
       if (upgrading && !byAI) {
-        // Still the rule engine: rewriting would only churn the profile.
-        console.log(`[ResumeService] Upgrade retry for ${userId} still degraded (${parseResult?.extractor}) — left as is`);
+        // Still the rule engine: rewriting would only churn the profile. When
+        // the cause is quota or overload, the next hourly run can succeed, so
+        // don't let this count toward the attempt cap.
+        const cause = classifyPrimaryError(parseResult?.primaryError ?? '');
+        if (cause === 'quota' || cause === 'overloaded') {
+          await this.storage.refundParseAttempt(userId);
+        }
+        console.log(`[ResumeService] Upgrade retry for ${userId} still degraded (${parseResult?.extractor}, ${cause}) — left as is`);
         return { userId, success: false, skills: 0, error: `still degraded: ${parseResult?.primaryError ?? parseResult?.extractor}` };
       }
 
