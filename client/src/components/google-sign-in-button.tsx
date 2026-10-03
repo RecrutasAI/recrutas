@@ -113,7 +113,7 @@ function GoogleIdentityButton({ clientId, label, onUnavailable }: {
     })();
 
     return () => { cancelled = true; clearTimeout(timeout); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Runs once per client id: onUnavailable and label are read at init only.
   }, [clientId]);
 
   return (
