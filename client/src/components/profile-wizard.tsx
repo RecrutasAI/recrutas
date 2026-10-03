@@ -749,6 +749,7 @@ export default function ProfileWizard({ onComplete, skipResumeStep = false }: Pr
             <div className="space-y-2">
               <Label htmlFor="location" className="font-semibold flex items-center gap-2">
                 <MapPin className="h-4 w-4" /> Where are you located?
+                <span className="text-xs font-normal text-gray-500 dark:text-gray-400">(required)</span>
               </Label>
               <Select value={userLocation} onValueChange={setUserLocation}>
                 <SelectTrigger id="location">
@@ -763,6 +764,10 @@ export default function ProfileWizard({ onComplete, skipResumeStep = false }: Pr
                   ))}
                 </SelectContent>
               </Select>
+              {/* Continue stays disabled until this is set; say why. */}
+              {!userLocation && (
+                <p className="text-xs text-gray-500 dark:text-gray-400">Pick the metro you're in, or the closest one, to continue.</p>
+              )}
             </div>
 
             <Separator />

@@ -250,9 +250,24 @@ export default function CandidateStreamlinedDashboard() {
     }
   }, [isResumeProcessing, queryClient, toast]);
 
-  const firstName = (profile as any)?.firstName || (user as any)?.firstName || null;
+  // Google and email signups both put the person's name in auth metadata.
+  const meta = (user as any)?.user_metadata ?? {};
+  const metaFirstName = meta.given_name || meta.first_name || String(meta.full_name || meta.name || '').trim().split(/\s+/)[0] || null;
+  const firstName = (profile as any)?.firstName || (user as any)?.firstName || metaFirstName || null;
   const displayName = firstName || user?.email?.split('@')[0] || 'there';
-  const isReturningUser = (applications?.length ?? 0) > 0 || hasResume;
+  // "Welcome back" only from the second visit on. Every candidate who finished
+  // onboarding has a resume, so keying this off hasResume greeted brand-new
+  // users with "Welcome back".
+  const [seenDashboardBefore, setSeenDashboardBefore] = useState(false);
+  useEffect(() => {
+    if (!user?.id) {return;}
+    const key = `recrutas:dashboard-seen:${user.id}`;
+    try {
+      setSeenDashboardBefore(localStorage.getItem(key) === '1');
+      localStorage.setItem(key, '1');
+    } catch { /* storage blocked: greet without "back" */ }
+  }, [user?.id]);
+  const isReturningUser = seenDashboardBefore || (applications?.length ?? 0) > 0;
   const avatarInitial = ((user as any)?.firstName?.[0] || user?.email?.[0] || 'U').toUpperCase();
 
   if (isLoading) {
@@ -355,21 +370,23 @@ export default function CandidateStreamlinedDashboard() {
           </div>
 
           {/* Mobile tab nav */}
-          <div className="md:hidden flex items-center gap-1 pb-2 overflow-x-auto">
+          {/* Four equal columns, icon over label: side by side, the row was
+              wider than a 390px phone and cut "Profile" off the right edge. */}
+          <div className="md:hidden grid grid-cols-4 gap-1 pb-2">
             {tabItems.map(({ id, label, icon: Icon, badge }) => (
               <button
                 key={id}
                 onClick={() => setActiveTab(id)}
-                className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium whitespace-nowrap shrink-0 transition-all ${
+                className={`relative flex flex-col items-center gap-0.5 px-1 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-all ${
                   activeTab === id
                     ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white'
                     : 'text-gray-500 dark:text-gray-400'
                 }`}
               >
-                <Icon className="h-3.5 w-3.5" />
+                <Icon className="h-4 w-4" />
                 {label}
                 {badge !== null && badge !== undefined && (
-                  <span className="ml-1 h-4 min-w-4 px-0.5 rounded-full bg-emerald-500 text-white text-[10px] font-bold flex items-center justify-center">
+                  <span className="absolute top-0.5 right-1 h-4 min-w-4 px-0.5 rounded-full bg-emerald-500 text-white text-[10px] font-bold flex items-center justify-center">
                     {badge}
                   </span>
                 )}
@@ -387,7 +404,8 @@ export default function CandidateStreamlinedDashboard() {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <h1 className="text-xl font-bold text-gray-900 dark:text-white">
-                {isReturningUser ? `Welcome back, ${displayName}` : `Welcome, ${displayName}`}
+                {/* No name rather than an email handle ("Welcome, jdoe1987"). */}
+                {`Welcome${isReturningUser ? ' back' : ''}${firstName ? `, ${firstName}` : ''}`}
               </h1>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
                 Here's what's happening with your job search today.

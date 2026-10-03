@@ -23,6 +23,11 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 
+// Vercel serves the app without a WebSocket server: /ws answers with the SPA's
+// index.html, so every dashboard load logged a failed handshake. The socket
+// only exists on the Express dev server, or wherever VITE_REALTIME_WS=true.
+const REALTIME_SOCKET = import.meta.env.DEV || import.meta.env.VITE_REALTIME_WS === 'true';
+
 interface ServerNotification {
   id: number;
   type: string;
@@ -92,6 +97,8 @@ export default function RealTimeNotifications({ onNavigate }: RealTimeNotificati
     queryKey: ['/api/notifications'],
     enabled: !!user,
     refetchOnWindowFocus: true,
+    // The push socket below doesn't exist on Vercel, so poll there.
+    refetchInterval: REALTIME_SOCKET ? false : 60_000,
   });
 
   const markAsReadMutation = useMutation({
@@ -115,7 +122,7 @@ export default function RealTimeNotifications({ onNavigate }: RealTimeNotificati
 
   // WebSocket for real-time pushes
   useEffect(() => {
-    if (!user) {return;}
+    if (!user || !REALTIME_SOCKET) {return;}
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws`;

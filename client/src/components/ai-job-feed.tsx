@@ -871,6 +871,8 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
                               variant="outline"
                               onClick={(e) => handleSaveToggle(e, match)}
                               disabled={isSaving}
+                              aria-label={isSaved ? "Unsave job" : "Save job"}
+                              title={isSaved ? "Unsave job" : "Save job"}
                               className="px-2 sm:px-2.5"
                             >
                               {isSaving
@@ -882,6 +884,8 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
                               variant="outline"
                               onClick={(e) => handleHide(e, match)}
                               disabled={isHiding}
+                              aria-label="Hide job"
+                              title="Hide job"
                               className="px-2 sm:px-2.5"
                             >
                               {isHiding
@@ -892,6 +896,8 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
                               size="sm"
                               variant="outline"
                               onClick={(e) => { e.stopPropagation(); setSelectedMatch(match); setIsModalOpen(true); }}
+                              aria-label="Why this match"
+                              title="Why this match"
                               className="px-2 sm:px-2.5"
                             >
                               <Sparkles className="h-3 w-3 sm:h-4 sm:w-4" />

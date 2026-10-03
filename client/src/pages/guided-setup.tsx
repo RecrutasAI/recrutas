@@ -14,6 +14,7 @@ import { ThemeToggleButton } from '@/components/theme-toggle-button';
 import { Button } from '@/components/ui/button';
 import { useSessionContext } from '@supabase/auth-helpers-react';
 import { getUserRole } from '@/lib/auth-role';
+import { fetchProfileWithCache } from '@/lib/queryClient';
 
 /** Shared page chrome, so the loading and role-gate states don't lose the header. */
 function SetupShell({ children, title, subtitle }: { children: React.ReactNode; title: string; subtitle: string }) {
@@ -51,6 +52,21 @@ function GuidedSetupContent() {
       }
     }
   }, [session, setRole]);
+
+  // The step lives only in memory, so a reload mid-onboarding went back to
+  // "Upload Your Resume" even when the resume was already uploaded and parsed,
+  // and re-uploading counts against the daily upload cap. A candidate the
+  // server already has a resume for resumes at the Profile step.
+  useEffect(() => {
+    if (isLoading || role !== 'candidate') {return;}
+    let cancelled = false;
+    fetchProfileWithCache()
+      .then(profile => {
+        if (!cancelled && profile?.resumeUrl) {setStep(s => (s === 1 ? 2 : s));}
+      })
+      .catch(() => { /* stay on the resume step */ });
+    return () => { cancelled = true; };
+  }, [isLoading, role, setStep]);
 
   const candidateSteps = [
     { name: 'Resume', component: <ResumeUploadStep /> },

@@ -1,7 +1,9 @@
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -209,12 +211,14 @@ export default function AIMatchBreakdownModal({
                   </Badge>
                 )}
               </div>
-              <h2 className="font-bold text-lg text-slate-900 dark:text-white leading-tight truncate">
+              {/* DialogTitle/Description name the dialog for screen readers
+                  (Radix logs an error without a title). */}
+              <DialogTitle className="font-bold text-lg text-slate-900 dark:text-white leading-tight truncate">
                 {match.job.title}
-              </h2>
-              <p className="text-slate-500 dark:text-slate-400 text-sm mt-0.5">
+              </DialogTitle>
+              <DialogDescription className="text-slate-500 dark:text-slate-400 text-sm mt-0.5">
                 {match.job.company}
-              </p>
+              </DialogDescription>
               {/* Job meta */}
               <div className="flex flex-wrap items-center gap-3 mt-2 text-xs text-slate-500 dark:text-slate-400">
                 {match.job.location && (
