@@ -10,7 +10,7 @@ import crypto from 'crypto';
 import Groq from 'groq-sdk';
 import { ScrapedJob, CompanyConfig, JobLocation } from '../types.js';
 import { logger } from '../utils/logger.js';
-import { callAI, groqModel, groqReasoningParams } from '../../lib/ai-client.js';
+import { callAI, groqModel, groqReasoningParams, hasAIProvider } from '../../lib/ai-client.js';
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024; // 5MB
 
@@ -106,6 +106,10 @@ export async function extractWithAI(
   company: CompanyConfig,
   fetchOptions: RequestInit
 ): Promise<ScrapedJob[]> {
+  // The free Groq and Gemini tiers are reserved for résumé parsing (see
+  // CallAIOptions.skipGemini). With no other provider configured there is
+  // nothing to extract with, so don't fetch the page or log a failure.
+  if (!hasAIProvider('text', { skipGroq: true, skipGemini: true })) {return [];}
   try {
     // Fetch the career page HTML
     const response = await fetch(company.careerPageUrl, fetchOptions);
@@ -293,15 +297,15 @@ async function callAIForExtraction(html: string, company: CompanyConfig): Promis
   const truncatedHtml = truncateForAI(html);
   const userPrompt = `Extract job listings from ${company.name}'s careers page:\n\n${truncatedHtml}`;
 
-  // Unified AI client, without Groq: its daily token budget is reserved for
-  // résumé parsing, and ~700 career pages a run would spend it in minutes.
+  // Unified AI client, without Groq or Gemini: their free daily quotas are
+  // reserved for résumé parsing, and ~700 career pages a run would spend them.
   // estimatedTokens paces the Groq throttler, so it has to track the real payload:
   // the previous hardcoded 5000 under-reserved by ~2.4x against a measured 12,042,
   // letting through far more requests per minute than the budget could fund.
   const content = await callAI(
     systemPrompt,
     userPrompt,
-    { priority: 'low', estimatedTokens: estimateTokens(userPrompt), temperature: 0.1, maxOutputTokens: 4000, skipGroq: true }
+    { priority: 'low', estimatedTokens: estimateTokens(userPrompt), temperature: 0.1, maxOutputTokens: 4000, skipGroq: true, skipGemini: true }
   );
 
   if (!content) {

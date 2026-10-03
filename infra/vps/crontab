@@ -50,13 +50,18 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # Discover Companies — daily 02:00 (phases continue on error, like GHA)
 0 2 * * * $RUN discover-companies 90 bash -c 'npx tsx scripts/discover-companies.ts --phase=discover; npx tsx scripts/discover-companies.ts --phase=apollo; npx tsx scripts/discover-companies.ts --phase=probe --limit=1500'
 
-# AI model check — daily 02:50, just before retry-failed-parses needs them.
+# AI model check — daily 02:50.
 # Fails (→ alert email) when the primary Groq model or the Gemini backup is
 # retired; model retirements broke résumé parsing silently three times.
 50 2 * * * $RUN check-ai-models 3 npx tsx scripts/check-ai-models.ts
 
-# Retry Failed Parses — daily 03:00
-0 3 * * * $RUN retry-failed-parses 10 npx tsx scripts/retry-failed-parses.ts
+# Retry Failed Parses — hourly at :20. Also upgrades résumés that fell back to
+# the rule engine because the free Groq/Gemini quota ran out. Groq's daily limit
+# is a rolling window, so hourly means an upgrade within ~an hour of capacity
+# returning instead of the next night; quota-caused misses don't use up the
+# 3-attempt cap. At most 3 parses (~9K tokens) per run; a run with nothing to
+# retry exits in seconds.
+20 * * * * $RUN retry-failed-parses 10 npx tsx scripts/retry-failed-parses.ts
 
 # Auto-hide Ghost Jobs — daily 04:00
 0 4 * * * $RUN auto-hide-ghost-jobs 5 npx tsx scripts/auto-hide-ghost-jobs.ts --staleDays=30

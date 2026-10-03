@@ -6,7 +6,7 @@
  */
 
 import Groq from 'groq-sdk';
-import { callAI } from './lib/ai-client';
+import { callAI, hasAIProvider } from './lib/ai-client';
 import { db } from './db.js';
 import { discoveredCompanies } from '../shared/schema.js';
 import { eq } from 'drizzle-orm';
@@ -653,10 +653,9 @@ class CareerPageScraper {
    * AI-powered scraping for companies without structured APIs
    */
   private async scrapeWithAI(company: CompanyCareerPage): Promise<ScrapedJob[]> {
-    if (!this.groq && !process.env.GEMINI_API_KEY) {
-      console.log(`[CareerScraper] Skipping AI scraping for ${company.name} - no AI provider configured`);
-      return [];
-    }
+    // Groq and Gemini free tiers are reserved for résumé parsing; skip quietly
+    // unless another provider is configured.
+    if (!hasAIProvider('text', { skipGroq: true, skipGemini: true })) {return [];}
 
     try {
       // Fetch the career page HTML
@@ -688,7 +687,8 @@ class CareerPageScraper {
    * Use Groq AI to extract job listings from HTML content
    */
   private async extractJobsWithAI(html: string, company: CompanyCareerPage): Promise<ScrapedJob[]> {
-    if (!this.groq && !process.env.GEMINI_API_KEY) {return [];}
+    // Groq and Gemini free tiers are reserved for résumé parsing.
+    if (!hasAIProvider('text', { skipGroq: true, skipGemini: true })) {return [];}
 
     // Truncate HTML to fit in context window
     const truncatedHtml = html.slice(0, 30000);
@@ -705,8 +705,8 @@ Return a JSON object with a "jobs" array containing objects with these fields:
 Only include actual job postings, not navigation links or other content.
 Return maximum 15 jobs. If no jobs found, return {"jobs": []}.`,
         `Extract job listings from this ${company.name} careers page HTML:\n\n${truncatedHtml}`,
-        // No Groq: its daily token budget is reserved for résumé parsing.
-        { priority: 'low', estimatedTokens: 5000, temperature: 0.1, maxOutputTokens: 4000, skipGroq: true }
+        // No Groq or Gemini: their free daily quotas are reserved for résumé parsing.
+        { priority: 'low', estimatedTokens: 5000, temperature: 0.1, maxOutputTokens: 4000, skipGroq: true, skipGemini: true }
       );
 
       if (!content) {return [];}
