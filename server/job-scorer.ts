@@ -109,6 +109,8 @@ const ROLE_FAMILIES: Array<[RegExp, string]> = [
   [/(?:backend|back[\s-]end)/i, 'backend_developer'],
   [/full[\s.-]*stack/i, 'fullstack_developer'],
   [/software\s*(?:engineer|developer)/i, 'software_engineer'],
+  // Not bare "programmer": CNC / PLC programmers are manufacturing roles.
+  [/(?:programmer\s*analyst|(?:software|computer|applications?|web)\s*programmer)/i, 'software_engineer'],
   [/web\s*developer/i, 'web_developer'],
   // Product / Design
   [/product\s*manager/i, 'product_manager'],
@@ -694,6 +696,17 @@ function scoreTitleRelevance(candidateTitles: string[], jobTitle: string): numbe
     }
 
     bestScore = Math.max(bestScore, score);
+  }
+
+  // A candidate whose titles ALL fail to classify ("Programmer Analyst",
+  // "Eletricista de Manutenção", "Livelihood Officer") has given us no role
+  // evidence, the same as a candidate with no titles. Scoring them as a role
+  // mismatch put every classified job under 40, so the no-role-match cap held
+  // every job below the feed floor: 3 of 11 real candidates with titles got no
+  // real matches at all (2026-10-03). Fall back to neutral; a strong literal
+  // title overlap can still score above it.
+  if (!candidateTitles.some(t => extractRoleFamily(t))) {
+    bestScore = Math.max(bestScore, 50);
   }
 
   return Math.min(Math.round(bestScore), 100);
