@@ -1308,7 +1308,27 @@ Analyze the form and return the actions JSON to fill every field you can.`;
         storage.getUser(req.user.id),
         storage.getCandidateUser(req.user.id).catch(() => null),
       ]);
-      if (!user) {return res.status(404).json({ message: "User not found" });}
+      // A signed-in account gets its app row when it picks a role, so a brand-new
+      // signup has none yet. That's an expected state, not a missing resource:
+      // the 404 logged a console error on every new user's first page.
+      if (!user) {return res.json(null);}
+      // Supabase Auth owns the email; the users row is a copy that notification
+      // emails are addressed from. A confirmed email change only reached it via
+      // the client's USER_UPDATED listener, and the /auth/confirm link
+      // (verifyOtp) fires SIGNED_IN instead, so the copy kept the old address
+      // (seen 2026-10-03). Every dashboard load passes through here with the
+      // verified email in the token, so correct the copy here. Only from a token
+      // issued after the row last changed: a second device still holding a
+      // pre-change token (valid up to an hour) must not write the old one back.
+      const authEmail: string | undefined = req.user.email;
+      const issuedAt: number | undefined = req.user.issuedAt;
+      const rowUpdatedAt = user.updatedAt ? new Date(user.updatedAt).getTime() / 1000 : 0;
+      if (authEmail && user.email !== authEmail && issuedAt !== undefined && issuedAt > rowUpdatedAt) {
+        await db.update(users)
+          .set({ email: authEmail, updatedAt: new Date() })
+          .where(sql`${users.id} = ${req.user.id} AND ${users.email} IS DISTINCT FROM ${authEmail}`);
+        user.email = authEmail;
+      }
       res.json({ ...user, candidateProfile: candidateProfile || null });
     } catch (error) {
       console.error("Error fetching user:", error);
