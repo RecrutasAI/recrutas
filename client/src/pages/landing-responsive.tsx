@@ -113,11 +113,11 @@ function Hero({ onStart }: { onStart: () => void }) {
           <span className="whitespace-nowrap text-emerald-600 dark:text-emerald-400">Made to fit you.</span>
         </h1>
         <p className="mt-6 text-lg sm:text-xl leading-relaxed text-neutral-600 dark:text-neutral-400 max-w-2xl">
-          Upload your résumé once. Get live US roles, ranked by how well you fit, and why.
+          Upload your resume once. Get live US roles, ranked by how well you fit, and why.
         </p>
         <div className="mt-9 flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
           <PrimaryButton onClick={onStart}>
-            <Upload className="w-4 h-4" /> Upload résumé. It's free
+            <Upload className="w-4 h-4" /> Upload resume. It's free
           </PrimaryButton>
           <span className="font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500">Free for candidates · US roles only</span>
         </div>
@@ -202,7 +202,7 @@ function PostingRows({ jobs }: { jobs: CheckedJob[] }) {
 
 /**
  * The live card. Empty, it shows roles just re-checked on company boards;
- * with a role typed, it shows that person's live market — no résumé needed.
+ * with a role typed, it shows that person's live market — no resume needed.
  */
 function LiveSearch({ onStart }: { onStart: () => void }) {
   const [role, setRole] = useState("");
@@ -249,7 +249,7 @@ function LiveSearch({ onStart }: { onStart: () => void }) {
     <Band id="live" inner="px-4 sm:px-10 py-14 sm:py-20">
       <SectionLabel>Live right now</SectionLabel>
       <h2 className="text-3xl sm:text-5xl font-semibold tracking-[-0.035em] max-w-3xl mb-3">What's live for you right now?</h2>
-      <p className="text-lg text-neutral-600 dark:text-neutral-400 max-w-2xl mb-8">Type a role. No résumé, no account. Just the real market, today.</p>
+      <p className="text-lg text-neutral-600 dark:text-neutral-400 max-w-2xl mb-8">Type a role. No resume, no account. Just the real market, today.</p>
 
       <form
         onSubmit={(e) => { e.preventDefault(); run(); }}
@@ -350,7 +350,7 @@ function LiveSearch({ onStart }: { onStart: () => void }) {
             {result.postings.length > 0 && <PostingRows jobs={result.postings} />}
             <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-4 border-t ${RULE}`}>
               <p className="text-sm text-neutral-600 dark:text-neutral-400">
-                That's {result.total.toLocaleString()} live {result.total === 1 ? "role" : "roles"}. Let us rank them against your résumé.
+                That's {result.total.toLocaleString()} live {result.total === 1 ? "role" : "roles"}. Let us rank them against your resume.
               </p>
               <PrimaryButton onClick={onStart}>
                 Rank these for me <ArrowRight className="w-4 h-4" />
@@ -367,7 +367,7 @@ function LiveSearch({ onStart }: { onStart: () => void }) {
 
 function HowItWorks() {
   const steps = [
-    { title: "Upload your résumé", body: "We read your titles, skills and seniority. No forms to fill in." },
+    { title: "Upload your resume", body: "We read your titles, skills and seniority. No forms to fill in." },
     { title: "Get a ranked feed", body: "Live roles from company career pages, best fit first, each with the reason it matched." },
     { title: "Apply on the company's site", body: "Every match links straight to the real posting on the employer's own site. No reposters in between." },
   ];
@@ -523,9 +523,9 @@ function FinalCta({ onStart }: { onStart: () => void }) {
   return (
     <Band inner="px-4 sm:px-10 py-20 sm:py-28 text-center">
       <h2 className="text-3xl sm:text-5xl font-semibold tracking-[-0.035em] mb-4">See what you're a fit for.</h2>
-      <p className="text-lg text-neutral-600 dark:text-neutral-400 mb-9">One résumé. A ranked feed of live roles. Free.</p>
+      <p className="text-lg text-neutral-600 dark:text-neutral-400 mb-9">One resume. A ranked feed of live roles. Free.</p>
       <PrimaryButton onClick={onStart}>
-        <Upload className="w-4 h-4" /> Upload résumé
+        <Upload className="w-4 h-4" /> Upload resume
       </PrimaryButton>
     </Band>
   );

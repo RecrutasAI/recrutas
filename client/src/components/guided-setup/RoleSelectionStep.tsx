@@ -48,7 +48,7 @@ export default function RoleSelectionStep() {
       // Step 1, not 2. This screen is a gate that runs BEFORE the step machine,
       // not its first step: once a role exists the flow becomes the 2-step
       // candidate (Resume → Profile) or talent-owner (Company → Post Job) set.
-      // Sending them to step 2 would skip résumé upload — the one action the
+      // Sending them to step 2 would skip resume upload — the one action the
       // whole candidate flow exists to collect.
       setStep(1);
     },

@@ -58,7 +58,7 @@ export function AccountSettings() {
       <Row
         icon={<Trash2 className="h-4 w-4" />}
         title="Delete account"
-        detail="Permanently remove your profile, résumé and applications"
+        detail="Permanently remove your profile, resume and applications"
         action={panel === "delete" ? "Cancel" : "Delete"}
         onAction={() => toggle("delete")}
         destructive
@@ -214,7 +214,7 @@ function DeleteAccount() {
       onSubmit={(e) => { e.preventDefault(); mutation.mutate(); }}
     >
       <p className="text-xs text-slate-600 dark:text-slate-300">
-        This permanently deletes your profile, résumé, saved jobs and applications. It can't be undone.
+        This permanently deletes your profile, resume, saved jobs and applications. It can't be undone.
       </p>
       <Label htmlFor="confirm-delete" className="text-xs">Type <span className="font-mono font-semibold">DELETE</span> to confirm</Label>
       <Input id="confirm-delete" autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} />

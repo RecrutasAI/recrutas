@@ -10,8 +10,8 @@
  * but was never imported.
  *
  * This matters more than a cosmetic glitch: it sits on the one step the phase-1
- * activation funnel is measured on (signup → résumé upload), which was reading
- * 6 signups → 1 résumé.
+ * activation funnel is measured on (signup → resume upload), which was reading
+ * 6 signups → 1 resume.
  */
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -77,7 +77,7 @@ describe('guided setup flow selection', () => {
     mockApiRequest.mockResolvedValue(new Response('{}'));
   });
 
-  it('shows a candidate the résumé step, never the employer flow', async () => {
+  it('shows a candidate the resume step, never the employer flow', async () => {
     mockSession.mockReturnValue(sessionWithRole('candidate'));
     renderSetup();
 

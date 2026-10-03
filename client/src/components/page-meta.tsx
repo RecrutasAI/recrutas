@@ -21,7 +21,7 @@ const ROUTES: Record<string, RouteMeta> = {
   '/': {
     title: `${SITE} | Real jobs. Made to fit you.`,
     description:
-      'Upload your résumé once. Get live US roles from company career pages, ranked by how well you fit, and why. Free for candidates.',
+      'Upload your resume once. Get live US roles from company career pages, ranked by how well you fit, and why. Free for candidates.',
   },
   '/manifesto': {
     title: `Manifesto | ${SITE}`,

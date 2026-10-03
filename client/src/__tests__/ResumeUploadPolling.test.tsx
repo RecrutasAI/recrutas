@@ -1,5 +1,5 @@
 /**
- * Guards how the résumé upload step reads processing status while it polls.
+ * Guards how the resume upload step reads processing status while it polls.
  *
  * /api/candidate/profile answers `{ exists, profile }`. This component used to
  * poll it with a raw fetch and read `resumeProcessingStatus` off the top level,
@@ -98,7 +98,7 @@ async function uploadAFile() {
 
 const titles = () => toasts.map(t => t.title);
 
-describe('résumé upload polling', () => {
+describe('resume upload polling', () => {
   it('reports a completed parse as success, not as a timeout', async () => {
     server.use(profileServing('completed'));
     await uploadAFile();

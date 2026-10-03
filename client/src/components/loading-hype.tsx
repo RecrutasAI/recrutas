@@ -36,7 +36,7 @@ export const MATCHING_MESSAGES: HypeMessage[] = [
 ];
 
 export const RESUME_MESSAGES: HypeMessage[] = [
-  { icon: FileText, text: "Reading your résumé..." },
+  { icon: FileText, text: "Reading your resume..." },
   { icon: Brain, text: "Extracting skills and titles..." },
   { icon: Compass, text: "Mapping you to real open roles..." },
   { icon: Sparkles, text: "Almost there, building your candidate vector..." },

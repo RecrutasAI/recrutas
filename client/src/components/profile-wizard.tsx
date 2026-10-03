@@ -67,8 +67,8 @@ interface ExtractedInfo {
 interface ProfileWizardProps {
   onComplete?: () => void;
   /**
-   * Onboarding has its own résumé step right before this wizard, so there the
-   * wizard starts at Profile and leaves Résumé out of its step indicator. It
+   * Onboarding has its own resume step right before this wizard, so there the
+   * wizard starts at Profile and leaves Resume out of its step indicator. It
    * still renders step 1 if the user asks to re-upload (e.g. "Clear all").
    */
   skipResumeStep?: boolean;
@@ -662,13 +662,13 @@ export default function ProfileWizard({ onComplete, skipResumeStep = false }: Pr
             ) : (
               <div className="text-center py-8">
                 <FileText className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-                <p className="text-gray-500">No résumé yet. Upload one, or add your skills yourself.</p>
+                <p className="text-gray-500">No resume yet. Upload one, or add your skills yourself.</p>
                 <div className="mt-3 flex flex-col sm:flex-row gap-2 justify-center">
                   <Button variant="outline" onClick={() => setCurrentStep(1)}>
-                    Upload a résumé
+                    Upload a resume
                   </Button>
-                  {/* Skipping the résumé used to dead-end here: skills could only
-                      be edited on top of parsed résumé data. */}
+                  {/* Skipping the resume used to dead-end here: skills could only
+                      be edited on top of parsed resume data. */}
                   <Button
                     variant="outline"
                     onClick={() => setParsedResumeData({
