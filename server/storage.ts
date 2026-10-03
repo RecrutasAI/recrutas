@@ -1453,10 +1453,17 @@ export class DatabaseStorage implements IStorage {
 
     let discoveryJobs: any[] = [];
     if (relevanceWhere.length > 0) {
-      // Title matches sort first (0), skill-only matches after (1).
-      const relevanceOrder = titleMatch
-        ? [sql`CASE WHEN ${titleMatch} THEN 0 ELSE 1 END`]
-        : [];
+      // Title matches sort first (0), skill-only matches after (1). Within
+      // each, more shared skills first: one overlapping skill is all `?|`
+      // requires, and ordered by recency alone that put a home-health nurse
+      // role at the top of a software engineer's feed (2026-10-03).
+      const overlapCount = relevantSkills.length > 0
+        ? sql`(${sql.join(relevantSkills.slice(0, 40).map(s => sql`(${jobPostings.skills} ? ${s})::int`), sql` + `)})`
+        : undefined;
+      const relevanceOrder = [
+        ...(titleMatch ? [sql`CASE WHEN ${titleMatch} THEN 0 ELSE 1 END`] : []),
+        ...(overlapCount ? [sql`${overlapCount} DESC NULLS LAST`] : []),
+      ];
       discoveryJobs = await runQuery(
         [relevanceWhere.length > 1 ? or(...relevanceWhere) : relevanceWhere[0]],
         relevanceOrder,
