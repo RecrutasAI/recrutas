@@ -106,4 +106,24 @@ describe('ai-client failure semantics', () => {
     await expect(callAIWithPDF('sys', 'user', Buffer.from('%PDF-1.4'))).rejects.toThrow(/All AI providers failed/);
     expect(calls).toHaveLength(2);
   });
+  // Groq's free tier is 200,000 tokens/day for the whole key; scrapers set
+  // skipGroq so their volume can't starve résumé parsing.
+  it('leaves Groq out of the chain when the caller sets skipGroq', async () => {
+    process.env.GROQ_API_KEY = 'groq-key';
+    process.env.AI_PROVIDER = 'groq';
+    queue = [{ status: 200, body: '{"jobs":[]}' }];
+    const { callAI } = await import('../server/lib/ai-client');
+
+    await expect(callAI('sys', 'user', { skipGroq: true })).resolves.toBe('{"jobs":[]}');
+    expect(calls).toHaveLength(1); // Gemini, first and only
+  });
+
+  it('fails instead of calling Groq when Groq is the only provider and skipGroq is set', async () => {
+    delete process.env.GEMINI_API_KEY;
+    process.env.GROQ_API_KEY = 'groq-key';
+    const { callAI } = await import('../server/lib/ai-client');
+
+    await expect(callAI('sys', 'user', { skipGroq: true })).rejects.toThrow(/No AI provider available/);
+    expect(calls).toHaveLength(0);
+  });
 });

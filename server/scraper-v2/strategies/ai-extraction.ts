@@ -293,14 +293,15 @@ async function callAIForExtraction(html: string, company: CompanyConfig): Promis
   const truncatedHtml = truncateForAI(html);
   const userPrompt = `Extract job listings from ${company.name}'s careers page:\n\n${truncatedHtml}`;
 
-  // Use unified AI client (Gemini-first, Groq fallback) to avoid burning Groq tokens.
+  // Unified AI client, without Groq: its daily token budget is reserved for
+  // résumé parsing, and ~700 career pages a run would spend it in minutes.
   // estimatedTokens paces the Groq throttler, so it has to track the real payload:
   // the previous hardcoded 5000 under-reserved by ~2.4x against a measured 12,042,
   // letting through far more requests per minute than the budget could fund.
   const content = await callAI(
     systemPrompt,
     userPrompt,
-    { priority: 'low', estimatedTokens: estimateTokens(userPrompt), temperature: 0.1, maxOutputTokens: 4000 }
+    { priority: 'low', estimatedTokens: estimateTokens(userPrompt), temperature: 0.1, maxOutputTokens: 4000, skipGroq: true }
   );
 
   if (!content) {

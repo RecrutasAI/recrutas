@@ -31,9 +31,12 @@ async function main(): Promise<PipelineSummary> {
     const result = await resumeService.retryFailedParse(candidate.userId, candidate.resumeUrl!);
     if (result.success) succeeded++;
     console.log(`  [${i + 1}/${candidates.length}] userId=${candidate.userId} success=${result.success} skills=${result.skills}`);
-    // 4s delay between candidates — Gemini PDF multimodal is token-heavy
+    // A résumé is ~3,000 Groq tokens against a free tier of 8,000/min. At the
+    // old 4s gap the third one queued in the limiter past the parser's 15s AI
+    // race, and every résumé after it fell to the rule engine (5 of 10 on
+    // 2026-10-02). 30s lets the bucket refill.
     if (i < candidates.length - 1) {
-      await new Promise(r => setTimeout(r, 4000));
+      await new Promise(r => setTimeout(r, 30_000));
     }
   }
 

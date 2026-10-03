@@ -8,6 +8,13 @@ export interface CallAIOptions {
   estimatedTokens?: number;
   temperature?: number;
   maxOutputTokens?: number;
+  /**
+   * Leave Groq out of the chain. Groq's free tier is 200,000 tokens/DAY for the
+   * whole key, about 60 résumés; one scrape run's AI extraction (~700 pages at
+   * ~12,000 tokens) would spend it in minutes and leave résumé uploads on the
+   * rule engine. Bulk background work sets this.
+   */
+  skipGroq?: boolean;
 }
 
 /**
@@ -108,8 +115,9 @@ const TRIES_BY_MODALITY: Record<Modality, number> = { text: 3, image: 2, pdf: 2 
 async function withFallback(
   modality: Modality,
   attempt: (p: Provider) => Promise<string>,
+  opts: CallAIOptions = {},
 ): Promise<string> {
-  const chain = providerChain(modality);
+  const chain = providerChain(modality).filter((p) => !(opts.skipGroq && p === 'groq'));
   if (chain.length === 0) {
     throw new Error(
       `No AI provider available for ${modality}: set AI_PROVIDER and the matching key ` +
@@ -323,7 +331,7 @@ export async function callAI(systemPrompt: string, userPrompt: string, opts: Cal
       case 'groq': return callGroqText(systemPrompt, userPrompt, opts);
       case 'openrouter': return callOpenRouterText(systemPrompt, userPrompt, opts);
     }
-  });
+  }, opts);
 }
 
 /** Image (screenshot) + text → JSON string. Vision-capable providers only. */
