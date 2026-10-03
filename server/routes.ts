@@ -791,7 +791,7 @@ export async function registerRoutes(app: Express): Promise<Express> {
   }));
 
   // Landing page "what's live for you": counts + a few postings for a typed
-  // role, no résumé needed. Returns at most 6 postings per query, so it can't
+  // role, no resume needed. Returns at most 6 postings per query, so it can't
   // page through the index; rate-limited on top of the edge cache.
   app.get('/api/platform/live-search', rateLimit({ windowMs: 60 * 1000, max: 30 }), asyncHandler(async (req, res) => {
     const clean = (v: unknown, max: number) =>
@@ -1070,7 +1070,7 @@ Rules:
 - For select/dropdown with native <select> type: use action "select" with value matching EXACTLY one of the provided options. Always pick the best-matching option rather than leaving it blank.
 - For custom dropdowns (React Select, Combobox, etc. — type is usually "text"/"custom_select" but behaves like a dropdown; options may be provided): use "click_then_type" with the best-matching option text.
 - For radio groups (type "radio" — ONE field carrying the question as its label plus every choice in options): use action "select" with value set to the EXACT option text that best answers the question. Treat them like single-choice dropdowns. Yes/No eligibility and EEO self-identification frequently appear as radio groups — apply the same eligibility and "Decline to self-identify" rules above, choosing the matching option text.
-- For résumé/CV file upload fields: use action "upload_resume". For OTHER file uploads (cover letter, transcript, writing sample, portfolio, photo): use action "skip" — only the résumé is available, do NOT attach it to those.
+- For resume/CV file upload fields: use action "upload_resume". For OTHER file uploads (cover letter, transcript, writing sample, portfolio, photo): use action "skip" — only the resume is available, do NOT attach it to those.
 - For fields you genuinely cannot fill (CAPTCHA, signature pads): use action "skip"
 - For checkboxes that ask about consent/agreement to terms: use action "check"
 - Acknowledgment / certification / privacy-consent fields rendered as a DROPDOWN (e.g. "I certify that the information provided is true…", "I understand my application will be processed in accordance with the Privacy Policy", "I agree to…"): these are affirmations the candidate must accept to apply. Select the affirmative option — match whichever of "Yes" / "I agree" / "I acknowledge" / "I understand" / "I certify" / "I accept" the field offers. Do NOT skip them; they are typically required.
@@ -1146,9 +1146,9 @@ Analyze the form and return the actions JSON to fill every field you can.`;
         console.warn('[Extension] fallback merge failed:', (mergeErr as Error).message);
       }
 
-      // Guard (both AI + fallback paths): the résumé must only attach to actual
-      // résumé/CV file fields, never to cover-letter/transcript/other document
-      // uploads — otherwise the résumé gets submitted as the candidate's cover letter.
+      // Guard (both AI + fallback paths): the resume must only attach to actual
+      // resume/CV file fields, never to cover-letter/transcript/other document
+      // uploads — otherwise the resume gets submitted as the candidate's cover letter.
       const fieldsById = new Map(fields.map((f: any) => [f.id, f]));
       actions = actions.filter(a =>
         a.action !== 'upload_resume' || isResumeFileField(fieldsById.get(a.fieldId))
@@ -1166,7 +1166,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
         }
       }
 
-      // Final step of the phase-1 activation funnel (signup → résumé → feed →
+      // Final step of the phase-1 activation funnel (signup → resume → feed →
       // ≥1 auto-apply). Recorded here rather than in the extension on purpose:
       // the extension's own telemetry is written to chrome.storage.local and
       // never uploaded, and instrumenting it would need a store release per
@@ -1417,7 +1417,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
   // references users.id cascades from the users row, so either all of it goes
   // or — if some FK blocks the delete — none of it does and the login is left
   // intact so the user can retry or contact support. Only after the data is
-  // gone do we remove the résumé file and, last, the Supabase login itself.
+  // gone do we remove the resume file and, last, the Supabase login itself.
   app.delete('/api/account', isAuthenticated, asyncHandler(async (req: any, res) => {
     const userId: string = req.user.id;
     if (req.body?.confirm !== 'DELETE') {
@@ -1443,7 +1443,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     const resumePath = profile?.resumeUrl as string | undefined;
     if (resumePath && !resumePath.startsWith('http')) {
       const { error } = await supabaseAdmin.storage.from('resumes').remove([resumePath]);
-      if (error) {console.warn(`[account-delete] résumé file not removed for ${userId}:`, error.message);}
+      if (error) {console.warn(`[account-delete] resume file not removed for ${userId}:`, error.message);}
     }
 
     const { error: authError } = await supabaseAdmin.auth.admin.deleteUser(userId);

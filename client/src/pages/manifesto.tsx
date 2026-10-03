@@ -12,7 +12,7 @@ const STEPS: { n: string; status: string; live?: boolean; body: ReactNode }[] = 
     n: "step one",
     status: "live today",
     live: true,
-    body: <>Give job seekers a feed they can trust: live US roles, straight from the source, ranked against their résumé, each one telling you why it fits.</>,
+    body: <>Give job seekers a feed they can trust: live US roles, straight from the source, ranked against their resume, each one telling you why it fits.</>,
   },
   {
     n: "step two",
@@ -108,7 +108,7 @@ export default function ManifestoPage() {
               So we built from the bottom up. Every job comes straight from the employer's own hiring
               system, and we re-read every board every few hours.<Fn n={5} /> A job carries the live badge
               only if we saw it in the last 36 hours; when a company takes a posting down, we close it too.
-              Every match is ranked against your résumé and tells you why it fits.
+              Every match is ranked against your resume and tells you why it fits.
             </p>
             <p>
               <Strong>Real jobs, pulled straight from the source, made to fit you. No ghosts. No leftovers.
