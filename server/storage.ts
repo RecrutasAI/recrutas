@@ -91,6 +91,7 @@ export interface IStorage {
   getAllCandidateUsers(): Promise<CandidateProfile[]>;
   getCandidatesForParseRetry(limit: number): Promise<CandidateProfile[]>;
   incrementParseAttempts(userId: string): Promise<void>;
+  refundParseAttempt(userId: string): Promise<void>;
 
   // Talent Owner operations
   getTalentOwnerProfile(userId: string): Promise<TalentOwnerProfile | undefined>;
@@ -745,6 +746,17 @@ export class DatabaseStorage implements IStorage {
       console.error('Error incrementing parse attempts:', error);
       throw error;
     }
+  }
+
+  /**
+   * Give back an attempt that only failed because the AI providers were out of
+   * quota or overloaded. Those clear on their own; counting them would let a few
+   * busy hours use up a résumé's retries for good.
+   */
+  async refundParseAttempt(userId: string): Promise<void> {
+    await db.update(candidateProfiles)
+      .set({ parseAttempts: sql`GREATEST(COALESCE(${candidateProfiles.parseAttempts}, 0) - 1, 0)` })
+      .where(eq(candidateProfiles.userId, userId));
   }
 
   // Talent Owner operations

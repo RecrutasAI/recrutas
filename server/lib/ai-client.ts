@@ -15,6 +15,14 @@ export interface CallAIOptions {
    * rule engine. Bulk background work sets this.
    */
   skipGroq?: boolean;
+  /**
+   * Leave Gemini out too. Its free tier is ~20 requests/DAY per model, and it is
+   * the résumé parser's only reader for scanned PDFs (no text layer). Scraper AI
+   * extraction spent it by mid-morning (258 calls in two days, mostly 429s)
+   * while adding no jobs, so a scanned résumé uploaded later in the day got the
+   * rule engine. Bulk background work sets this with skipGroq.
+   */
+  skipGemini?: boolean;
 }
 
 /**
@@ -37,7 +45,7 @@ export interface CallAIOptions {
  * dying). Image/PDF skip Groq (text-only). Returns the raw text/JSON string.
  */
 type Provider = 'gemini' | 'groq' | 'openrouter';
-type Modality = 'text' | 'image' | 'pdf';
+export type Modality = 'text' | 'image' | 'pdf';
 
 // Which providers can serve each modality.
 const CAPABLE: Record<Modality, Provider[]> = {
@@ -94,6 +102,21 @@ function providerChain(modality: Modality): Provider[] {
   return ordered.filter(providerHasKey);
 }
 
+function allowedChain(modality: Modality, opts: CallAIOptions): Provider[] {
+  return providerChain(modality)
+    .filter((p) => !(opts.skipGroq && p === 'groq'))
+    .filter((p) => !(opts.skipGemini && p === 'gemini'));
+}
+
+/**
+ * Whether callAI would have any provider to try with these options. Background
+ * callers that skip the free tiers check this first, so with only free-tier keys
+ * configured they skip quietly instead of logging a failure per item.
+ */
+export function hasAIProvider(modality: Modality, opts: CallAIOptions = {}): boolean {
+  return allowedChain(modality, opts).length > 0;
+}
+
 // An HTTP-shaped provider failure. `status` is what separates "this model is
 // busy" (retry) from "this model is gone" (fail over) — a distinction the
 // message text alone does not reliably carry.
@@ -117,7 +140,7 @@ async function withFallback(
   attempt: (p: Provider) => Promise<string>,
   opts: CallAIOptions = {},
 ): Promise<string> {
-  const chain = providerChain(modality).filter((p) => !(opts.skipGroq && p === 'groq'));
+  const chain = allowedChain(modality, opts);
   if (chain.length === 0) {
     throw new Error(
       `No AI provider available for ${modality}: set AI_PROVIDER and the matching key ` +
