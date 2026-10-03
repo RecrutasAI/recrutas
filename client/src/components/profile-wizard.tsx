@@ -654,7 +654,7 @@ export default function ProfileWizard({ onComplete, skipResumeStep = false }: Pr
                       </div>
                     ))}
                     {(!parsedResumeData.experience?.positions || parsedResumeData.experience.positions.length === 0) && (
-                      <p className="text-sm text-gray-500 italic">No positions yet — click "Add Position" to add your most recent role.</p>
+                      <p className="text-sm text-gray-500 italic">No positions yet. Click "Add Position" to add your most recent role.</p>
                     )}
                   </div>
                 </div>

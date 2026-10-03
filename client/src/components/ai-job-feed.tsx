@@ -648,16 +648,16 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
                   ? "No on-platform jobs match your filters"
                   : fallbackJobs.length > 0
                     ? "We're sharpening your matches"
-                    : "Hang tight — new matches arrive daily"}
+                    : "Hang tight. New matches arrive daily."}
               </h3>
               <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-0.5">
                 {overFiltered
                   ? (fallbackJobs.length > 0
-                      ? `None of your ${totalMatches} matches fit these filters — here are roles from across the web that do. Or clear your filters.`
+                      ? `None of your ${totalMatches} matches fit these filters. Here are roles from across the web that do. Or clear your filters.`
                       : `None of your ${totalMatches} matches fit the current filters. Try widening or clearing them.`)
                   : fallbackJobs.length > 0
                     ? "While our top-tier matches catch up, here are roles aligned to your profile from across the web."
-                    : "Polish your profile to surface more matches, or check back soon — fresh opportunities are added every hour."}
+                    : "Polish your profile to surface more matches, or check back soon. Fresh opportunities are added every hour."}
               </p>
             </div>
             <div className="flex flex-col sm:flex-row gap-2 shrink-0">

@@ -499,7 +499,7 @@ export default function CandidateStreamlinedDashboard() {
                   See your job matches
                 </h2>
                 <p className="text-sm text-gray-500 dark:text-gray-400 text-center mb-8">
-                  Upload your resume once — our AI extracts your skills and ranks jobs by how likely you are to get them.
+                  Upload your resume once. Our AI extracts your skills and ranks jobs by how likely you are to get them.
                 </p>
 
                 {/* What happens next */}
@@ -608,7 +608,7 @@ export default function CandidateStreamlinedDashboard() {
                       ? 'Upload a resume to unlock AI-matched jobs'
                       : profileCompletion < 66
                         ? 'Add experience, location, or salary range to improve matches'
-                        : 'Almost there — fill in the remaining fields for better matches'}
+                        : 'Almost there! Fill in the remaining fields for better matches.'}
                   </p>
                 </div>
 
@@ -972,7 +972,7 @@ function SavedJobsList() {
               <p className="text-xs text-gray-400 dark:text-gray-500">{job.location}</p>
               {job.isClosed && (
                 <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
-                  No longer listed — the company has taken this posting down.
+                  No longer listed. The company has taken this posting down.
                 </p>
               )}
             </div>

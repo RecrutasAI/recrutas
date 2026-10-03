@@ -96,7 +96,7 @@ function NonUsNotice({ country, onContinue }: { country: string; onContinue: () 
 
       {state === "done" ? (
         <p className="rounded-md bg-muted px-3 py-2 text-sm text-foreground">
-          Thanks — we'll email you when Recrutas covers {countryName(country)}.
+          Thanks! We'll email you when Recrutas covers {countryName(country)}.
         </p>
       ) : (
         <form onSubmit={notifyMe} className="space-y-2">
@@ -110,12 +110,12 @@ function NonUsNotice({ country, onContinue }: { country: string; onContinue: () 
               {state === "sending" ? <Loader2 className="h-4 w-4 animate-spin" /> : "Notify me"}
             </Button>
           </div>
-          {state === "error" && <p className="text-xs text-destructive">That didn't go through — please try again.</p>}
+          {state === "error" && <p className="text-xs text-destructive">That didn't go through. Please try again.</p>}
         </form>
       )}
 
       <button type="button" onClick={onContinue} className="w-full text-center text-sm text-muted-foreground underline hover:text-foreground">
-        I'm looking for jobs in the US — continue to sign up
+        I'm looking for jobs in the US. Continue to sign up
       </button>
     </div>
   );

@@ -173,7 +173,7 @@ export default function AdminDashboard() {
         headers: adminHeaders,
       });
       if (res.status === 401) {
-        toast({ title: 'Unauthorized — re-enter admin secret', variant: 'destructive' });
+        toast({ title: 'Unauthorized. Re-enter admin secret.', variant: 'destructive' });
         setAuthenticated(false);
         return;
       }
@@ -219,7 +219,7 @@ export default function AdminDashboard() {
         headers: adminHeaders,
       });
       if (res.status === 401) {
-        toast({ title: 'Unauthorized — re-enter admin secret', variant: 'destructive' });
+        toast({ title: 'Unauthorized. Re-enter admin secret.', variant: 'destructive' });
         setAuthenticated(false);
         return;
       }

@@ -122,7 +122,7 @@ export function FeedbackDialog({ open, onOpenChange }: { open: boolean; onOpenCh
             {!signedInEmail && (
               <div>
                 <label htmlFor="feedback-email" className="block font-geist-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500 mb-1.5">
-                  Email <span className="normal-case tracking-normal">(optional — if you'd like a reply)</span>
+                  Email <span className="normal-case tracking-normal">(optional, if you'd like a reply)</span>
                 </label>
                 <input
                   id="feedback-email"

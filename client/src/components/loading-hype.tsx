@@ -39,13 +39,13 @@ export const RESUME_MESSAGES: HypeMessage[] = [
   { icon: FileText, text: "Reading your résumé..." },
   { icon: Brain, text: "Extracting skills and titles..." },
   { icon: Compass, text: "Mapping you to real open roles..." },
-  { icon: Sparkles, text: "Almost there — building your candidate vector..." },
+  { icon: Sparkles, text: "Almost there, building your candidate vector..." },
 ];
 
 export const SIGN_IN_MESSAGES: HypeMessage[] = [
   { icon: KeyRound, text: "Verifying your session..." },
   { icon: UserCheck, text: "Loading your candidate profile..." },
-  { icon: Coffee, text: "Hold tight — pouring your matches..." },
+  { icon: Coffee, text: "Hold tight, pouring your matches..." },
   { icon: Sparkles, text: "Setting up your dashboard..." },
 ];
 

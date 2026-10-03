@@ -137,7 +137,7 @@ export default function CandidatesTab({
                 <div key="cutoff-separator" className="flex items-center gap-3 py-3">
                   <div className="flex-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
                   <span className="text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap px-1">
-                    Below top {maxChat} — chat locked
+                    Below top {maxChat}: chat locked
                   </span>
                   <div className="flex-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
                 </div>

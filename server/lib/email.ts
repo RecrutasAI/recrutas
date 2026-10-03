@@ -158,7 +158,7 @@ export function matchesReadyEmail(candidateName: string, matchCount: number, job
       <div style="margin: 32px 0 0; padding: 18px 20px; background: #f0fdf4; border-radius: 8px; border-left: 4px solid #059669;">
         <p style="margin: 0; font-size: 14px; font-weight: 700; color: #065f46;">24-hour response guarantee</p>
         <p style="margin: 6px 0 0; font-size: 13px; color: #047857; line-height: 1.5;">
-          Every internal job on Recrutas comes with a guaranteed employer response within 24 hours. If they don't respond, the application is automatically closed and you move on — no black holes.
+          Every internal job on Recrutas comes with a guaranteed employer response within 24 hours. If they don't respond, the application is automatically closed and you move on. No black holes.
         </p>
       </div>
 
@@ -214,7 +214,7 @@ export function employerWelcomeEmail(firstName?: string): string {
   return emailBase(`
     <p style="margin:0 0 6px;font-size:22px;font-weight:700;color:#111827;">${greeting}</p>
     <p style="margin:0 0 24px;font-size:15px;color:#4b5563;line-height:1.6;">
-      Welcome to Recrutas. You're now set up to post jobs and find pre-screened candidates — fast.
+      Welcome to Recrutas. You're now set up to post jobs and find pre-screened candidates, fast.
     </p>
 
     <div style="border:1px solid #e5e7eb;border-radius:10px;padding:20px 24px;margin-bottom:12px;">
@@ -227,7 +227,7 @@ export function employerWelcomeEmail(firstName?: string): string {
     </div>
     <div style="border:1px solid #e5e7eb;border-radius:10px;padding:20px 24px;margin-bottom:28px;">
       <p style="margin:0 0 4px;font-size:15px;font-weight:700;color:#111827;">The 24-hour rule</p>
-      <p style="margin:0;font-size:14px;color:#6b7280;line-height:1.5;">Candidates who pass your exam expect a response within 24 hours. That's the Recrutas promise — it's what makes candidates trust the platform and apply seriously.</p>
+      <p style="margin:0;font-size:14px;color:#6b7280;line-height:1.5;">Candidates who pass your exam expect a response within 24 hours. That's the Recrutas promise. It's what makes candidates trust the platform and apply seriously.</p>
     </div>
 
     <div style="text-align:center;">
@@ -310,7 +310,7 @@ export function employerSLAWarningEmail(
 
     <div style="padding:18px 20px;background:#f3f4f6;border-radius:8px;">
       <p style="margin:0;font-size:13px;color:#6b7280;line-height:1.5;">
-        If you don't respond in time, the application will be automatically closed and the candidate will be notified. This is the Recrutas guarantee to candidates — it's what drives serious applicants to the platform.
+        If you don't respond in time, the application will be automatically closed and the candidate will be notified. This is the Recrutas guarantee to candidates. It's what drives serious applicants to the platform.
       </p>
     </div>
   `, "You're receiving this because you have an active job posting on Recrutas.");
@@ -349,7 +349,7 @@ export function candidateExamPassEmail(
     <div style="border:1px solid #e5e7eb;border-radius:10px;padding:20px 24px;margin-bottom:28px;">
       <p style="margin:0 0 4px;font-size:15px;font-weight:700;color:#111827;">What happens next</p>
       <p style="margin:0;font-size:14px;color:#6b7280;line-height:1.6;">
-        The employer has <strong>24 hours</strong> to reach out to you. That's the Recrutas guarantee — no ghosting. If they don't respond in time, the application closes automatically and you're free to move on.
+        The employer has <strong>24 hours</strong> to reach out to you. That's the Recrutas guarantee: no ghosting. If they don't respond in time, the application closes automatically and you're free to move on.
       </p>
     </div>
 
@@ -482,7 +482,7 @@ export function applicationSubmittedEmail(
       </div>`
     : `<div style="background:#f0fdf4;border-left:4px solid #059669;border-radius:8px;padding:16px 20px;margin-bottom:28px;">
         <p style="margin:0 0 4px;font-size:14px;font-weight:700;color:#065f46;">24-hour response guarantee</p>
-        <p style="margin:0;font-size:13px;color:#047857;line-height:1.5;">The employer has 24 hours to respond. No ghosting — ever.</p>
+        <p style="margin:0;font-size:13px;color:#047857;line-height:1.5;">The employer has 24 hours to respond. No ghosting, ever.</p>
       </div>`;
   return emailBase(`
     <p style="margin:0 0 6px;font-size:22px;font-weight:700;color:#111827;">${greeting}</p>
@@ -518,13 +518,13 @@ export function chatUnlockedEmail(
   return emailBase(`
     <p style="margin:0 0 6px;font-size:22px;font-weight:700;color:#111827;">${greeting}</p>
     <p style="margin:0 0 24px;font-size:15px;color:#4b5563;line-height:1.6;">
-      Great news — <strong>${company}</strong> wants to connect with you about the <strong>${jobTitle}</strong> role. Your chat is now open.
+      Great news! <strong>${company}</strong> wants to connect with you about the <strong>${jobTitle}</strong> role. Your chat is now open.
     </p>
 
     <div style="background:#f0fdf4;border-left:4px solid #059669;border-radius:8px;padding:20px 24px;margin-bottom:28px;">
       <p style="margin:0;font-size:16px;font-weight:700;color:#065f46;">${jobTitle}</p>
       <p style="margin:4px 0 0;font-size:14px;color:#047857;">${company}</p>
-      <p style="margin:10px 0 0;font-size:13px;color:#065f46;">Chat is unlocked — start the conversation now.</p>
+      <p style="margin:10px 0 0;font-size:13px;color:#065f46;">Chat is unlocked. Start the conversation now.</p>
     </div>
 
     <div style="text-align:center;">
@@ -554,7 +554,7 @@ export function slaBreachedEmail(
     <div style="border:1px solid #e5e7eb;border-radius:10px;padding:20px 24px;margin-bottom:28px;">
       <p style="margin:0 0 4px;font-size:15px;font-weight:700;color:#111827;">What this means for you</p>
       <p style="margin:0;font-size:14px;color:#6b7280;line-height:1.6;">
-        You are free to move on. This is not a reflection of your candidacy — the employer simply failed to meet their 24-hour commitment. Your profile and matches remain fully active.
+        You are free to move on. This is not a reflection of your candidacy. The employer simply failed to meet their 24-hour commitment. Your profile and matches remain fully active.
       </p>
     </div>
 
@@ -577,8 +577,8 @@ export function jobPostedEmail(
 ): string {
   const greeting = employerFirstName ? `Hi ${employerFirstName},` : 'Hi,';
   const examNote = hasExam
-    ? `<p style="margin:8px 0 0;font-size:13px;color:#047857;">Includes a screening exam — candidates must pass before advancing.</p>`
-    : `<p style="margin:8px 0 0;font-size:13px;color:#6b7280;">No screening exam — candidates can apply directly.</p>`;
+    ? `<p style="margin:8px 0 0;font-size:13px;color:#047857;">Includes a screening exam. Candidates must pass before advancing.</p>`
+    : `<p style="margin:8px 0 0;font-size:13px;color:#6b7280;">No screening exam. Candidates can apply directly.</p>`;
   return emailBase(`
     <p style="margin:0 0 6px;font-size:22px;font-weight:700;color:#111827;">${greeting}</p>
     <p style="margin:0 0 24px;font-size:15px;color:#4b5563;line-height:1.6;">
@@ -619,7 +619,7 @@ export function renewalReminderEmail(
   return emailBase(`
     <p style="margin:0 0 6px;font-size:22px;font-weight:700;color:#111827;">${greeting}</p>
     <p style="margin:0 0 24px;font-size:15px;color:#4b5563;line-height:1.6;">
-      Your <strong>${planName}</strong> plan renews in 3 days. No action needed — we'll charge your card on file automatically.
+      Your <strong>${planName}</strong> plan renews in 3 days. No action needed. We'll charge your card on file automatically.
     </p>
 
     <div style="border:1px solid #e5e7eb;border-radius:10px;padding:20px 24px;margin-bottom:28px;">
@@ -646,7 +646,7 @@ export function passwordResetEmail(resetUrl: string): string {
   return emailBase(`
     <p style="margin:0 0 6px;font-size:22px;font-weight:700;color:#111827;">Reset your password</p>
     <p style="margin:0 0 24px;font-size:15px;color:#4b5563;line-height:1.6;">
-      We received a request to reset your Recrutas password. Click the button below — this link expires in 1 hour.
+      We received a request to reset your Recrutas password. Click the button below. This link expires in 1 hour.
     </p>
 
     <div style="text-align:center;margin-bottom:28px;">
@@ -697,7 +697,7 @@ export function candidateExamFailEmail(
     <div style="border:1px solid #e5e7eb;border-radius:10px;padding:20px 24px;margin-bottom:28px;">
       <p style="margin:0 0 4px;font-size:15px;font-weight:700;color:#111827;">Keep going</p>
       <p style="margin:0;font-size:14px;color:#6b7280;line-height:1.6;">
-        You have ${10 - score > 0 ? `${passingScore - score}% to close` : 'room to grow'}. Every Recrutas employer responds within 24 hours — no ghosting, ever. There are more matches waiting for you.
+        You have ${10 - score > 0 ? `${passingScore - score}% to close` : 'room to grow'}. Every Recrutas employer responds within 24 hours. No ghosting, ever. There are more matches waiting for you.
       </p>
     </div>
 
