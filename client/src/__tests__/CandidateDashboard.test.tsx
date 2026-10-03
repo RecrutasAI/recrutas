@@ -2,6 +2,9 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
+// The global server from setupTests answers before this file's own, so
+// per-test overrides have to go on it.
+import { server as globalServer } from '../mocks/server';
 import CandidateDashboard from '../pages/candidate-dashboard-streamlined';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, it, expect, beforeAll, afterEach, afterAll, vi } from 'vitest';
@@ -204,5 +207,29 @@ describe('CandidateDashboard', () => {
     await waitFor(() => {
       expect(screen.getByText(/Welcome back/i)).toBeInTheDocument();
     });
+  });
+
+  it('greets a first visit without "back", and by first name only', async () => {
+    // Every candidate who finished onboarding has a resume, so keying "Welcome
+    // back" off the resume greeted brand-new users with it.
+    localStorage.clear();
+    globalServer.use(http.get('*/api/candidate/applications', () => HttpResponse.json([])));
+    const { unmount } = renderComponent();
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Welcome, John' })).toBeInTheDocument());
+    unmount();
+
+    renderComponent();
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Welcome back, John' })).toBeInTheDocument());
+  });
+
+  it('leaves out the name rather than showing an email handle', async () => {
+    localStorage.clear();
+    globalServer.use(
+      http.get('*/api/candidate/applications', () => HttpResponse.json([])),
+      http.get('*/api/auth/user', () => HttpResponse.json({ id: '123', email: 'jdoe1987@test.com' })),
+    );
+    renderComponent();
+    await waitFor(() => expect(screen.getByRole('heading', { name: /^Welcome/ })).toBeInTheDocument());
+    expect(screen.queryByText(/jdoe1987/)).not.toBeInTheDocument();
   });
 });

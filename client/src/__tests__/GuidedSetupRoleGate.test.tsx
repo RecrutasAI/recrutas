@@ -41,9 +41,13 @@ vi.mock('@/components/theme-toggle-button', () => ({
 
 // Role saves go through apiRequest; stub it so the gate can be driven offline.
 const mockApiRequest = vi.fn();
+// The candidate flow asks for the profile to skip the resume step when a
+// resume is already on file; default to "no profile yet".
+const mockFetchProfile = vi.fn();
 vi.mock('@/lib/queryClient', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/queryClient')>()),
   apiRequest: (...args: unknown[]) => mockApiRequest(...args),
+  fetchProfileWithCache: () => mockFetchProfile(),
 }));
 
 const mockSession = vi.fn();
@@ -75,6 +79,19 @@ describe('guided setup flow selection', () => {
     mockSession.mockReset();
     mockApiRequest.mockReset();
     mockApiRequest.mockResolvedValue(new Response('{}'));
+    mockFetchProfile.mockReset();
+    mockFetchProfile.mockResolvedValue(null);
+  });
+
+  it('resumes at the profile step after a reload when the resume is already uploaded', async () => {
+    // The step lived only in memory, so a reload went back to "Upload Your
+    // Resume" and a re-upload counted against the daily cap.
+    mockFetchProfile.mockResolvedValue({ resumeUrl: 'resume-123.pdf' });
+    mockSession.mockReturnValue(sessionWithRole('candidate'));
+    renderSetup();
+
+    await waitFor(() => expect(screen.getByText('STEP_SKILLS')).toBeInTheDocument());
+    expect(screen.queryByText('STEP_RESUME')).not.toBeInTheDocument();
   });
 
   it('shows a candidate the resume step, never the employer flow', async () => {
