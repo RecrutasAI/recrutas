@@ -31,9 +31,15 @@ const POSTED_WITHIN = arg('posted-within') ? Number(arg('posted-within')) : unde
 const LOCATION = arg('location');
 const WORK_TYPE = arg('work-type');
 const MIN_RECALL = arg('min-recall') ? Number(arg('min-recall')) : 0.9;
+// --semantic=N measures the feed with that semantic-lane size instead of the
+// production one, to size the lane before changing it.
+const SEMANTIC = arg('semantic') ? Number(arg('semantic')) : undefined;
+const MEASURED: FeedRetrievalOptions | undefined = SEMANTIC ? { laneLimits: { semantic: SEMANTIC } } : undefined;
 
 const UNBOUNDED: FeedRetrievalOptions = {
-  laneLimits: { role: 1_000_000, skill: 1_000_000, fresh: 3000 },
+  // semantic was missing here, so the "truth" silently used the production
+  // semantic cap and jobs only the semantic lane can reach never counted.
+  laneLimits: { role: 1_000_000, skill: 1_000_000, semantic: 5000, fresh: 3000 },
   freshHours: 24 * 91,
 };
 
@@ -71,11 +77,11 @@ async function main() {
     LOCATION && `location ~ "${LOCATION}"`,
     WORK_TYPE && `work type ${WORK_TYPE}`,
   ].filter(Boolean).map(f => ` · ${f}`).join('');
-  console.log(`candidates: ${rows.length}${filterNote}`);
+  console.log(`candidates: ${rows.length}${filterNote}${SEMANTIC ? ` · semantic lane ${SEMANTIC}` : ''}`);
   console.log('candidate  recall@100   >=75     >=60     feed  truth   feed-ms');
 
   for (const { user_id } of rows) {
-    const actual = await feed(user_id);
+    const actual = await feed(user_id, MEASURED);
     const truth = await feed(user_id, UNBOUNDED);
     // Discovery fallback = no job cleared the score floor; nothing to recall.
     const truthJobs = truth.jobs.filter(j => j.matchTier !== 'discovery');
