@@ -45,18 +45,64 @@
     el.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
+  // ── Shadow-DOM-aware queries ───────────────────────────────────────────────
+  // Some application systems (SmartRecruiters' one-click apply) build the whole
+  // form from web components, so every field sits inside a shadow root that a
+  // plain document.querySelectorAll never sees. The extension found zero fields
+  // there and never even showed its button. These search the document and every
+  // OPEN shadow root (closed ones are unreachable by design).
+
+  function shadowRoots(root) {
+    const out = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    for (let n = walker.currentNode; n; n = walker.nextNode()) {
+      if (n.shadowRoot) {
+        out.push(n.shadowRoot);
+        out.push(...shadowRoots(n.shadowRoot));
+      }
+    }
+    return out;
+  }
+
+  function deepQueryAll(selector, root = document) {
+    const found = Array.from(root.querySelectorAll(selector));
+    for (const sr of shadowRoots(root)) found.push(...sr.querySelectorAll(selector));
+    return found;
+  }
+
+  function deepQuery(selector, root = document) {
+    const direct = root.querySelector(selector);
+    if (direct) return direct;
+    for (const sr of shadowRoots(root)) {
+      const hit = sr.querySelector(selector);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  // By id, preferring the element's own tree (a label's `for` or an
+  // aria-labelledby id refers to the same shadow root as the field).
+  function byId(id, near) {
+    const scope = near && near.getRootNode ? near.getRootNode() : document;
+    return (scope.getElementById && scope.getElementById(id))
+      || (scope.querySelector && scope.querySelector(`[id="${CSS.escape(id)}"]`))
+      || deepQuery(`[id="${CSS.escape(id)}"]`);
+  }
+
   // ── Label text resolver ────────────────────────────────────────────────────
 
   function getLabelText(el) {
     if (el.id) {
-      const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      const scope = el.getRootNode ? el.getRootNode() : document;
+      const label = scope.querySelector(`label[for="${CSS.escape(el.id)}"]`)
+        || deepQuery(`label[for="${CSS.escape(el.id)}"]`);
       if (label) return label.textContent?.trim() || '';
     }
     // aria-labelledby → resolve the referenced element(s) and join their text.
     const labelledby = el.getAttribute && el.getAttribute('aria-labelledby');
     if (labelledby) {
       const txt = labelledby.split(/\s+/)
-        .map(id => document.getElementById(id)?.textContent?.trim() || '')
+        .map(id => byId(id, el)?.textContent?.trim() || '')
         .filter(Boolean)
         .join(' ');
       if (txt) return txt;
@@ -88,7 +134,7 @@
     const seen = new Set();
 
     // Standard form elements
-    const elements = document.querySelectorAll('input, textarea, select');
+    const elements = deepQueryAll('input, textarea, select');
 
     for (const el of elements) {
       const type = (el.type || el.tagName.toLowerCase()).toLowerCase();
@@ -156,7 +202,7 @@
     // individually loses the question and, for name-only radios, collapses the
     // whole group to a single option (the rest dedupe away on `name`).
     const radioGroups = new Map();
-    for (const r of document.querySelectorAll('input[type="radio"]')) {
+    for (const r of deepQueryAll('input[type="radio"]')) {
       if (r.disabled) continue;
       const name = r.getAttribute('name') || '';
       const key = name || r.id;
@@ -179,7 +225,7 @@
         (fieldset?.querySelector(':scope > legend')?.textContent?.trim()) ||
         first.getAttribute('aria-label') ||
         (first.getAttribute('aria-labelledby')
-          ? document.getElementById(first.getAttribute('aria-labelledby'))?.textContent?.trim() || ''
+          ? byId(first.getAttribute('aria-labelledby'), first)?.textContent?.trim() || ''
           : '') ||
         getLabelText(first);
       fields.push({
@@ -193,7 +239,7 @@
     }
 
     // Custom dropdown elements (Workday, iCIMS, Taleo use div[role="listbox"] instead of <select>)
-    const customDropdowns = document.querySelectorAll(
+    const customDropdowns = deepQueryAll(
       '[role="listbox"], [role="combobox"], [data-automation-id*="select"], [data-automation-id*="dropdown"]'
     );
     for (const el of customDropdowns) {
@@ -278,8 +324,8 @@
 
   function findElement(fieldId) {
     return document.getElementById(fieldId)
-      || document.querySelector(`[name="${CSS.escape(fieldId)}"]`)
-      || document.querySelector(`[id="${CSS.escape(fieldId)}"]`);
+      || deepQuery(`[name="${CSS.escape(fieldId)}"]`)
+      || deepQuery(`[id="${CSS.escape(fieldId)}"]`);
   }
 
   // ── Action executors ───────────────────────────────────────────────────────
@@ -354,7 +400,7 @@
   // match. react-select renders its menu in a portal, so we search document-wide
   // but only within real menu/listbox containers.
   function visibleOptionNodes() {
-    const nodes = document.querySelectorAll(
+    const nodes = deepQueryAll(
       '.select__menu .select__option, [class*="menu-list"] [class*="option"], [class*="select__menu"] [role="option"], [role="listbox"]:not([class*="iti__"]) [role="option"], [class*="MenuList"] [role="option"]'
     );
     return Array.from(nodes).filter(o =>
@@ -576,7 +622,7 @@
   function executeRadio(el, value) {
     const name = el.getAttribute('name');
     const radios = name
-      ? Array.from(document.querySelectorAll(`input[type="radio"][name="${CSS.escape(name)}"]`))
+      ? deepQueryAll(`input[type="radio"][name="${CSS.escape(name)}"]`)
       : [el];
     const wanted = value.trim().toLowerCase();
     if (!wanted) return false;
@@ -756,7 +802,8 @@
     banner.textContent = message;
     document.body.appendChild(banner);
 
-    setTimeout(() => banner.remove(), 5000);
+    // Errors and warnings stay long enough to read; success can go sooner.
+    setTimeout(() => banner.remove(), type === 'success' ? 6000 : 15000);
   }
 
   // ── Main fill trigger ──────────────────────────────────────────────────────
@@ -788,31 +835,43 @@
 
       if (btn) btn.textContent = 'AI filling…';
 
-      // Guard against a lost response (e.g. the MV3 service worker being
-      // terminated mid-request): without this the button stays on "AI filling…"
-      // forever. Slightly longer than the background fetch's own 60s abort so
-      // that, when it's the network stalling, the background's clearer error wins.
-      const response = await withTimeout(
-        sendMessage({
-          type: 'FILL_FORM_AI',
-          fields,
-          jobContext: jobContext.text,
-        }),
-        65000,
-        'Form fill timed out — please try again.'
-      );
+      // The server takes at most 50 fields per request. Long applications
+      // (60-70 fields on some Greenhouse forms) were rejected outright and got
+      // nothing filled, so send them in batches and merge the answers.
+      const BATCH = 45;
+      const actions = [];
+      let resumeUrl;
+      for (let start = 0; start < fields.length; start += BATCH) {
+        if (btn && fields.length > BATCH) {
+          btn.textContent = `AI filling… (${Math.min(start + BATCH, fields.length)}/${fields.length} fields)`;
+        }
+        // Guard against a lost response (e.g. the MV3 service worker being
+        // terminated mid-request): without this the button stays on "AI filling…"
+        // forever. Slightly longer than the background fetch's own 60s abort so
+        // that, when it's the network stalling, the background's clearer error wins.
+        const response = await withTimeout(
+          sendMessage({
+            type: 'FILL_FORM_AI',
+            fields: fields.slice(start, start + BATCH),
+            jobContext: jobContext.text,
+          }),
+          65000,
+          'Form fill timed out — please try again.'
+        );
 
-      if (!response) {
-        // Defensive: a dropped/undefined background reply must not surface as a
-        // cryptic "undefined has no properties" — give an actionable message.
-        throw new Error('No response from the extension. Please reload the page and try again.');
+        if (!response) {
+          // Defensive: a dropped/undefined background reply must not surface as a
+          // cryptic "undefined has no properties" — give an actionable message.
+          throw new Error('No response from the extension. Please reload the page and try again.');
+        }
+
+        if (!response.success) {
+          throw new Error(response.error || 'AI fill failed');
+        }
+
+        actions.push(...(response.actions || []));
+        resumeUrl = resumeUrl || response.resumeUrl;
       }
-
-      if (!response.success) {
-        throw new Error(response.error || 'AI fill failed');
-      }
-
-      const { actions, resumeUrl } = response;
 
       if (!actions || actions.length === 0) {
         showBanner('AI could not determine how to fill this form', 'warning');
@@ -915,7 +974,7 @@
     if (window !== window.top && (window.innerWidth < 320 || window.innerHeight < 320)) {
       return;
     }
-    const hasForm = document.querySelector('input:not([type="hidden"]), textarea, select');
+    const hasForm = deepQuery('input:not([type="hidden"]), textarea, select');
     if (hasForm) {
       injectButton();
     }
@@ -935,6 +994,14 @@
 
   const observer = new MutationObserver(() => debouncedInject());
   observer.observe(document.body, { childList: true, subtree: true });
+
+  // A form rendered inside a shadow root doesn't trigger the observer above,
+  // so keep checking for a little while after load until the button is up.
+  let retries = 0;
+  const retryInject = setInterval(() => {
+    if (document.getElementById('recrutas-fill-btn') || ++retries > 20) { clearInterval(retryInject); return; }
+    maybeInject();
+  }, 1500);
 
   window.addEventListener('popstate', () => setTimeout(maybeInject, 500));
   window.addEventListener('hashchange', () => setTimeout(maybeInject, 500));

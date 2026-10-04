@@ -7,6 +7,7 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { z } from "zod";
+import { phoneFromText } from "./lib/phone";
 
 import { storage } from "./storage";
 import { isAuthenticated } from "./middleware/auth";
@@ -295,6 +296,7 @@ import { registerMetricsRoutes } from './routes/metrics-api.js';
 import { isResumeFileField } from './extension-fill-helpers.js';
 
 interface LiveStatsRow { active_jobs: number; companies: number; recently_checked: number }
+
 
 export async function registerRoutes(app: Express): Promise<Express> {
   console.log('registerRoutes called!');
@@ -994,7 +996,9 @@ export async function registerRoutes(app: Express): Promise<Express> {
         lastName: profile.lastName || personalInfo.name?.split(' ').slice(1).join(' ') || '',
         fullName: `${profile.firstName || ''} ${profile.lastName || ''}`.trim() || personalInfo.name || '',
         email: profile.email || user?.email || personalInfo.email || '',
-        phone: user?.phone_number || personalInfo.phone || '',
+        // Settings phone, else the parsed one, else the first phone-shaped
+        // string in the resume text (parses before 2026-10-04 didn't keep it).
+        phone: user?.phone_number || personalInfo.phone || phoneFromText((profile as any).resumeText) || '',
         linkedin: profile.linkedinUrl || personalInfo.linkedin || '',
         github: profile.githubUrl || personalInfo.github || '',
         portfolio: profile.portfolioUrl || profile.personalWebsite || personalInfo.portfolio || '',
@@ -1004,7 +1008,23 @@ export async function registerRoutes(app: Express): Promise<Express> {
         school: parsed.education?.[0]?.institution || '',
         degree: parsed.education?.[0]?.degree || '',
         experienceYears: String(parsed.experience?.totalYears || ''),
+        ...Object.fromEntries(Object.entries(((profile as any).jobPreferences?.applicationAnswers || {}) as Record<string, string>)
+          .filter(([, v]) => typeof v === 'string' && v).map(([k, v]) => [`stated_${k}`, v])),
       };
+
+      // Screening facts the candidate stated in Settings → Application answers.
+      const stated: any = (profile as any).jobPreferences?.applicationAnswers || {};
+      const yn = (v?: string) => (v === 'yes' ? 'Yes' : v === 'no' ? 'No' : '');
+      const CLEARANCE: Record<string, string> = { none: 'None', public_trust: 'Public Trust', secret: 'Secret', top_secret: 'Top Secret', ts_sci: 'TS/SCI' };
+      const statedLines = [
+        stated.workAuthorizedUS && `Legally authorized to work in the United States: ${yn(stated.workAuthorizedUS)}`,
+        stated.needsSponsorship && `Requires visa sponsorship now or in the future: ${yn(stated.needsSponsorship)}`,
+        stated.usCitizen && `US citizen: ${yn(stated.usCitizen)}`,
+        stated.over18 && `At least 18 years old: ${yn(stated.over18)}`,
+        stated.securityClearance && `Active security clearance: ${CLEARANCE[stated.securityClearance] || stated.securityClearance}`,
+        stated.willingToRelocate && `Willing to relocate: ${yn(stated.willingToRelocate)}`,
+        stated.noticePeriod && `Notice period / earliest start: ${stated.noticePeriod}`,
+      ].filter(Boolean) as string[];
 
       const resumeContext = profile.resumeText
         ? profile.resumeText.slice(0, 3000)
@@ -1030,7 +1050,10 @@ CURRENT ROLE: ${profileData.currentTitle} at ${profileData.currentCompany}
 EXPERIENCE: ${profileData.experienceYears} years
 EDUCATION: ${profileData.degree} from ${profileData.school}
 SKILLS: ${skillsList}
-
+${statedLines.length ? `
+CANDIDATE'S OWN ANSWERS (stated by the candidate; use these exactly, they override any inference):
+${statedLines.map(l => `- ${l}`).join('\n')}
+` : ''}
 RESUME EXCERPT:
 ${resumeContext.slice(0, 2000)}`;
 
@@ -1063,6 +1086,7 @@ Rules:
 - "How did you hear about us" / referral source: answer "Company website" unless a better source is evident.
 - For screening questions: write a professional, specific answer using the candidate's real experience. Keep under 200 words.
 - VOLUNTARY self-identification / EEO / demographic fields (Gender, Race, Ethnicity, Hispanic/Latino, Veteran Status, Disability Status): these are almost always dropdowns with a decline choice. Return action "click_then_type" with value "Decline to self-identify" EVEN IF no options are listed (the options are often hidden until the dropdown opens). If options ARE listed with a different decline phrasing ("I don't wish to answer", "Prefer not to answer", "I do not wish to disclose"), use that exact option text instead. Do NOT skip EEO fields.
+- CANDIDATE'S OWN ANSWERS come first: when a question asks about anything listed there (work authorization, sponsorship, citizenship, age 18+, security clearance, relocation, notice period / start date), answer from it exactly, picking the option text that means the same thing. Only fall back to the inference rules below for questions those answers don't cover.
 - Work AUTHORIZATION ("Are you legally authorized / eligible / do you have the right to work in [country]?", "Can you work in X without restriction?"): if the candidate's LOCATION is in that same country — or the question says "the country where this job is based" and the candidate's location matches the job's country (infer the job country from JOB CONTEXT / the form's Country field) — answer the AFFIRMATIVE option ("Yes"). People apply to jobs in countries where they can work, so a location match is strong evidence; do not leave these (usually REQUIRED) fields blank on a clear match. Answer "No" or skip only if there is explicit evidence the candidate is NOT authorized.
 - Visa / SPONSORSHIP ("do you now or will you in the future require sponsorship?", "do you need a visa?"): this is genuinely ambiguous from location alone — answer only if the candidate data clearly supports it, otherwise skip rather than guess wrong.
 - Other eligibility yes/no (citizenship, security clearance, willing to relocate): answer ONLY when the candidate data clearly supports it; if you cannot infer, skip rather than guess wrong (a wrong eligibility answer is worse than a blank one).
@@ -1229,7 +1253,8 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       linkedin: [/linkedin/i],
       github: [/github/i],
       portfolio: [/portfolio/i, /personal[\s_-]?site/i, /^website$/i],
-      location: [/^location$/i, /^city$/i, /^address$/i],
+      // City-level only: a street "Address" field must not get "Seattle, WA".
+      location: [/^location\b/i, /^city\b/i, /^current (?:location|city)\b/i, /^where are you (?:located|based)/i],
       currentTitle: [/current[\s_-]?title/i, /job[\s_-]?title/i, /^title$/i],
       currentCompany: [/current[\s_-]?(company|employer)/i, /^company$/i],
       school: [/school/i, /university/i, /institution/i, /college/i],
@@ -1240,6 +1265,10 @@ Analyze the form and return the actions JSON to fill every field you can.`;
 
     for (const field of fields) {
       const searchText = `${field.label || ''} ${field.name || ''} ${field.id || ''}`.toLowerCase();
+      // The label alone, minus the required-marker and punctuation, so anchored
+      // patterns match real labels: "Location (City)*" and "Name*" never matched
+      // ^location$ / ^name$ against the label+name+id blob.
+      const labelText = (field.label || '').replace(/[*:]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
 
       if (field.type === 'file') {
         if (isResumeFileField(field)) {
@@ -1249,7 +1278,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       }
 
       for (const [key, patterns] of Object.entries(PATTERNS)) {
-        if (patterns.some(p => p.test(searchText)) && profileData[key]) {
+        if (patterns.some(p => p.test(searchText) || p.test(labelText)) && profileData[key]) {
           actions.push({
             fieldId: field.id,
             action: field.type === 'select' ? 'select' : 'type',
@@ -1274,6 +1303,21 @@ Analyze the form and return the actions JSON to fill every field you can.`;
         const opts = field.options || [];
         const declineOpt = opts.find(o => /decline|prefer not|opt out|rather not|do(?:\s+not|n'?t)\s+(?:wish|want)|(?:wish|want)\s+not to/i.test(o));
         const customAction = field.type === 'select' ? 'select' : 'click_then_type';
+
+        // The candidate's own stated answers (Settings → Application answers).
+        const yesNo = (v?: string) => (v === 'yes' ? (opts.find(o => /^yes\b/i.test(o)) || 'Yes') : v === 'no' ? (opts.find(o => /^no\b/i.test(o)) || 'No') : '');
+        const statedAnswer =
+          /sponsor|visa/i.test(labelText) ? yesNo(profileData.stated_needsSponsorship)
+          : /(legally )?(authori[sz]ed|eligible|right) to work/i.test(labelText) ? yesNo(profileData.stated_workAuthorizedUS)
+          : /\bu\.?s\.? citizen|citizen of the united states/i.test(labelText) ? yesNo(profileData.stated_usCitizen)
+          : /(at least|over|older than) (18|eighteen)|18 years of age/i.test(labelText) ? yesNo(profileData.stated_over18)
+          : /relocat/i.test(labelText) ? yesNo(profileData.stated_willingToRelocate)
+          : /notice period|earliest (start|available)|when can you start/i.test(labelText) && field.type !== 'select' ? (profileData.stated_noticePeriod || '')
+          : '';
+        if (statedAnswer) {
+          actions.push({ fieldId: field.id, action: field.type === 'select' ? 'select' : (opts.length || field.type === 'custom_select' ? customAction : 'type'), value: statedAnswer });
+          continue;
+        }
 
         if (/salary|compensation|expected pay|desired pay/i.test(searchText)) {
           actions.push({ fieldId: field.id, action: field.type === 'select' ? 'select' : 'type', value: 'Negotiable' });
@@ -1631,13 +1675,54 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     }
   }));
 
+  // ── Application answers ───────────────────────────────────────────────────
+  // Facts only the candidate can state, which application forms ask on nearly
+  // every job (work authorization, sponsorship, age, clearance…). Autofill
+  // skips these when unknown — a wrong answer can cost the job — so without
+  // them they stayed blank on every form. Stored in job_preferences.
+  const yesNo = z.enum(['yes', 'no']).optional();
+  const applicationAnswersSchema = z.object({
+    phone: z.string().trim().max(30).optional(),
+    workAuthorizedUS: yesNo,
+    needsSponsorship: yesNo,
+    usCitizen: yesNo,
+    over18: yesNo,
+    securityClearance: z.enum(['none', 'public_trust', 'secret', 'top_secret', 'ts_sci']).optional(),
+    willingToRelocate: yesNo,
+    noticePeriod: z.string().trim().max(60).optional(),
+  }).strict();
+
+  app.get('/api/candidate/application-answers', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const [profile, user] = await Promise.all([storage.getCandidateUser(req.user.id), storage.getUser(req.user.id)]);
+    const answers = ((profile as any)?.jobPreferences?.applicationAnswers) || {};
+    res.json({ ...answers, phone: (user as any)?.phone_number || '' });
+  }));
+
+  app.put('/api/candidate/application-answers', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const parsed = applicationAnswersSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ message: 'Invalid answers', issues: parsed.error.issues.map(i => i.path.join('.')) });
+    }
+    const { phone, ...answers } = parsed.data;
+    const profile: any = await storage.getCandidateUser(req.user.id);
+    const jobPreferences = { ...(profile?.jobPreferences || {}), applicationAnswers: answers };
+    await storage.upsertCandidateUser({ userId: req.user.id, jobPreferences });
+    if (phone !== undefined) {
+      await storage.updateUserInfo(req.user.id, { phone_number: phone || null } as any);
+    }
+    res.json({ success: true });
+  }));
+
   app.put('/api/candidate/preferences', isAuthenticated, asyncHandler(async (req: any, res) => {
     try {
       const { jobPreferences } = req.body;
       if (!jobPreferences || typeof jobPreferences !== 'object') {
         return res.status(400).json({ message: 'jobPreferences object required' });
       }
-      await storage.upsertCandidateUser({ userId: req.user.id, jobPreferences });
+      // Merge: the profile wizard sends only its own keys, and replacing the
+      // whole object would erase the candidate's application answers.
+      const existing: any = await storage.getCandidateUser(req.user.id);
+      await storage.upsertCandidateUser({ userId: req.user.id, jobPreferences: { ...(existing?.jobPreferences || {}), ...jobPreferences } });
       res.json({ success: true });
     } catch (error) {
       console.error('Error saving preferences:', error);
@@ -2734,8 +2819,10 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       const preferences = req.body;
       // Store preferences on the candidate profile — fetchScoredJobs reads them
       const { candidateProfiles } = await import('../shared/schema.js');
+      // Merge, never replace: application answers live in the same column.
+      const existing: any = await storage.getCandidateUser(req.user.id);
       await db.update(candidateProfiles)
-        .set({ jobPreferences: preferences })
+        .set({ jobPreferences: { ...(existing?.jobPreferences || {}), ...(preferences || {}) } })
         .where(eq(candidateProfiles.userId, req.user.id));
       res.json({ success: true });
     } catch (error) {

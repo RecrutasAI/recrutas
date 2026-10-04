@@ -657,7 +657,8 @@ export class DatabaseStorage implements IStorage {
         .select()
         .from(candidateProfiles)
         .where(eq(candidateProfiles.userId, userId));
-      console.log(`[storage] Found candidate profile:`, profile);
+      // Never log the profile itself: it holds the full resume text.
+      console.log(`[storage] Candidate profile ${profile ? 'found' : 'not found'} for ${userId}`);
       return profile;
     } catch (error) {
       console.error('Error fetching candidate profile:', error);

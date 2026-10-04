@@ -74,6 +74,18 @@ export function classifyPrimaryError(msg: string): string {
  * Custom error for resume processing failures
  * @extends Error
  */
+
+// Name/email/phone as the resume states them, for autofill. Empty values are
+// dropped so a later parse that misses one can't erase a known good value.
+function contactInfo(aiExtracted: any): Record<string, string> {
+  const pi = aiExtracted?.personalInfo || {};
+  const out: Record<string, string> = {};
+  for (const k of ['name', 'email', 'phone'] as const) {
+    if (typeof pi[k] === 'string' && pi[k].trim()) out[k] = pi[k].trim();
+  }
+  return out;
+}
+
 export class ResumeProcessingError extends Error {
   constructor(message: string, public originalError?: any) {
     super(message);
@@ -300,6 +312,9 @@ export class ResumeService {
             (aiExtracted.skills?.soft?.length || 0) +
             (aiExtracted.skills?.tools?.length || 0),
           parsingError: parsingSuccess ? null : 'AI parsing failed',
+          // Contact details the resume states. Autofill reads these; they were
+          // extracted but never saved, so most users had no phone to fill.
+          personalInfo: contactInfo(aiExtracted),
           // Store structured positions so matching can compare job titles
           positions: (aiExtracted.experience?.positions || []).slice(0, 6).map((p: any) => ({
             title: p.title || '',
@@ -531,6 +546,7 @@ export class ResumeService {
           ...(parseResult?.primaryError ? { primaryError: parseResult.primaryError } : {}),
           parsedWithModel: modelFor(parseResult?.extractor),
           parsingError: parsingSuccess ? null : 'AI parsing failed on retry',
+          personalInfo: contactInfo(aiExtracted),
           positions: (aiExtracted.experience?.positions || []).slice(0, 6).map((p: any) => ({
             title: p.title || '',
             company: p.company || '',
