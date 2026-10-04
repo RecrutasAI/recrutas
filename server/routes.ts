@@ -9,6 +9,7 @@ import fs from "fs";
 import { z } from "zod";
 import { phoneFromText } from "./lib/phone";
 import { recordReportedApplication, applicationForUrl } from "./services/application-tracking.service";
+import { diagnoseCandidate } from "./services/application-diagnosis.service";
 
 import { storage } from "./storage";
 import { isAuthenticated } from "./middleware/auth";
@@ -1874,6 +1875,11 @@ Analyze the form and return the actions JSON to fill every field you can.`;
   }));
 
   // Candidate applications
+  // "Why am I hearing nothing?": a diagnosis of the candidate's own applications.
+  app.get('/api/candidate/application-diagnosis', isAuthenticated, asyncHandler(async (req: any, res) => {
+    res.json(await diagnoseCandidate(req.user.id));
+  }));
+
   app.get('/api/candidate/applications', isAuthenticated, asyncHandler(async (req: any, res) => {
     try {
       const applications = await storage.getApplicationsWithStatus(req.user.id);

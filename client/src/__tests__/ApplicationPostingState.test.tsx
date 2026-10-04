@@ -45,3 +45,17 @@ describe('application posting state', () => {
     expect(screen.queryByTestId('posting-taken-down')).toBeNull();
   });
 });
+
+describe('application diagnosis', () => {
+  it('shows findings and one next step', async () => {
+    server.use(http.get('*/api/candidate/application-diagnosis', () => HttpResponse.json({
+      applications: 4, enoughData: true,
+      findings: ['None of your 4 applications has had a reply yet.', '2 are still posted with no reply after 14+ days.'],
+      nextStep: { kind: 'follow_up', text: 'Follow up: 2 applications are past 14 days with the job still posted.' },
+    })));
+    renderWith([app(5, { postingState: 'live' })]);
+    const card = await screen.findByTestId('application-diagnosis');
+    expect(card).toHaveTextContent('None of your 4 applications has had a reply yet.');
+    expect(screen.getByTestId('diagnosis-next-step')).toHaveTextContent('Next step: Follow up');
+  });
+});

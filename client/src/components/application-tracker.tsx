@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Calendar, Clock, Eye, MessageSquare, ExternalLink, ChevronRight, FileText, Loader2, Trash2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import { ApplicationDiagnosis } from "./application-diagnosis";
 import { formatDistanceToNow } from "date-fns";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -228,6 +229,8 @@ export default function ApplicationTracker() {
           </CardContent>
         </Card>
       </div>
+
+      <ApplicationDiagnosis />
 
       {/* Active Applications */}
       {activeApplications.length > 0 && (
