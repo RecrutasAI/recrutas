@@ -986,6 +986,14 @@ ${truncatedText}`;
     t = t.replace(/(?<![A-Za-z])(?:[A-Z] ){3,}[A-Z](?![A-Za-z])/g,
       m => '\n' + m.replace(/ /g, '') + '\n');
 
+    // Some PDFs letter-space everything, not just headings: dates come out as
+    // "A p r 2 0 2 2 - F e b 2 0 2 5" and titles as "D e v e l o p e r", so
+    // no date rule matched and a real résumé yielded zero positions. Rejoin
+    // runs of 4+ single characters, keeping a space where letters meet digits
+    // ("Apr2022" -> "Apr 2022").
+    t = t.replace(/(?<![A-Za-z0-9])(?:[A-Za-z0-9] ){3,}[A-Za-z0-9](?![A-Za-z0-9])/g,
+      m => m.replace(/ /g, '').replace(/([A-Za-z])(\d)/g, '$1 $2').replace(/(\d)([A-Za-z])/g, '$1 $2'));
+
     // Bullet glyphs survive the flattening even when the line break does not.
     t = t.replace(/[\u2022\u25CF\u25AA\u25E6\u00B7\u2023]\s*/g, '\n• ');
 

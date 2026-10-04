@@ -572,7 +572,7 @@ function splitAllCapsCompany(s: string): { company: string; rest: string } | nul
 
 // Words that strongly suggest a string is a job title (vs a bullet, skill,
 // or company name). Used to disambiguate when scanning for title candidates.
-const ROLE_WORDS_RE = /\b(engineer|developer|manager|analyst|designer|consultant|director|architect|intern|associate|lead|senior|junior|staff|specialist|coordinator|administrator|admin|technician|support|representative|officer|advisor|scientist|researcher|programmer|tester|product\s+(owner|manager)|principal|head|vp|vice\s+president|chief|cto|ceo|coo|cfo|cmo|cpo|founder|co[\s-]?founder|president|sde|sre|attorney|accountant|nurse|teacher|instructor|writer|editor|recruiter|operator|assistant|clerk|cashier|driver|chef|cook)\b/i;
+const ROLE_WORDS_RE = /\b(engineer|developer|manager|analyst|designer|consultant|director|architect|intern|associate|lead|senior|junior|staff|specialist|coordinator|administrator|admin|technician|support|representative|officer|advisor|scientist|researcher|programmer|tester|product\s+(owner|manager)|principal|head|vp|vice\s+president|chief|cto|ceo|coo|cfo|cmo|cpo|founder|co[\s-]?founder|president|sde|sre|attorney|accountant|nurse|teacher|instructor|writer|editor|recruiter|operator|assistant|clerk|cashier|driver|chef|cook|agent|auditor|trainer|counsell?or|electrician|inspector|professor|lecturer|supervisor|receptionist|mechanic|therapist|pharmacist|paralegal|coach)\b/i;
 
 // True when a line carries only a location — "Everett, WA", "San Francisco, CA",
 // "Remote", "London, United Kingdom". Résumés routinely put one of these between
@@ -877,16 +877,29 @@ function parsePositions(text: string): ExperienceResult['positions'] {
   }
 
   // Strategy 2: Dateless resumes with "Company — Title" or "Company – Title" (em/en-dash)
-  if (positions.length === 0) {
+  // Also runs when the dated strategy found only a few entries: résumés mix the
+  // two ("Quality Food Center — Courtesy Clerk ●…" with no dates) and the
+  // dateless jobs were dropped whenever one dated job existed. Entries added
+  // on top of dated ones must name a role and not repeat one already found.
+  const datedCount = positions.length;
+  if (datedCount < 3) {
     const dashSepRe = /^(.+?)\s*[–—]\s*(.+)$/;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const match = dashSepRe.exec(line);
       if (!match) continue;
-      const left = match[1].trim();
+      let left = match[1].trim();
       const right = match[2].trim();
+      // On flattened PDF text the previous job's last bullet runs into this
+      // employer on the same line: "• Prepared conference rooms … Quality Food
+      // Center — Courtesy Clerk". The employer is the capitalized run that
+      // ends at the dash.
+      if (/^[•●■▪\uf0b7]/.test(left) || left.split(/\s+/).length > 6) {
+        const tail = left.match(/((?:[A-Z][\w&.'()-]*\s+){0,5}[A-Z][\w&.'()-]*)$/);
+        if (!tail) continue;
+        left = tail[1];
+      }
       if (left.length < 3 || right.length < 3) continue;
-      if (/^[•●■▪\uf0b7]/.test(left)) continue;
 
       // Confirm: next line should be a bullet (responsibility) to avoid false positives
       const nextLine = lines[i + 1]?.trim() || '';
@@ -908,6 +921,11 @@ function parsePositions(text: string): ExperienceResult['positions'] {
         title = title.substring(0, colonIdx).trim();
       }
       if (title.split(/\s+/).length > 12) continue;
+      if (datedCount > 0) {
+        if (!looksLikeTitle(title)) continue;
+        const t = title.toLowerCase();
+        if (positions.some(p => p.title.toLowerCase().includes(t) || t.includes(p.title.toLowerCase()))) continue;
+      }
       positions.push({ title, company: left, duration: '', responsibilities });
     }
   }
@@ -951,7 +969,130 @@ function parsePositions(text: string): ExperienceResult['positions'] {
     p.title && p.title !== 'Unknown Role' && !ACTION_VERB_START_RE.test(p.title)
   );
 
-  return cleaned.slice(0, 8);
+  return repairPositions(cleaned).slice(0, 8);
+}
+
+// ── Position repair ───────────────────────────────────────────────────────────
+//
+// On flattened PDF text the extractor can't always tell where a field ends, so
+// a "title" or "company" swallows the candidate's name, phone and email, a
+// section heading, or a paragraph of responsibilities. Measured 2026-10-03 on
+// real candidates (scripts/eval-rules-parser.ts): a quarter of rules positions
+// carried a paragraph-sized field. These are what users saw as a "mess" when
+// AI parsing was unavailable. Repair what can be repaired; blank an employer
+// that can't be; drop a title that still isn't one. Showing nothing is better
+// than showing a paragraph as a job title.
+
+// Emails, URLs, US phones, and international phones ("+65 8154 5106").
+const CONTACT_RE = /[\w.+-]+@[\w-]+\.[\w.]+|https?:\/\/\S+|www\.\S+|\+\d{1,3}(?:[\s.-]?\d{2,5}){2,4}|(?:\+?\d{1,2}[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g;
+const HEADING = '(?:(?:professional|work|relevant|employment)\\s+)?(?:experience|history|employment|education|skills?|summary|profile|career)';
+const HEADING_PREFIX_RE = new RegExp(`^${HEADING}\\b[\\s:–—-]*`, 'i');
+const HEADING_SUFFIX_RE = new RegExp(`[\\s:–—-]+${HEADING}\\s*$`, 'i');
+
+// Headings can stack ("WORK EXPERIENCE SKILLS English") at either end.
+function stripHeadings(s: string): string {
+  let prev = '';
+  let t = s.trim();
+  for (let i = 0; i < 4 && t !== prev; i++) {
+    prev = t;
+    t = t.replace(HEADING_PREFIX_RE, '').replace(HEADING_SUFFIX_RE, '').trim();
+  }
+  return t;
+}
+// A responsibility clause starting mid-field: ", Manage daily…" / ". Delivered…"
+const RESPONSIBILITY_TAIL_RE = /(?:[,.;:]\s+|\s+[–—-]\s+)(?=(?:manage|managed|deliver|delivered|lead|led|design|designed|develop|developed|support|supported|conduct|conducted|coordinate|coordinated|execute|executed|perform|performed|provide|provided|build|built|create|created|implement|implemented|oversee|oversaw|handle|handled|maintain|maintained|ensure|ensured|responsible|work|worked|assist|assisted|achieve|achieved|drive|drove|own|owned)\b)/i;
+// A job-title phrase: up to four capitalized qualifiers, then a role noun, then
+// an optional level ("II", "III", "2").
+const ROLE_PHRASE_RE = /(?:[A-Z][\w&/().'-]*\s+){0,4}(?:Engineer|Developer|Manager|Analyst|Designer|Consultant|Director|Architect|Intern|Associate|Specialist|Coordinator|Administrator|Technician|Representative|Officer|Advisor|Scientist|Researcher|Programmer|Tester|Owner|Lead|Head|President|Founder|Attorney|Accountant|Nurse|Teacher|Instructor|Professor|Writer|Editor|Recruiter|Operator|Assistant|Clerk|Cashier|Driver|Chef|Cook|Trainer|Counsell?or|Auditor|Agent|Electrician|Inspector)(?:\s+(?:I{1,3}|IV|\d))?\b/g;
+
+const tidy = (s: string): string => s.replace(/\s{2,}/g, ' ').replace(/^[\s,;:|•@&–—-]+|[\s,;:|•@–—-]+$/g, '').trim();
+
+// Spoken languages leak out of a "Languages"/"Skills" line as one-word titles.
+const LANGUAGE_WORD_RE = /^(english|spanish|french|german|italian|portuguese|mandarin|chinese|cantonese|japanese|korean|arabic|hindi|urdu|bengali|russian|turkish|vietnamese|tagalog|amharic|oromo|somali|swahili|persian|farsi|dari|pashto|polish|dutch|greek|hebrew|bilingual|fluent|native)$/i;
+
+function isPlausibleTitle(t: string): boolean {
+  if (!t || t.length < 3 || t.length > 70) return false;
+  if (LANGUAGE_WORD_RE.test(t)) return false;
+  // A school is not a job ("Universidade Católica de Petrópolis"), unless a
+  // role is named too ("Teaching Assistant, UC Berkeley").
+  if (/\b(university|universidade|universidad|université|college|school|institute|instituto|faculdade|academy)\b/i.test(t) && !ROLE_WORDS_RE.test(t)) return false;
+  if (t.split(/\s+/).length > 9) return false;
+  if (/[#@]|\b[0-9a-f]{8}-[0-9a-f]{4}\b/i.test(t)) return false;
+  if (/[.;]\s*$/.test(t) || ACTION_VERB_START_RE.test(t)) return false;
+  return true;
+}
+
+function isPlausibleCompany(c: string): boolean {
+  return c.length >= 2 && c.length <= 80 && c.split(/\s+/).length <= 10 && !ACTION_VERB_START_RE.test(c);
+}
+
+// "Companhia Siderúrgica Nacional. Técnico de Manutenção. (04/1998 – 05/2008)":
+// employer, title and dates run together as sentences. Language-independent, so
+// it also rescues titles the English role-word list doesn't know.
+function splitSentenceFields(t: string): { company: string; title: string } | null {
+  // Strip a trailing date range like "(04/1998 á 05/2008)"; it must contain a
+  // digit, so a word ending in "a" ("Elétrica") is left alone.
+  const parts = t.split(/\.\s+/).map(s => tidy(s.replace(/\(?\s*\d[\d/\s]*(?:[–—-]|\s(?:á|a|to|until)\s)\s*(?:\d[\d/]*|present|current)\s*\)?\s*$/i, '')))
+    .filter(s => s && !/^[\d\s/().–—-]+$/.test(s));
+  if (parts.length < 2) return null;
+  const [company, title] = parts;
+  return isPlausibleTitle(title) && isPlausibleCompany(company) ? { company, title } : null;
+}
+
+function repairTitle(raw: string): string {
+  let t = tidy(stripHeadings(raw.replace(CONTACT_RE, ' ')));
+  // "Full-stack delivery: building…" is a description, not a title. Keep the
+  // part before the colon only when it names a role.
+  const colon = t.indexOf(':');
+  if (colon > 0) {
+    const head = tidy(t.slice(0, colon));
+    t = ROLE_WORDS_RE.test(head) ? head : '';
+  }
+  if (isPlausibleTitle(t)) return t;
+  // Too long: the title is usually the last role phrase before the date.
+  const phrases = t.match(ROLE_PHRASE_RE);
+  if (phrases?.length) t = tidy(phrases[phrases.length - 1]);
+  return t;
+}
+
+function repairCompany(raw: string): string {
+  let c = stripHeadings(raw.replace(CONTACT_RE, ' '));
+  const tail = c.search(RESPONSIBILITY_TAIL_RE);
+  if (tail > 0) c = c.slice(0, tail);
+  c = c.split(/\s*[•|]\s*|\.\s+(?=[A-Z])/)[0];
+  c = stripLocation(tidy(c));
+  return isPlausibleCompany(c) ? c : '';
+}
+
+export function repairPositions(positions: ExperienceResult['positions']): ExperienceResult['positions'] {
+  const out: ExperienceResult['positions'] = [];
+  for (const p of positions) {
+    let title = p.title || '';
+    let company = p.company || '';
+    // A title split at "&" lands its second half in the company field:
+    // "LIVELIHOOD OFFICER" + "& BUSINESS TRAINER (REINTEGRATION)".
+    if (/^\s*(?:&|and\s)/i.test(company) && company.length <= 60) {
+      title = `${title} ${company.trim()}`;
+      company = '';
+    }
+    const split = !isPlausibleTitle(title) ? splitSentenceFields(title) : null;
+    if (split) {
+      title = split.title;
+      if (!company || !isPlausibleCompany(company)) company = split.company;
+    }
+    title = repairTitle(title);
+    if (!isPlausibleTitle(title)) continue;
+    company = repairCompany(company);
+    // The same title once with an employer and once without is one job seen
+    // twice; the same title at two different employers is two jobs.
+    const sameTitle = out.filter(o => o.title.toLowerCase() === title.toLowerCase());
+    if (sameTitle.some(o => o.company.toLowerCase() === company.toLowerCase())) continue;
+    if (!company && sameTitle.length) continue;
+    const blank = sameTitle.find(o => !o.company);
+    if (blank && company) { blank.company = company; continue; }
+    out.push({ ...p, title, company });
+  }
+  return out;
 }
 
 // ── Education extraction ──────────────────────────────────────────────────────
