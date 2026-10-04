@@ -8,6 +8,7 @@ import path from "path";
 import fs from "fs";
 import { z } from "zod";
 import { phoneFromText } from "./lib/phone";
+import { recordReportedApplication, applicationForUrl } from "./services/application-tracking.service";
 
 import { storage } from "./storage";
 import { isAuthenticated } from "./middleware/auth";
@@ -944,6 +945,35 @@ export async function registerRoutes(app: Express): Promise<Express> {
   }));
 
   // Extension form-fill — scrapes form fields from the page, uses AI to generate answers
+  // ── Applications the extension saw submitted ───────────────────────────────
+  // Reported when the application system shows its own confirmation page.
+  // Only the posting's URL, title and company are sent, never form contents.
+  const reportedApplicationSchema = z.object({
+    postingUrl: z.string().url().max(2000),
+    title: z.string().max(300).optional(),
+    company: z.string().max(300).optional(),
+    autoFilled: z.boolean().optional(),
+  });
+
+  app.post('/api/extension/applications', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const parsed = reportedApplicationSchema.safeParse(req.body || {});
+    if (!parsed.success) {return res.status(400).json({ message: 'Invalid application report' });}
+    const result = await recordReportedApplication(req.user.id, parsed.data);
+    if (!result) {return res.status(422).json({ message: 'Could not identify this job posting' });}
+    if (!result.duplicate) {
+      serverTrack(req.user.id, 'application_detected', { job_id: result.jobId, tracked: result.tracked, auto_filled: !!parsed.data.autoFilled });
+      await storage.createActivityLog(req.user.id, 'job_applied', `Applied to job ID: ${result.jobId} (detected by extension)`);
+    }
+    res.json(result);
+  }));
+
+  app.get('/api/extension/applications/status', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const url = typeof req.query.url === 'string' ? req.query.url : '';
+    if (!url) {return res.status(400).json({ message: 'url required' });}
+    const found = await applicationForUrl(req.user.id, url);
+    res.json(found ? { applied: true, appliedAt: found.appliedAt, jobId: found.jobId } : { applied: false });
+  }));
+
   app.post('/api/extension/fill-form', isAuthenticated, asyncHandler(async (req: any, res) => {
     try {
       const { fields, jobContext, screenshot } = req.body || {};

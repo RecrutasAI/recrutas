@@ -37,7 +37,7 @@ function extractSkillsFromText(text: string): string[] {
 const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000000';
 
 // Ensure system user exists for external job ownership
-async function ensureSystemUserExists(): Promise<string> {
+export async function ensureSystemUserExists(): Promise<string> {
   const existing = await db
     .select()
     .from(users)

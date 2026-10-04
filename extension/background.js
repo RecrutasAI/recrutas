@@ -328,6 +328,32 @@ async function downloadResume(url) {
 
 // ── Fill stats ──────────────────────────────────────────────────────────────
 
+// ── Application tracking ─────────────────────────────────────────────────────
+// The content script reports a submission when the application system shows
+// its confirmation page. Only the posting's URL, title and company are sent.
+
+async function reportApplication(report) {
+  const accessToken = await getValidToken();
+  const baseUrl = await getRecruitasUrl();
+  const res = await fetch(`${baseUrl}/api/extension/applications`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify(report),
+  });
+  if (!res.ok) throw new Error(`Report failed (${res.status})`);
+  return res.json();
+}
+
+async function applicationStatus(url) {
+  const accessToken = await getValidToken();
+  const baseUrl = await getRecruitasUrl();
+  const res = await fetch(`${baseUrl}/api/extension/applications/status?url=${encodeURIComponent(url)}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error(`Status failed (${res.status})`);
+  return res.json();
+}
+
 async function incrementFillStats(fieldsFilled) {
   const { fillStats } = await chrome.storage.local.get('fillStats');
   const stats = fillStats || { totalFills: 0, totalFields: 0, lastFillDate: null };
@@ -470,6 +496,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         }
         
         return { success: true, stats };
+      }
+
+      case 'APPLICATION_SUBMITTED': {
+        const result = await reportApplication({
+          postingUrl: message.postingUrl,
+          title: message.title,
+          company: message.company,
+          autoFilled: !!message.autoFilled,
+        });
+        return { success: true, ...result };
+      }
+
+      case 'APPLICATION_STATUS': {
+        const result = await applicationStatus(message.url);
+        return { success: true, ...result };
       }
 
       case 'GET_TELEMETRY': {
