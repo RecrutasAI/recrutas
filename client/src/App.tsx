@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase-client";
 import AppProviders from '@/components/AppProviders';
 import Landing from "@/pages/landing-responsive";
 import ManifestoPage from "@/pages/manifesto";
+import DocsPage from "@/pages/docs";
 import AuthPage from "@/pages/auth-page";
 import ForgotPasswordPage from "@/pages/forgot-password";
 import ResetPasswordPage from "@/pages/reset-password";
@@ -56,6 +57,7 @@ function App() {
         <Switch>
           <Route path="/" component={Landing} />
           <Route path="/manifesto" component={ManifestoPage} />
+          <Route path="/docs" component={DocsPage} />
           <Route path="/auth" component={AuthPage} />
           <Route path="/signup/candidate" component={SignUpCandidatePage} />
           <Route path="/signup/talent-owner" component={SignUpTalentPage} />
