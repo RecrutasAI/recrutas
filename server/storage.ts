@@ -2677,6 +2677,9 @@ export class DatabaseStorage implements IStorage {
           jp.work_type AS "jobWorkType",
           jp.external_url AS "jobExternalUrl",
           jp.has_exam AS "jobHasExam",
+          jp.status AS "jobStatus",
+          jp.liveness_status AS "jobLiveness",
+          jp.updated_at AS "jobUpdatedAt",
           cr.id AS "chatRoomId"
         FROM job_applications ja
         INNER JOIN job_postings jp ON ja.job_id = jp.id
@@ -2702,7 +2705,13 @@ export class DatabaseStorage implements IStorage {
           workType: r.jobWorkType,
           externalUrl: r.jobExternalUrl,
           hasExam: r.jobHasExam,
+          // Whether the employer still lists it. 'taken_down' only when the
+          // posting left its board (snapshot expiry), not our own housekeeping.
+          postingState: r.jobStatus === 'closed' && r.jobLiveness === 'removed' ? 'taken_down'
+            : r.jobStatus === 'active' ? 'live' : 'unknown',
+          takenDownAt: r.jobStatus === 'closed' && r.jobLiveness === 'removed' ? r.jobUpdatedAt : null,
         },
+        reposted: !!r.metadata?.repostNotifiedAt,
       }));
     } catch (error) {
       console.error('Error fetching applications with status:', error);

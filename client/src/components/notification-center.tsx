@@ -35,6 +35,8 @@ const notificationIcons = {
   direct_connection: Users,
   status_update: Clock,
   new_match: Briefcase,
+  job_closed: Clock,
+  job_reposted: Briefcase,
 };
 
 const priorityColors = {

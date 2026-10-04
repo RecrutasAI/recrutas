@@ -43,7 +43,11 @@ interface ApplicationStatus {
     workType: string;
     externalUrl?: string;
     hasExam?: boolean;
+    // Whether the employer still lists the job (checked daily on their board).
+    postingState?: 'live' | 'taken_down' | 'unknown';
+    takenDownAt?: string | null;
   };
+  reposted?: boolean;
   match?: {
     matchScore: string;
     confidenceLevel: string;
@@ -267,6 +271,7 @@ export default function ApplicationTracker() {
                 </CardHeader>
                 <CardContent className="pt-0">
                   <div className="space-y-3">
+                    <PostingStateNote application={application} />
                     {/* Progress bar */}
                     {(() => {
                       const pct = getProgressPercentage(application.status);
@@ -444,4 +449,35 @@ export default function ApplicationTracker() {
       )}
     </div>
   );
+}
+
+// What we know about the posting since the candidate applied. Recrutas re-reads
+// every company's careers page daily, so this answers "is it still open?"
+// without the candidate checking or waiting on a reply.
+function PostingStateNote({ application }: { application: ApplicationStatus }) {
+  const job = application.job;
+  if (!job) {return null;}
+  if (application.reposted) {
+    return (
+      <p className="text-sm rounded-md px-3 py-2 bg-blue-50 text-blue-800 dark:bg-blue-950/40 dark:text-blue-200" data-testid="posting-reposted">
+        {job.company} took this posting down and posted the same role again. They may still be looking: you can reapply or reach out.
+      </p>
+    );
+  }
+  if (job.postingState === 'taken_down') {
+    const when = job.takenDownAt ? ` ${formatDistanceToNow(new Date(job.takenDownAt), { addSuffix: true })}` : '';
+    return (
+      <p className="text-sm rounded-md px-3 py-2 bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300" data-testid="posting-taken-down">
+        Taken down{when}. {job.company} removed this job from its careers page, so it's most likely filled or paused.
+      </p>
+    );
+  }
+  if (job.postingState === 'live') {
+    return (
+      <p className="text-xs text-emerald-700 dark:text-emerald-400" data-testid="posting-live">
+        Still posted on {job.company}'s careers page. Checked daily.
+      </p>
+    );
+  }
+  return null;
 }

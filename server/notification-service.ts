@@ -222,6 +222,8 @@ class NotificationService {
       case 'high_score_alert':
         return preferences.examAlerts;
       case 'application_submitted':
+      case 'job_closed':
+      case 'job_reposted':
         return preferences.applicationUpdates;
       case 'candidate_message':
       case 'direct_connection':
