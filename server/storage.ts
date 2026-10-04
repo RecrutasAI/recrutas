@@ -400,7 +400,8 @@ export interface MarketRadar {
   openedThisWeek: number;
   takenDownThisWeek: number;
   medianLifetimeDays: number | null;
-  lastBoardRead: string | null;
+  lastBoardRead: string | null;     // last completed sweep of the company boards
+  nextBoardRead: string;            // next scheduled sweep (scrape-ats: every 4 h on the hour, UTC)
   events: RadarEvent[];
 }
 
@@ -1048,11 +1049,18 @@ export class DatabaseStorage implements IStorage {
       ...(r.opened ?? []).map((e: any) => shape(e, e.reposted ? 'reposted' : 'new')),
       ...(r.closed ?? []).map((e: any) => shape(e, 'taken_down')),
     ].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 24);
-    const last = resultRows<any>(await db.execute(sql`SELECT max(last_liveness_check) AS t FROM job_postings WHERE status = 'active'`))[0]?.t;
+    // The last completed board sweep. last_liveness_check is updated at most every
+    // 20 h per job (WAL gate), so it understates how recently boards were read.
+    const last = resultRows<any>(await db.execute(sql`
+      SELECT max(finished_at) AS t FROM pipeline_runs WHERE pipeline = 'scrape-ats' AND status IN ('ok', 'warning')`))[0]?.t;
+    const next = new Date();
+    next.setUTCMinutes(0, 0, 0);
+    next.setUTCHours(next.getUTCHours() - (next.getUTCHours() % 4) + 4); // crontab: 0 */4 * * *
     return {
       scope, live: r.live ?? 0, openedThisWeek: r.opened_week ?? 0, takenDownThisWeek: r.down_week ?? 0,
       medianLifetimeDays: r.median_days != null ? Math.round(Number(r.median_days)) : null,
       lastBoardRead: last ? new Date(last).toISOString() : null,
+      nextBoardRead: next.toISOString(),
       events,
     };
   }

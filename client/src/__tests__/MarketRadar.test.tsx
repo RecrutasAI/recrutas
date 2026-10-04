@@ -26,7 +26,7 @@ describe('MarketRadar', () => {
   it('shows counters and real events with their requirements', async () => {
     server.use(http.get('*/api/platform/radar', () => HttpResponse.json({
       scope: 'market', live: 105867, openedThisWeek: 27361, takenDownThisWeek: 14202, medianLifetimeDays: 12,
-      lastBoardRead: new Date(now - 4 * 60e3).toISOString(),
+      lastBoardRead: new Date(now - 4 * 60e3).toISOString(), nextBoardRead: new Date(now + 18 * 60e3).toISOString(),
       events: [
         ev({ flags: ['no sponsorship', '5+ yrs'] }),
         ev({ type: 'taken_down', title: 'Sr Help Desk', company: 'C3EL', externalUrl: null }),
@@ -37,7 +37,7 @@ describe('MarketRadar', () => {
     const radar = await screen.findByTestId('market-radar');
     expect(await within(radar).findByText('105,867')).toBeInTheDocument();
     expect(within(radar).getByText('12d')).toBeInTheDocument();
-    expect(within(radar).getByText('boards read 4m ago')).toBeInTheDocument();
+    expect(within(radar).getByText('last sweep 4m ago · next in 18 min')).toBeInTheDocument();
     expect(within(radar).getByText('Opened')).toBeInTheDocument();
     expect(within(radar).getByText('no sponsorship')).toBeInTheDocument();
     expect(within(radar).getByText('Taken down')).toBeInTheDocument();

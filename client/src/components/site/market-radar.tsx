@@ -23,6 +23,7 @@ export interface MarketRadarData {
   takenDownThisWeek: number;
   medianLifetimeDays: number | null;
   lastBoardRead: string | null;
+  nextBoardRead?: string;
   events: RadarEvent[];
 }
 
@@ -31,6 +32,12 @@ const BADGE: Record<RadarEvent["type"], { label: string; cls: string; note: stri
   taken_down: { label: "Taken down", cls: "text-neutral-600 bg-neutral-100 border-neutral-300 dark:text-neutral-300 dark:bg-neutral-800 dark:border-neutral-700", note: "likely filled" },
   reposted: { label: "Reposted", cls: "text-amber-800 bg-amber-50 border-amber-200 dark:text-amber-300 dark:bg-amber-500/10 dark:border-amber-500/30", note: "posted again" },
 };
+
+export function until(iso: string | undefined, now = Date.now()): string {
+  if (!iso) {return "";}
+  const mins = Math.max(1, Math.round((new Date(iso).getTime() - now) / 60000));
+  return mins < 60 ? `${mins} min` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
 
 export function ago(iso: string | null, now = Date.now()): string {
   if (!iso) {return "";}
@@ -154,7 +161,7 @@ export function MarketRadar({ onStart }: { onStart: () => void }) {
             Watching {label}
           </div>
           <span className="relative font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500">
-            {d?.lastBoardRead ? `boards read ${ago(d.lastBoardRead)}` : "reading boards…"}
+            {d?.lastBoardRead ? `last sweep ${ago(d.lastBoardRead)}${d.nextBoardRead ? ` · next in ${until(d.nextBoardRead)}` : ""}` : "reading boards…"}
           </span>
         </div>
 
