@@ -65,6 +65,7 @@ import { Label } from "@/components/ui/label";
 import { useTheme } from "@/components/theme-provider";
 import { AccountSettings } from "@/components/account-settings";
 import { ApplicationAnswers } from "@/components/application-answers";
+import { AiConnectorSettings } from "@/components/ai-connector-settings";
 
 interface DashboardStats {
   newMatches: number;
@@ -914,6 +915,10 @@ function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
             extension, not the job preferences above. */}
         <div className="px-6 pt-5 mt-5 border-t border-slate-200 dark:border-slate-700">
           <ApplicationAnswers />
+        </div>
+
+        <div className="px-6 pt-5 mt-5 border-t border-slate-200 dark:border-slate-700">
+          <AiConnectorSettings />
         </div>
 
         {/* Account actions apply immediately; "Save Changes" covers only the
