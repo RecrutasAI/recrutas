@@ -881,6 +881,7 @@
       if (btn) btn.textContent = `Filling ${actions.length} fields…`;
 
       const { filled, failed } = await executeActions(actions, resumeUrl);
+      if (filled > 0) markApplyContextFilled();
 
       // Report stats + telemetry to background
       sendMessage({
@@ -963,6 +964,123 @@
     }
   }, true);
 
+  // ── Application tracking ───────────────────────────────────────────────────
+  // When an application form appears we remember the posting for this tab
+  // (sessionStorage is per tab and per site, which covers every step of one
+  // application flow). When the same tab later shows the application system's
+  // own confirmation, we report the submission once. Nothing typed into the
+  // form is read or sent: only the posting's URL, title and company.
+
+  const APPLY_CTX_KEY = 'recrutas_apply_ctx';
+  const APPLY_CTX_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+  const CONFIRM_TEXT_RE = /thank(?:s| you) for (?:your )?appl(?:ying|ication)|(?:your )?application (?:has been |was |is )?(?:successfully )?(?:submitted|received|sent|complete)|we(?:'ve| have) received your application|successfully (?:submitted|applied)/i;
+  const CONFIRM_PATH_RE = /\/(?:thanks|thank-you|confirmation|submitted|success)(?:\/|$)/i;
+  const onRecrutasSite = /(^|\.)recrutas\.ai$/i.test(location.hostname);
+
+  function readApplyContext() {
+    try { return JSON.parse(sessionStorage.getItem(APPLY_CTX_KEY) || 'null'); } catch { return null; }
+  }
+  function writeApplyContext(ctx) {
+    try { sessionStorage.setItem(APPLY_CTX_KEY, JSON.stringify(ctx)); } catch { /* storage blocked */ }
+  }
+
+  // Company from the board URL when the page doesn't name it
+  // (jobs.lever.co/acme/…, jobs.ashbyhq.com/acme/…, acme.breezy.hr/…).
+  function companyFromUrl() {
+    const host = location.hostname;
+    const first = location.pathname.split('/').filter(Boolean)[0] || '';
+    if (/(^|\.)(lever\.co|ashbyhq\.com|greenhouse\.io|smartrecruiters\.com)$/i.test(host)) return first.replace(/[-_]+/g, ' ');
+    const sub = host.split('.')[0];
+    return /^(www|jobs|careers|apply|boards|job-boards)$/i.test(sub) ? '' : sub.replace(/[-_]+/g, ' ');
+  }
+
+  // The posting a page belongs to: its URL without query, fragment and the
+  // form/confirmation step (mirrors canonicalPostingUrl on the server).
+  function postingKey(href) {
+    try {
+      const u = new URL(href);
+      return (u.origin + u.pathname.replace(/\/+$/, '').replace(/\/(apply|application|thanks|thank-you|confirmation|submitted|success)(\/.*)?$/i, '')).toLowerCase();
+    } catch { return href; }
+  }
+
+  function rememberApplyContext() {
+    if (onRecrutasSite) return;
+    const existing = readApplyContext();
+    // Keep an unreported context only while it's for this same posting; a form
+    // for a different job in the same tab replaces it.
+    if (existing && !existing.reported && Date.now() - existing.ts < APPLY_CTX_MAX_AGE_MS
+        && postingKey(existing.postingUrl) === postingKey(location.href)) return;
+    const h1 = document.querySelector('h1')?.textContent?.trim() || '';
+    writeApplyContext({
+      postingUrl: location.href,
+      title: (h1 || document.title || '').slice(0, 200),
+      company: (document.querySelector('meta[property="og:site_name"]')?.getAttribute('content') || companyFromUrl() || '').slice(0, 200),
+      ts: Date.now(),
+      autoFilled: false,
+      reported: false,
+    });
+  }
+
+  function markApplyContextFilled() {
+    const ctx = readApplyContext();
+    if (ctx) writeApplyContext({ ...ctx, autoFilled: true });
+  }
+
+  function visibleFormFieldCount() {
+    return deepQueryAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]), textarea, select')
+      .filter(el => !el.closest('#recrutas-fill-btn, #recrutas-banner') && (el.offsetParent !== null || el.getClientRects().length > 0))
+      .length;
+  }
+
+  function looksLikeConfirmation() {
+    const text = (document.body?.innerText || '').slice(0, 8000);
+    if (!CONFIRM_TEXT_RE.test(text)) return false;
+    return CONFIRM_PATH_RE.test(location.pathname) || visibleFormFieldCount() < 2;
+  }
+
+  let reporting = false;
+  async function checkSubmission() {
+    if (onRecrutasSite || reporting) return;
+    const ctx = readApplyContext();
+    if (!ctx || ctx.reported || Date.now() - ctx.ts > APPLY_CTX_MAX_AGE_MS) return;
+    if (!looksLikeConfirmation()) return;
+    reporting = true;
+    writeApplyContext({ ...ctx, reported: true });
+    try {
+      const res = await sendMessage({
+        type: 'APPLICATION_SUBMITTED',
+        postingUrl: ctx.postingUrl,
+        title: ctx.title,
+        company: ctx.company,
+        autoFilled: ctx.autoFilled,
+      });
+      if (res?.success && !res.duplicate) {
+        showBanner(res.tracked
+          ? 'Application saved to Recrutas. We’ll tell you if this job is taken down.'
+          : 'Application saved to your Recrutas applications.', 'success');
+      }
+    } catch {
+      // Not signed in or offline: allow a retry on the next check.
+      writeApplyContext({ ...ctx, reported: false });
+    } finally {
+      reporting = false;
+    }
+  }
+
+  // Before applying: warn if this posting is already in the candidate's applications.
+  let statusChecked = false;
+  async function checkAlreadyApplied() {
+    if (onRecrutasSite || statusChecked) return;
+    statusChecked = true;
+    try {
+      const res = await sendMessage({ type: 'APPLICATION_STATUS', url: location.href });
+      if (res?.success && res.applied) {
+        const when = res.appliedAt ? new Date(res.appliedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'before';
+        showBanner(`You already applied to this job on ${when}.`, 'warning');
+      }
+    } catch { /* not signed in: stay quiet */ }
+  }
+
   // ── SPA-aware injection ────────────────────────────────────────────────────
 
   function maybeInject() {
@@ -977,6 +1095,10 @@
     const hasForm = deepQuery('input:not([type="hidden"]), textarea, select');
     if (hasForm) {
       injectButton();
+      if (visibleFormFieldCount() >= 2) {
+        rememberApplyContext();
+        checkAlreadyApplied();
+      }
     }
   }
 
@@ -989,10 +1111,12 @@
   }
 
   const debouncedInject = debounce(maybeInject, 300);
+  const debouncedSubmissionCheck = debounce(checkSubmission, 800);
 
   maybeInject();
+  checkSubmission();
 
-  const observer = new MutationObserver(() => debouncedInject());
+  const observer = new MutationObserver(() => { debouncedInject(); debouncedSubmissionCheck(); });
   observer.observe(document.body, { childList: true, subtree: true });
 
   // A form rendered inside a shadow root doesn't trigger the observer above,
