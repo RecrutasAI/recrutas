@@ -64,6 +64,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { useTheme } from "@/components/theme-provider";
 import { AccountSettings } from "@/components/account-settings";
+import { ApplicationAnswers } from "@/components/application-answers";
 
 interface DashboardStats {
   newMatches: number;
@@ -907,6 +908,12 @@ function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
               )}
             </div>
           </div>
+        </div>
+
+        {/* Saved by its own button: application answers feed the auto-fill
+            extension, not the job preferences above. */}
+        <div className="px-6 pt-5 mt-5 border-t border-slate-200 dark:border-slate-700">
+          <ApplicationAnswers />
         </div>
 
         {/* Account actions apply immediately; "Save Changes" covers only the
