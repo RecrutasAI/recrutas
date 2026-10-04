@@ -2,11 +2,12 @@ import { useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useSession } from "@supabase/auth-helpers-react";
-import { ArrowRight, ArrowUpRight, Upload } from "lucide-react";
+import { ArrowRight, Upload } from "lucide-react";
 import {
   SiteShell, Band, SectionLabel, Tag, PrimaryButton, useSiteNav,
 } from "@/components/site/site-shell";
 import { getUserRole } from "@/lib/auth-role";
+import { MarketRadar } from "@/components/site/market-radar";
 
 const RULE = "border-neutral-200 dark:border-neutral-800";
 
@@ -15,15 +16,6 @@ interface LiveStats {
   companies: number;
   recentlyChecked: number;
   checkWindowHours: number;
-}
-
-interface CheckedJob {
-  title: string;
-  company: string;
-  location: string | null;
-  workType: string | null;
-  externalUrl: string | null;
-  lastLivenessCheck: string | null;
 }
 
 function useLiveStats() {
@@ -62,7 +54,7 @@ export default function LandingResponsive() {
   return (
     <SiteShell active="home">
       <Hero onStart={goToApp} />
-      <LiveSearch onStart={goToApp} />
+      <MarketRadar onStart={goToApp} />
       <HowItWorks />
       <WhyRecrutas />
       <EmployerInterest />
@@ -143,223 +135,6 @@ function Hero({ onStart }: { onStart: () => void }) {
         </div>
       )}
     </section>
-  );
-}
-
-// -- Signature: roles just re-checked on company boards ------------------------------
-
-function timeAgo(iso: string | null): string {
-  if (!iso) return "";
-  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
-  if (mins < 60) return `${Math.max(1, mins)}m ago`;
-  return `${Math.round(mins / 60)}h ago`;
-}
-
-// Long multi-city strings ("San Francisco, CA | New York City, NY | …") are
-// trimmed to the first place plus a count.
-function shortLocation(loc: string | null, workType: string | null): string {
-  if (!loc || !loc.trim()) return workType === "remote" ? "Remote" : "United States";
-  const parts = loc.split(/\s*[|;•]\s*/).filter(Boolean);
-  return parts.length > 1 ? `${parts[0].trim()} +${parts.length - 1}` : loc.trim();
-}
-
-interface LiveRoleSearch {
-  total: number;
-  thisWeek: number;
-  recentlyChecked: number;
-  checkWindowHours: number;
-  topCompanies: { company: string; count: number }[];
-  postings: CheckedJob[];
-}
-
-const ROLE_SUGGESTIONS = ["backend engineer", "data scientist", "product manager", "frontend engineer", "data analyst", "designer"];
-
-function PostingRows({ jobs }: { jobs: CheckedJob[] }) {
-  return (
-    <ul>
-      {jobs.map((j, i) => (
-        <li key={`${j.company}-${j.title}-${i}`} className={i > 0 ? `border-t ${RULE}` : ""}>
-          <a
-            href={j.externalUrl ?? undefined}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="group grid grid-cols-[1fr_auto] sm:grid-cols-[minmax(0,2.2fr)_minmax(0,1fr)_minmax(0,1.2fr)_90px] items-center gap-x-4 gap-y-0.5 px-4 sm:px-5 py-3 hover:bg-emerald-50/60 dark:hover:bg-emerald-500/[0.06] transition-colors"
-          >
-            <span className="text-[15px] font-medium truncate">{j.title}</span>
-            <span className="sm:hidden font-geist-mono text-xs text-emerald-600 dark:text-emerald-400 text-right">{timeAgo(j.lastLivenessCheck)}</span>
-            <span className="text-sm text-neutral-600 dark:text-neutral-400 truncate">{j.company}</span>
-            <span className="hidden sm:block text-sm text-neutral-500 truncate">{shortLocation(j.location, j.workType)}</span>
-            <span className="hidden sm:flex items-center justify-end gap-1.5 font-geist-mono text-xs text-emerald-600 dark:text-emerald-400">
-              {timeAgo(j.lastLivenessCheck)}
-              <ArrowUpRight className="w-3.5 h-3.5 text-neutral-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-            </span>
-          </a>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-/**
- * The live card. Empty, it shows roles just re-checked on company boards;
- * with a role typed, it shows that person's live market — no resume needed.
- */
-function LiveSearch({ onStart }: { onStart: () => void }) {
-  const [role, setRole] = useState("");
-  const [city, setCity] = useState("");
-  const [remote, setRemote] = useState(false);
-  const [query, setQuery] = useState<{ q: string; location: string; remote: boolean } | null>(null);
-
-  const justChecked = useQuery<{ jobs: CheckedJob[] }>({
-    queryKey: ['/api/platform/just-checked'],
-    queryFn: async () => {
-      const res = await fetch('/api/platform/just-checked');
-      if (!res.ok) throw new Error('just-checked unavailable');
-      return res.json();
-    },
-    staleTime: 10 * 60 * 1000,
-    retry: false,
-  });
-
-  const search = useQuery<LiveRoleSearch>({
-    queryKey: ['/api/platform/live-search', query],
-    enabled: !!query,
-    queryFn: async () => {
-      const params = new URLSearchParams({ q: query!.q });
-      if (query!.location) params.set('location', query!.location);
-      if (query!.remote) params.set('remote', '1');
-      const res = await fetch(`/api/platform/live-search?${params}`);
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(res.status === 429 ? 'Lots of searches in a short time. Try again in a minute.' : body.message || 'Search is unavailable right now.');
-      return body;
-    },
-    staleTime: 10 * 60 * 1000,
-    retry: false,
-  });
-
-  const run = (q = role, location = city, r = remote) => {
-    if (q.trim().length < 2) return;
-    setQuery({ q: q.trim(), location: location.trim(), remote: r });
-  };
-  const result = search.data;
-  const where = query ? [query.location, query.remote ? "remote" : ""].filter(Boolean).join(" · ") : "";
-  const checkedPct = result && result.total > 0 ? Math.round((result.recentlyChecked / result.total) * 100) : 0;
-
-  return (
-    <Band id="live" inner="px-4 sm:px-10 py-14 sm:py-20">
-      <SectionLabel>Live right now</SectionLabel>
-      <h2 className="text-3xl sm:text-5xl font-semibold tracking-[-0.035em] max-w-3xl mb-3">What's live for you right now?</h2>
-      <p className="text-lg text-neutral-600 dark:text-neutral-400 max-w-2xl mb-8">Type a role. No resume, no account. Just the real market, today.</p>
-
-      <form
-        onSubmit={(e) => { e.preventDefault(); run(); }}
-        className={`grid sm:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_auto_auto] border ${RULE}`}
-      >
-        <label className="sr-only" htmlFor="live-role">Role</label>
-        <input
-          id="live-role"
-          value={role}
-          onChange={(e) => setRole(e.target.value)}
-          placeholder="Role, e.g. backend engineer"
-          maxLength={60}
-          className={`h-12 px-4 bg-transparent text-[15px] outline-none placeholder:text-neutral-400 border-b sm:border-b-0 sm:border-r ${RULE}`}
-        />
-        <label className="sr-only" htmlFor="live-city">City</label>
-        <input
-          id="live-city"
-          value={city}
-          onChange={(e) => setCity(e.target.value)}
-          placeholder="City (optional)"
-          maxLength={40}
-          className={`h-12 px-4 bg-transparent text-[15px] outline-none placeholder:text-neutral-400 border-b sm:border-b-0 sm:border-r ${RULE}`}
-        />
-        <button
-          type="button"
-          aria-pressed={remote}
-          onClick={() => setRemote(!remote)}
-          className={`h-12 px-4 font-geist-mono text-[11px] uppercase tracking-[0.14em] border-b sm:border-b-0 sm:border-r ${RULE} transition-colors ${
-            remote ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400" : "text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
-          }`}
-        >
-          {remote ? "✓ " : ""}Remote only
-        </button>
-        <button type="submit" className="h-12 px-6 bg-emerald-600 text-white text-[15px] font-medium hover:bg-emerald-500 transition-colors">
-          Show me
-        </button>
-      </form>
-      <div className="flex flex-wrap gap-2 mt-3">
-        {ROLE_SUGGESTIONS.map((sug) => (
-          <button
-            key={sug}
-            onClick={() => { setRole(sug); run(sug); }}
-            className={`px-2.5 h-7 border ${RULE} font-geist-mono text-[10px] uppercase tracking-[0.12em] text-neutral-500 hover:text-neutral-900 dark:hover:text-white hover:border-neutral-900 dark:hover:border-white transition-colors`}
-          >
-            {sug}
-          </button>
-        ))}
-      </div>
-
-      <div className={`mt-8 border ${RULE} bg-white dark:bg-black`}>
-        {!query ? (
-          <>
-            <div className={`flex items-center justify-between gap-4 px-4 sm:px-5 h-11 border-b ${RULE} bg-neutral-50 dark:bg-neutral-950`}>
-              <div className="flex items-center gap-2 font-geist-mono text-[11px] uppercase tracking-[0.14em]">
-                <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                Just checked on company boards
-              </div>
-              <span className="hidden sm:block font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500">Real postings · every 15 min</span>
-            </div>
-            {(justChecked.data?.jobs.length ?? 0) > 0
-              ? <PostingRows jobs={justChecked.data!.jobs} />
-              : <p className="px-5 py-6 text-sm text-neutral-500">Type a role above to see what's live.</p>}
-          </>
-        ) : search.isLoading ? (
-          <p className="px-5 py-10 font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500">Reading the market…</p>
-        ) : search.isError ? (
-          <p className="px-5 py-8 text-sm text-red-600 dark:text-red-400" role="alert">{(search.error as Error).message}</p>
-        ) : result && result.total === 0 ? (
-          <div className="px-5 py-8">
-            <p className="text-[15px]">No live <span className="font-medium">"{query.q}"</span> roles{where ? ` (${where})` : ""} right now.</p>
-            <p className="text-sm text-neutral-500 mt-1">Try a broader title, or drop the city.</p>
-          </div>
-        ) : result ? (
-          <>
-            <div className={`px-4 sm:px-5 py-4 border-b ${RULE} bg-neutral-50 dark:bg-neutral-950`}>
-              <div className="font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500 mb-3">
-                "{query.q}"{where ? ` · ${where}` : ""}
-              </div>
-              <dl className="grid grid-cols-3 gap-4">
-                {[
-                  [result.total.toLocaleString(), "live roles"],
-                  [result.thisWeek.toLocaleString(), "new this week"],
-                  [`${checkedPct}%`, `checked < ${result.checkWindowHours}h`],
-                ].map(([v, l]) => (
-                  <div key={l}>
-                    <dd className="font-geist-mono text-2xl sm:text-3xl tracking-tight">{v}</dd>
-                    <dt className="font-geist-mono text-[10px] sm:text-[11px] uppercase tracking-[0.14em] text-neutral-500 mt-1">{l}</dt>
-                  </div>
-                ))}
-              </dl>
-              {result.topCompanies.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5 mt-4">
-                  <span className="font-geist-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500 mr-1">Hiring most</span>
-                  {result.topCompanies.map((c) => <Tag key={c.company}>{c.company} · {c.count}</Tag>)}
-                </div>
-              )}
-            </div>
-            {result.postings.length > 0 && <PostingRows jobs={result.postings} />}
-            <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-4 border-t ${RULE}`}>
-              <p className="text-sm text-neutral-600 dark:text-neutral-400">
-                That's {result.total.toLocaleString()} live {result.total === 1 ? "role" : "roles"}. Let us rank them against your resume.
-              </p>
-              <PrimaryButton onClick={onStart}>
-                Rank these for me <ArrowRight className="w-4 h-4" />
-              </PrimaryButton>
-            </div>
-          </>
-        ) : null}
-      </div>
-    </Band>
   );
 }
 

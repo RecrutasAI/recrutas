@@ -828,6 +828,28 @@ export async function registerRoutes(app: Express): Promise<Express> {
     }
   }));
 
+  // Homepage radar: what Recrutas detected on company boards this week for a
+  // role (or the whole market): opened, taken down, reposted.
+  app.get('/api/platform/radar', rateLimit({ windowMs: 60 * 1000, max: 30 }), asyncHandler(async (req, res) => {
+    const clean = (v: unknown, max: number) =>
+      typeof v === 'string' ? v.toLowerCase().replace(/[^a-z0-9 +#./&'-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) : '';
+    const words = clean(req.query.q, 60).split(' ').filter(w => w.length >= 2).slice(0, 5);
+    const location = clean(req.query.location, 40);
+    if (!db) {return res.status(503).json({ message: 'Radar temporarily unavailable' });}
+    try {
+      const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Radar timeout')), 15000));
+      const result = await Promise.race([
+        storage.marketRadar({ words, location: location.length >= 2 ? location : undefined, remoteOnly: req.query.remote === '1' }),
+        timeout,
+      ]);
+      res.set('Cache-Control', 'public, max-age=60, s-maxage=120, stale-while-revalidate=600');
+      res.json(result);
+    } catch (error) {
+      console.error('Error in radar:', error);
+      res.status(503).json({ message: 'Radar temporarily unavailable' });
+    }
+  }));
+
   // "Is this job still real?" — database lookup of a pasted posting URL.
   // The URL is never fetched.
   app.get('/api/platform/check-job', rateLimit({ windowMs: 60 * 1000, max: 20 }), asyncHandler(async (req, res) => {
