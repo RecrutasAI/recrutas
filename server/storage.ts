@@ -66,6 +66,7 @@ import { sql, isNotNull, type SQL } from "drizzle-orm/sql";
 import { inArray } from "drizzle-orm/sql/expressions";
 import { jobPostUrlSqlCondition } from "./lib/job-post-url";
 import { supabaseAdmin } from "./lib/supabase-admin";
+import { extractHardRequirements, verdictFor, yearsFromPositions, type CandidateFacts } from './lib/hard-requirements';
 import { normalizeSkills, parseSkillsInput } from "./skill-normalizer";
 import { scoreJob, computeRecencyScore, getFreshnessLabel, inferJobLevel, getRoleTitleKeywords } from "./job-scorer";
 
@@ -2041,13 +2042,56 @@ export class DatabaseStorage implements IStorage {
       const limit = pagination?.limit ?? 20;
       const offset = (page - 1) * limit;
       const total = recommendations.length;
-      const jobs = recommendations.slice(offset, offset + limit);
+      const jobs = await this.attachVerdicts(candidateId, recommendations.slice(offset, offset + limit));
 
       console.log(`Returning page ${page}: ${jobs.length} of ${total} job recommendations`);
       return { jobs, total, page, hasMore: offset + limit < total };
     } catch (error) {
       console.error('Error fetching job recommendations:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Apply / Stretch / Skip for one page of the feed. Scoring deliberately
+   * doesn't load full descriptions (they're the heaviest column), so the hard
+   * requirements are read here for the returned page only. Within the page,
+   * Skip moves to the end; nothing is hidden. Never fails the feed: on any
+   * error the page goes out without verdicts.
+   */
+  private async attachVerdicts(candidateId: string, jobs: any[]): Promise<any[]> {
+    if (jobs.length === 0) {return jobs;}
+    try {
+      const startedAt = Date.now();
+      const ids = jobs.map(j => j.id).filter((id: unknown) => typeof id === 'number');
+      const [candidate, descRows] = await Promise.all([
+        this.getCandidateUser(candidateId),
+        ids.length ? db.select({ id: jobPostings.id, description: jobPostings.description })
+          .from(jobPostings).where(inArray(jobPostings.id, ids)) : Promise.resolve([]),
+      ]);
+      const descriptions = new Map<number, string>(descRows.map((r: any) => [r.id, r.description || '']));
+      const answers = (candidate as any)?.jobPreferences?.applicationAnswers || {};
+      const facts: CandidateFacts = {
+        usCitizen: answers.usCitizen,
+        needsSponsorship: answers.needsSponsorship,
+        workAuthorizedUS: answers.workAuthorizedUS,
+        securityClearance: answers.securityClearance,
+        years: yearsFromPositions((candidate as any)?.resumeParsingData?.positions),
+      };
+      const withVerdicts = jobs.map(job => ({
+        ...job,
+        verdict: verdictFor(extractHardRequirements(descriptions.get(job.id) ?? job.description ?? ''), facts, Number(job.matchScore) || 0),
+      }));
+      const ordered = [
+        ...withVerdicts.filter(j => j.verdict.label !== 'skip'),
+        ...withVerdicts.filter(j => j.verdict.label === 'skip'),
+      ];
+      console.log(`[verdicts] ${ordered.length} jobs in ${Date.now() - startedAt}ms: ` +
+        ['apply', 'stretch', 'skip'].map(l => `${l} ${ordered.filter(j => j.verdict.label === l).length}`).join(', '));
+      return ordered;
+    } catch (err) {
+      console.error('[verdicts] skipped, feed served without them:', (err as Error).message);
+      return jobs;
     }
   }
 

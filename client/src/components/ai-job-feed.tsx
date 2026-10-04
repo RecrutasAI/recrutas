@@ -115,6 +115,38 @@ const WORK_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: 'onsite', label: 'Onsite' },
 ];
 
+export interface JobVerdict {
+  label: 'apply' | 'stretch' | 'skip';
+  reasons: string[];
+  toCheck: string[];
+}
+
+const VERDICT_STYLE: Record<JobVerdict['label'], { text: string; cls: string }> = {
+  apply: { text: 'Apply', cls: 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800' },
+  stretch: { text: 'Stretch', cls: 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800' },
+  skip: { text: 'Skip', cls: 'bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600' },
+};
+
+// The honest verdict on a card: what the posting requires that you do or
+// don't meet, and anything we can't judge until you answer in Settings.
+function VerdictLine({ verdict }: { verdict?: JobVerdict }) {
+  if (!verdict) return null;
+  const style = VERDICT_STYLE[verdict.label];
+  return (
+    <div className="mt-2 flex flex-col gap-1 text-xs sm:text-sm" data-testid="job-verdict">
+      <div className="flex items-start gap-2">
+        <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${style.cls}`}>{style.text}</span>
+        <span className="text-gray-700 dark:text-gray-300">{verdict.reasons[0]}</span>
+      </div>
+      {verdict.toCheck.length > 0 && (
+        <span className="text-gray-500 dark:text-gray-400" data-testid="job-verdict-check">
+          Check: {verdict.toCheck.join(' · ')}. Answer once in Settings → Application answers and we'll check it for you.
+        </span>
+      )}
+    </div>
+  );
+}
+
 export interface AIJobMatch {
   id: number;
   job: {
@@ -153,6 +185,8 @@ export interface AIJobMatch {
     hasSemanticSignal: boolean;
   };
   aiExplanation: string;
+  // Apply / Stretch / Skip from the posting's hard requirements vs the candidate.
+  verdict?: JobVerdict;
   status: string;
   createdAt: string;
   // PRD fields
@@ -184,6 +218,7 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
   const [companyFilter, setCompanyFilter] = useState("all");
   const [experienceLevelFilter, setExperienceLevelFilter] = useState("all");
   const [datePostedFilter, setDatePostedFilter] = useState("all");
+  const [verdictFilter, setVerdictFilter] = useState("all");
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<AIJobMatch | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -266,6 +301,7 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
       // (location-dominant) — Remote means remote, not remote-or-hybrid.
       if (workTypeFilter !== 'all' && (m.job.workType || '').toLowerCase() !== workTypeFilter.toLowerCase()) return false;
       if (companyFilter !== 'all' && m.job.company !== companyFilter) return false;
+      if (verdictFilter !== 'all' && m.verdict?.label !== verdictFilter) return false;
       if (experienceLevelFilter !== 'all') {
         const level = inferJobLevel(m.job.title);
         // When filtering for entry level, also include mid (many entry jobs lack "junior" in title)
@@ -282,7 +318,7 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
       }
       return true;
     });
-  }, [allMatches, searchTerm, locationFilter, workTypeFilter, companyFilter, experienceLevelFilter, datePostedFilter]);
+  }, [allMatches, searchTerm, locationFilter, workTypeFilter, companyFilter, experienceLevelFilter, datePostedFilter, verdictFilter]);
 
   // Render the full filtered set at once. All matches are already fetched in a
   // single request, so there is no network cost to showing them; rendering them
@@ -496,6 +532,7 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
     setCompanyFilter("all");
     setExperienceLevelFilter("all");
     setDatePostedFilter("all");
+    setVerdictFilter("all");
   };
 
   const activeFilterCount =
@@ -503,7 +540,8 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
     (workTypeFilter !== 'all' ? 1 : 0) +
     (companyFilter !== 'all' ? 1 : 0) +
     (experienceLevelFilter !== 'all' ? 1 : 0) +
-    (datePostedFilter !== 'all' ? 1 : 0);
+    (datePostedFilter !== 'all' ? 1 : 0) +
+    (verdictFilter !== 'all' ? 1 : 0);
   const hasAnyFilter = activeFilterCount > 0 || searchTerm.length > 0;
   // The candidate HAS matches but the active filters/search excluded them all.
   // Distinct from a genuinely empty feed: we still offer "Clear filters", but we
@@ -551,6 +589,19 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
           id="job-feed-filters"
           className={`${showMobileFilters ? 'grid' : 'hidden'} grid-cols-2 gap-2 mt-3 sm:mt-3 sm:flex sm:flex-row sm:flex-wrap sm:gap-3`}
         >
+          <Select value={verdictFilter} onValueChange={setVerdictFilter}>
+            <SelectTrigger className="w-full sm:w-[150px]" aria-label="Filter by verdict">
+              <Shield className="h-4 w-4 mr-2 shrink-0" />
+              <SelectValue placeholder="Verdict" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Any verdict</SelectItem>
+              <SelectItem value="apply">Apply</SelectItem>
+              <SelectItem value="stretch">Stretch</SelectItem>
+              <SelectItem value="skip">Skip</SelectItem>
+            </SelectContent>
+          </Select>
+
           <Select value={datePostedFilter} onValueChange={setDatePostedFilter}>
             <SelectTrigger className="w-full sm:w-[150px]">
               <Calendar className="h-4 w-4 mr-2 shrink-0" />
@@ -842,6 +893,7 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
                               ? `Strong match for ${match.skillMatches.slice(0, 2).join(' & ')}`
                               : 'Skills and experience align with this role')}
                           </div>
+                          <VerdictLine verdict={match.verdict} />
                         </div>
                         {/* Mobile: Full width buttons, Desktop: Right side buttons */}
                         <div className="flex flex-row sm:flex-col lg:flex-row items-center gap-2 sm:gap-1.5 lg:gap-2 sm:shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-gray-100 dark:border-gray-700">
