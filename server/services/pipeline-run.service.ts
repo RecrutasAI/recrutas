@@ -40,6 +40,7 @@ export const PIPELINE_MAX_AGE_MIN: Record<string, number> = {
   'auto-hide-ghost-jobs': 24 * 60 + 180,  // daily
   'purge-old-jobs': 24 * 60 + 180,        // daily
   'retry-failed-parses': 24 * 60 + 180,   // daily
+  'application-alerts': 24 * 60 + 180,    // daily 16:00 — job taken down / reposted
   'check-ai-models': 24 * 60 + 180,       // daily — alerts when a model is retired
   'warm-candidate-matches': 24 * 60 + 180,// daily
   'cleanup-errors': 7 * 24 * 60 + 24 * 60,// weekly (+1d slack)

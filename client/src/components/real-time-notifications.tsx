@@ -75,6 +75,8 @@ function getNavigation(type: string): { tab?: string; path?: string } {
     case 'application_rejected':
     case 'status_update':
     case 'interview_scheduled':
+    case 'job_closed':
+    case 'job_reposted':
       return { tab: 'applications' };
     case 'candidate_message':
     case 'direct_connection':

@@ -71,6 +71,10 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 
 # Purge Old Jobs — daily 05:00
 0 5 * * * $RUN purge-old-jobs 5 npx tsx scripts/purge-old-jobs.ts --retainDays=45
+# Tell candidates when a job they applied to left its employer's board or was
+# reposted. After the morning scrapes (where snapshot expiry closes jobs);
+# 16:00 UTC = 9am Pacific.
+0 16 * * * $RUN application-alerts 15 npx tsx scripts/application-alerts.ts --apply
 
 # Scrape External Jobs (aggregators) — daily 06:30
 30 6 * * * $RUN scrape-external-jobs 12 npx tsx scripts/scrape-external-jobs.ts --timeout=540000

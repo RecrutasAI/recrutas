@@ -709,3 +709,32 @@ export function candidateExamFailEmail(
     </div>
   `);
 }
+
+const escapeHtml = (s: string): string =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+/** What happened to jobs a candidate applied to: taken down, or reposted. */
+export function applicationUpdatesDigestEmail(
+  firstName: string | null | undefined,
+  items: Array<{ kind: 'closed' | 'reposted'; title: string; message: string }>,
+): string {
+  const greeting = firstName ? `Hi ${escapeHtml(firstName.split(' ')[0])},` : 'Hi,';
+  const cards = items.map(i => `
+    <div style="border:1px solid ${i.kind === 'reposted' ? '#bfdbfe' : '#e5e7eb'};border-radius:10px;padding:16px 20px;margin-bottom:12px;background:${i.kind === 'reposted' ? '#eff6ff' : '#ffffff'};">
+      <p style="margin:0 0 6px;font-size:15px;font-weight:700;color:#111827;">${escapeHtml(i.title)}</p>
+      <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.6;">${escapeHtml(i.message)}</p>
+    </div>`).join('');
+  return emailBase(`
+    <p style="margin:0 0 6px;font-size:22px;font-weight:700;color:#111827;">${greeting}</p>
+    <p style="margin:0 0 24px;font-size:15px;color:#4b5563;line-height:1.6;">
+      Here's what changed with ${items.length === 1 ? 'a job' : 'jobs'} you applied to. We check every company's careers page daily so you don't have to wonder.
+    </p>
+    ${cards}
+    <div style="text-align:center;margin:28px 0 8px;">
+      <a href="https://www.recrutas.ai/candidate-dashboard"
+         style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 24px;border-radius:8px;">
+        See your applications
+      </a>
+    </div>
+  `, "You're receiving this because you applied to these jobs. Turn off application updates in Settings.");
+}
