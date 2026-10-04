@@ -486,6 +486,8 @@ export async function registerRoutes(app: Express): Promise<Express> {
       scoreComponents: job.scoreComponents || undefined,
       matchReasons: job.skillMatches?.length > 0 ? job.skillMatches : undefined,
       aiExplanation: aiExplanation || job.aiExplanation,
+      // Apply / Stretch / Skip from the posting's hard requirements (storage.attachVerdicts).
+      verdict: job.verdict ?? undefined,
       status: 'pending',
       createdAt: new Date().toISOString()
     };
