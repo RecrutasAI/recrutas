@@ -383,6 +383,27 @@ export interface LiveRoleSearch {
   }[];
 }
 
+/** Homepage radar: what Recrutas detected on company boards for a role. */
+export interface RadarEvent {
+  type: 'new' | 'taken_down' | 'reposted';
+  at: string;                       // when we detected it
+  title: string;
+  company: string;
+  location: string | null;
+  workType: string | null;
+  externalUrl: string | null;
+  flags: string[];                  // stated hard requirements, e.g. "no sponsorship"
+}
+export interface MarketRadar {
+  scope: 'role' | 'market';         // 'market' when the role had no events this week
+  live: number;
+  openedThisWeek: number;
+  takenDownThisWeek: number;
+  medianLifetimeDays: number | null;
+  lastBoardRead: string | null;
+  events: RadarEvent[];
+}
+
 export interface JobUrlCheck {
   verdict: 'live' | 'unverified' | 'taken-down' | 'closed' | 'repost' | 'job-board' | 'not-indexed' | 'invalid';
   host?: string;
@@ -945,6 +966,97 @@ export class DatabaseStorage implements IStorage {
    * Same eligibility as the feed. The title filter runs first on the trigram
    * index; the expensive US-location check only sees the rows it keeps.
    */
+  /**
+   * The homepage radar: real events detected on company boards for a role (or
+   * the whole market): postings that just opened, were taken down, or came
+   * back as reposts. Same US-only, direct-from-company and reposter filters as
+   * live search. Looks back 7 days; falls back to the whole market when a
+   * narrow role had no events.
+   */
+  async marketRadar(opts: { words: string[]; location?: string; remoteOnly?: boolean }): Promise<MarketRadar> {
+    const likeEsc = (v: string) => v.replace(/[\\%_]/g, c => `\\${c}`);
+    const scoped = (words: string[]) => {
+      const conds = [sql`source LIKE 'ATS:%'`, ...words.map(w => w.length >= 3
+        ? sql`title ILIKE ${'%' + likeEsc(w) + '%'}`
+        : sql`title ~* ${'\\m' + w.replace(/[^a-z0-9]/gi, '') + '\\M'}`)];
+      if (opts.location) {conds.push(sql`location ILIKE ${'%' + likeEsc(opts.location) + '%'}`);}
+      if (opts.remoteOnly) {conds.push(sql`work_type = 'remote'`);}
+      return sql.join(conds, sql` AND `);
+    };
+
+    const run = async (words: string[]) => resultRows<any>(await db.execute(sql`
+      WITH removed60 AS MATERIALIZED (
+        SELECT lower(company) AS c, lower(trim(title)) AS t, lower(coalesce(location, '')) AS l, min(created_at) AS first_seen
+        FROM job_postings
+        WHERE liveness_status = 'removed' AND external_url IS NOT NULL AND updated_at > now() - interval '60 days' AND ${scoped(words)}
+        GROUP BY 1, 2, 3
+      ),
+      opened AS MATERIALIZED (
+        SELECT id, title, company, location, work_type, external_url, created_at AS at, description
+        FROM job_postings
+        WHERE status = 'active' AND created_at > now() - interval '7 days' AND ${scoped(words)}
+          AND ${reposterExclusion} AND ${jobPostUrlRequirement} AND ${usPriorityOrder} = 0
+        ORDER BY created_at DESC LIMIT 20
+      ),
+      closed AS MATERIALIZED (
+        SELECT title, company, location, work_type, external_url, updated_at AS at
+        FROM job_postings
+        WHERE liveness_status = 'removed' AND external_url IS NOT NULL AND updated_at > now() - interval '7 days'
+          AND ${scoped(words)} AND ${usPriorityOrder} = 0
+        ORDER BY updated_at DESC LIMIT 12
+      )
+      SELECT
+        (SELECT count(*)::int FROM job_postings WHERE status = 'active' AND ${scoped(words)} AND ${usPriorityOrder} <> 2) AS live,
+        (SELECT count(*)::int FROM job_postings WHERE created_at > now() - interval '7 days' AND ${scoped(words)}) AS opened_week,
+        (SELECT count(*)::int FROM job_postings WHERE liveness_status = 'removed' AND external_url IS NOT NULL
+           AND updated_at > now() - interval '7 days' AND ${scoped(words)}) AS down_week,
+        (SELECT CASE WHEN count(*) >= 20 THEN percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM (updated_at - created_at)) / 86400) END
+           FROM job_postings WHERE liveness_status = 'removed' AND external_url IS NOT NULL
+           AND updated_at > now() - interval '60 days' AND ${scoped(words)}) AS median_days,
+        (SELECT coalesce(json_agg(o), '[]') FROM (
+          SELECT o.*, EXISTS (SELECT 1 FROM removed60 r WHERE r.c = lower(o.company) AND r.t = lower(trim(o.title))
+                              AND r.l = lower(coalesce(o.location, '')) AND r.first_seen < o.at) AS reposted
+          FROM opened o) o) AS opened,
+        (SELECT coalesce(json_agg(c), '[]') FROM closed c) AS closed
+    `))[0];
+
+    let words = opts.words;
+    let r = await run(words);
+    let scope: MarketRadar['scope'] = words.length ? 'role' : 'market';
+    if (words.length && (r.opened?.length ?? 0) + (r.closed?.length ?? 0) === 0) {
+      words = [];
+      r = await run(words);
+      scope = 'market';
+    }
+    const flagsOf = (desc: string): string[] => {
+      const h = extractHardRequirements(desc);
+      const names: Record<string, string> = { public_trust: 'public trust', secret: 'secret clearance', top_secret: 'top secret', ts_sci: 'TS/SCI' };
+      return [
+        ...(h.clearance ? [names[h.clearance]] : []),
+        ...(h.usCitizen ? ['US citizens only'] : h.usPerson ? ['US person'] : []),
+        ...(h.noSponsorship ? ['no sponsorship'] : []),
+        ...(h.minYears != null ? [`${h.minYears}+ yrs`] : []),
+      ];
+    };
+    const shape = (e: any, type: RadarEvent['type']): RadarEvent => ({
+      type, at: new Date(e.at).toISOString(),
+      title: String(e.title).trim(), company: displayCompanyName(e.company, String(e.title)),
+      location: e.location, workType: e.work_type, externalUrl: e.external_url,
+      flags: type === 'taken_down' ? [] : flagsOf(e.description || ''),
+    });
+    const events = [
+      ...(r.opened ?? []).map((e: any) => shape(e, e.reposted ? 'reposted' : 'new')),
+      ...(r.closed ?? []).map((e: any) => shape(e, 'taken_down')),
+    ].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 24);
+    const last = resultRows<any>(await db.execute(sql`SELECT max(last_liveness_check) AS t FROM job_postings WHERE status = 'active'`))[0]?.t;
+    return {
+      scope, live: r.live ?? 0, openedThisWeek: r.opened_week ?? 0, takenDownThisWeek: r.down_week ?? 0,
+      medianLifetimeDays: r.median_days != null ? Math.round(Number(r.median_days)) : null,
+      lastBoardRead: last ? new Date(last).toISOString() : null,
+      events,
+    };
+  }
+
   async searchLiveRoles(opts: { words: string[]; location?: string; remoteOnly?: boolean }): Promise<LiveRoleSearch> {
     const likeEsc = (v: string) => v.replace(/[\\%_]/g, c => `\\${c}`);
     const titleConds = opts.words.map(w => w.length >= 3
