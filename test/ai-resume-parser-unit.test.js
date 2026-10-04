@@ -140,14 +140,19 @@ async function testConfidenceScoreHighForComplete() {
 }
 
 async function testConfidenceScoreLowForMinimal() {
+  // Parse the PDF the way uploads do. This used to feed the raw PDF bytes to
+  // parseText, and the confidence it checked came from PDF metadata tags
+  // ("<xmp:ModifyDate>") being reported as job titles.
   const buffer = generateMinimalResumePdfBuffer();
-  const result = await parser.parseText(buffer.toString('utf8'));
+  const result = await parser.parseFile(buffer, 'application/pdf');
 
   // Confidence is on 0-100 scale, minimal resume should still have positive confidence
   assert(
     result.confidence >= 10 && result.confidence <= 100,
     `Should have reasonable confidence for minimal resume, got ${result.confidence}`
   );
+  const titles = (result.aiExtracted.experience.positions || []).map((p) => p.title);
+  assert(!titles.some((t) => /<\/?[a-z]+:/i.test(t)), `PDF metadata parsed as job titles: ${titles.join(', ')}`);
 }
 
 async function testMalformedPdfHandling() {
