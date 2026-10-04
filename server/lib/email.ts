@@ -738,3 +738,50 @@ export function applicationUpdatesDigestEmail(
     </div>
   `, "You're receiving this because you applied to these jobs. Turn off application updates in Settings.");
 }
+
+/** The weekly summary: applications, what happened to them, new jobs they qualify for. */
+export function weeklySummaryEmail(
+  firstName: string | null | undefined,
+  s: {
+    appliedThisWeek: Array<{ title: string; company: string }>;
+    updates: Array<{ kind: 'taken_down' | 'reposted' | 'replied'; title: string; company: string }>;
+    waiting: number;
+    waitingPastFollowUp: number;
+    newApplyMatches: number;
+    topMatches: Array<{ title: string; company: string; location: string | null }>;
+    nextStep: string | null;
+  },
+): string {
+  const e = escapeHtml;
+  const greeting = firstName ? `Hi ${e(firstName.split(' ')[0])},` : 'Hi,';
+  const section = (title: string, body: string) => `
+    <p style="margin:24px 0 8px;font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#6b7280;">${title}</p>${body}`;
+  const list = (items: string[]) => `<ul style="margin:0;padding-left:20px;font-size:15px;color:#111827;line-height:1.7;">${items.map(i => `<li>${i}</li>`).join('')}</ul>`;
+  const updateText: Record<string, string> = {
+    taken_down: 'was taken down (most likely filled)',
+    reposted: 'was taken down and posted again (they may still be looking)',
+    replied: 'got a response',
+  };
+  let body = `<p style="margin:0 0 6px;font-size:22px;font-weight:700;color:#111827;">${greeting}</p>
+    <p style="margin:0;font-size:15px;color:#4b5563;line-height:1.6;">Here's your week. We check every company's careers page daily, so you don't have to wonder.</p>`;
+  if (s.appliedThisWeek.length) {
+    body += section(`You applied to ${s.appliedThisWeek.length}`, list(s.appliedThisWeek.map(a => `${e(a.title)} · ${e(a.company)}`)));
+  }
+  if (s.updates.length) {
+    body += section('What happened', list(s.updates.map(u => `${e(u.title)} at ${e(u.company)} ${updateText[u.kind]}`)));
+  }
+  if (s.waiting) {
+    body += section('Still waiting', `<p style="margin:0;font-size:15px;color:#111827;line-height:1.6;">${s.waiting} application${s.waiting === 1 ? '' : 's'} with the job still posted${s.waitingPastFollowUp ? `, ${s.waitingPastFollowUp} of them past two weeks. A short follow-up to the recruiter is worth sending` : ''}.</p>`);
+  }
+  if (s.newApplyMatches) {
+    body += section(`${s.newApplyMatches} new job${s.newApplyMatches === 1 ? '' : 's'} you qualify for`,
+      list(s.topMatches.map(m => `${e(m.title)} · ${e(m.company)}${m.location ? ` · ${e(m.location)}` : ''}`)));
+  }
+  if (s.nextStep) {
+    body += `<div style="margin-top:24px;border-radius:10px;padding:14px 18px;background:#eff6ff;font-size:15px;color:#1e3a8a;line-height:1.6;"><strong>Next step:</strong> ${e(s.nextStep)}</div>`;
+  }
+  body += `<div style="text-align:center;margin:28px 0 8px;">
+      <a href="https://www.recrutas.ai/candidate-dashboard" style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 24px;border-radius:8px;">Open your feed</a>
+    </div>`;
+  return emailBase(body, "You're receiving this weekly summary because you used Recrutas this month. Turn off application updates in Settings.");
+}

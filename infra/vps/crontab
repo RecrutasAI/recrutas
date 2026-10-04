@@ -75,6 +75,9 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # reposted. After the morning scrapes (where snapshot expiry closes jobs);
 # 16:00 UTC = 9am Pacific.
 0 16 * * * $RUN application-alerts 15 npx tsx scripts/application-alerts.ts --apply
+# Weekly summary email for candidates active in the last 30 days. Monday
+# 15:00 UTC = 8am Pacific. Skips anyone whose week had no news.
+0 15 * * 1 $RUN weekly-summary 30 npx tsx scripts/weekly-summary.ts --apply
 
 # Scrape External Jobs (aggregators) — daily 06:30
 30 6 * * * $RUN scrape-external-jobs 12 npx tsx scripts/scrape-external-jobs.ts --timeout=540000
