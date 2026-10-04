@@ -888,6 +888,19 @@ export type WaitlistEntry = typeof waitlistEntries.$inferSelect;
 // Lightweight counter table: one row per user per action per day.
 // Checked before expensive operations (resume upload, job post, application).
 
+// Personal access tokens (MCP connector). Only a SHA-256 hash is stored; see
+// migrations/add-api-tokens.sql and server/services/api-token.service.ts.
+export const apiTokens = pgTable("api_tokens", {
+  id: serial("id").primaryKey(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  name: varchar("name", { length: 80 }).notNull(),
+  tokenHash: varchar("token_hash", { length: 64 }).notNull().unique(),
+  tokenPrefix: varchar("token_prefix", { length: 16 }).notNull(),
+  lastUsedAt: timestamp("last_used_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  revokedAt: timestamp("revoked_at"),
+});
+
 export const dailyUsageLimits = pgTable("daily_usage_limits", {
   id: serial("id").primaryKey(),
   userId: uuid("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),

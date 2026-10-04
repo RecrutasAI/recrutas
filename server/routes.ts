@@ -10,6 +10,9 @@ import { z } from "zod";
 import { phoneFromText } from "./lib/phone";
 import { recordReportedApplication, applicationForUrl } from "./services/application-tracking.service";
 import { diagnoseCandidate } from "./services/application-diagnosis.service";
+import { createApiToken, listApiTokens, revokeApiToken, userForToken } from "./services/api-token.service";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { buildRecrutasMcpServer } from "./mcp/recrutas-mcp";
 
 import { storage } from "./storage";
 import { isAuthenticated } from "./middleware/auth";
@@ -1875,6 +1878,50 @@ Analyze the form and return the actions JSON to fill every field you can.`;
   }));
 
   // Candidate applications
+  // ── Personal access tokens (MCP connector) ─────────────────────────────────
+  app.get('/api/account/api-tokens', isAuthenticated, asyncHandler(async (req: any, res) => {
+    res.json(await listApiTokens(req.user.id));
+  }));
+
+  app.post('/api/account/api-tokens', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const name = z.string().trim().min(1).max(80).safeParse(req.body?.name);
+    const result = await createApiToken(req.user.id, name.success ? name.data : 'AI tool');
+    if ('error' in result) {return res.status(400).json({ message: result.error });}
+    res.status(201).json(result); // the token is shown this once; only its hash is stored
+  }));
+
+  app.delete('/api/account/api-tokens/:id', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const id = parseIntParam(req.params.id);
+    if (!id) {return res.status(400).json({ message: 'Invalid token id' });}
+    res.json({ revoked: await revokeApiToken(req.user.id, id) });
+  }));
+
+  // ── MCP connector ──────────────────────────────────────────────────────────
+  // Streamable HTTP, stateless: one server per request, bound to the user whose
+  // personal access token is in the Authorization header. See server/mcp.
+  const MCP_DAILY_LIMIT = 500;
+  app.post('/api/mcp', asyncHandler(async (req: any, res) => {
+    const auth = String(req.headers.authorization || '');
+    const userId = auth.startsWith('Bearer ') ? await userForToken(auth.slice(7).trim()) : null;
+    if (!userId) {
+      res.setHeader('WWW-Authenticate', 'Bearer realm="recrutas"');
+      return res.status(401).json({ jsonrpc: '2.0', error: { code: -32001, message: 'Missing or invalid Recrutas token. Create one in Recrutas Settings → Connect your AI tools.' }, id: null });
+    }
+    const limit = await storage.checkDailyLimit(userId, 'mcp', MCP_DAILY_LIMIT);
+    if (!limit.allowed) {
+      return res.status(429).json({ jsonrpc: '2.0', error: { code: -32002, message: `Daily limit of ${MCP_DAILY_LIMIT} requests reached. Try again tomorrow.` }, id: null });
+    }
+    await storage.incrementDailyUsage(userId, 'mcp');
+    const server = buildRecrutasMcpServer(userId);
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    res.on('close', () => { transport.close(); server.close(); });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  }));
+  // Stateless server: no server-initiated stream (GET) or sessions to end (DELETE).
+  app.get('/api/mcp', (_req, res) => res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null }));
+  app.delete('/api/mcp', (_req, res) => res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null }));
+
   // "Why am I hearing nothing?": a diagnosis of the candidate's own applications.
   app.get('/api/candidate/application-diagnosis', isAuthenticated, asyncHandler(async (req: any, res) => {
     res.json(await diagnoseCandidate(req.user.id));
