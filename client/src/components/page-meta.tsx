@@ -28,6 +28,11 @@ const ROUTES: Record<string, RouteMeta> = {
     description:
       'No one should have to beg for the right to earn a living. Real jobs, pulled straight from the source, made to fit you. No ghosts. No leftovers. No silence.',
   },
+  '/docs': {
+    title: `Developer docs: MCP connector | ${SITE}`,
+    description:
+      'Connect Claude Code, Cursor or any MCP client to Recrutas: your job matches with honest verdicts, job requirements, and what happened to your applications.',
+  },
   '/pricing': {
     title: `Pricing | ${SITE}`,
     description:

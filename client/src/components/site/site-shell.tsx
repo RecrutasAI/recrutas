@@ -12,11 +12,12 @@ import { FeedbackDialog } from "@/components/FeedbackButton";
 // labels — with Recrutas green as the one accent. Geist for text, Geist Mono
 // for labels and live data.
 
-export type SiteSection = "home" | "manifesto" | "legal";
+export type SiteSection = "home" | "manifesto" | "docs" | "legal";
 
 const NAV: { label: string; href: string }[] = [
   { label: "How it works", href: "/#how" },
   { label: "Manifesto", href: "/manifesto" },
+  { label: "Docs", href: "/docs" },
 ];
 
 export function useSiteNav(): (href: string) => void {
@@ -83,7 +84,7 @@ export function SiteShell({ active, children }: { active: SiteSection; children:
                 key={n.label}
                 onClick={() => nav(n.href)}
                 className={`px-5 border-l ${RULE} font-geist-mono text-[11px] uppercase tracking-[0.14em] transition-colors ${
-                  active === "manifesto" && n.href === "/manifesto"
+                  (active === "manifesto" && n.href === "/manifesto") || (active === "docs" && n.href === "/docs")
                     ? "text-neutral-900 dark:text-white"
                     : "text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
                 }`}
@@ -153,6 +154,8 @@ export function SiteShell({ active, children }: { active: SiteSection; children:
           <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
             <div className="flex flex-wrap gap-x-3 gap-y-2 font-geist-mono text-xs text-neutral-500">
               <button onClick={() => nav("/manifesto")} className="hover:text-neutral-900 dark:hover:text-white">Manifesto</button>
+              <span aria-hidden>/</span>
+              <button onClick={() => nav("/docs")} className="hover:text-neutral-900 dark:hover:text-white">Docs</button>
               <span aria-hidden>/</span>
               <a href="/privacy" className="hover:text-neutral-900 dark:hover:text-white">Privacy</a>
               <span aria-hidden>/</span>
