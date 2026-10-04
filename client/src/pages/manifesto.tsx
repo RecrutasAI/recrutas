@@ -17,7 +17,7 @@ const STEPS: { n: string; status: string; live?: boolean; body: ReactNode }[] = 
   {
     n: "step two",
     status: "next",
-    body: <>Open the other side. Companies post roles on Recrutas, and candidates take a short exam generated from the job itself: the company's own bar, not a generic test. Everyone who passes hears back within 24 hours, with a direct line to the hiring manager.<Fn n={6} /></>,
+    body: <>Open the other side, on one condition: everyone who shows they can do the work hears back. Not a promise to try. A promise kept, for every candidate who clears the company's own bar.<Fn n={6} /></>,
   },
   {
     n: "step three",
@@ -27,7 +27,7 @@ const STEPS: { n: string; status: string; live?: boolean; body: ReactNode }[] = 
   {
     n: "step four",
     status: "where this goes",
-    body: <>Make searching disappear. An agent that works for you around the clock, watching every company's board, applying where you'd want to, and bringing back only answers and interviews. You don't look for work. The right work finds you.<Fn n={8} /></>,
+    body: <>Make searching disappear. Something that works for you around the clock, watching every company's board, putting you forward only where you truly fit, and staying with it until you hear back. You don't look for work. The right work finds you.<Fn n={8} /></>,
   },
 ];
 
