@@ -113,7 +113,7 @@ function Hero({ onStart }: { onStart: () => void }) {
           <span className="whitespace-nowrap text-emerald-600 dark:text-emerald-400">Made to fit you.</span>
         </h1>
         <p className="mt-6 text-lg sm:text-xl leading-relaxed text-neutral-600 dark:text-neutral-400 max-w-2xl">
-          Upload your resume once. Get live US roles, ranked by how well you fit, and why.
+          Upload your resume once. Get live US roles ranked by fit, with an honest verdict on each. Then hear what happened after you apply.
         </p>
         <div className="mt-9 flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
           <PrimaryButton onClick={onStart}>
@@ -368,16 +368,17 @@ function LiveSearch({ onStart }: { onStart: () => void }) {
 function HowItWorks() {
   const steps = [
     { title: "Upload your resume", body: "We read your titles, skills and seniority. No forms to fill in." },
-    { title: "Get a ranked feed", body: "Live roles from company career pages, best fit first, each with the reason it matched." },
-    { title: "Apply on the company's site", body: "Every match links straight to the real posting on the employer's own site. No reposters in between." },
+    { title: "Get an honest feed", body: "Live roles from company career pages, best fit first, each marked Apply, Stretch or Skip with the reason." },
+    { title: "Apply on the company's site", body: "Every match links to the real posting. Our extension fills in the form; you review it and submit." },
+    { title: "Know what happened", body: "We watch every job you applied to and tell you when it's taken down or reposted. No more wondering." },
   ];
   return (
     <Band id="how" inner="px-4 sm:px-10 py-14 sm:py-20">
       <SectionLabel n="01">How it works</SectionLabel>
       <h2 className="text-3xl sm:text-5xl font-semibold tracking-[-0.035em] max-w-3xl mb-12">
-        You stop searching. You start choosing.
+        Know where to apply. Know what happened.
       </h2>
-      <ol className={`grid md:grid-cols-3 border-t border-l ${RULE}`}>
+      <ol className={`grid sm:grid-cols-2 lg:grid-cols-4 border-t border-l ${RULE}`}>
         {steps.map((s, i) => (
           <li key={s.title} className={`p-6 sm:p-7 border-r border-b ${RULE}`}>
             <div className="font-geist-mono text-[11px] text-emerald-600 dark:text-emerald-400 mb-10">STEP 0{i + 1}</div>
@@ -396,8 +397,11 @@ const REASONS: { title: string; body: string; tags: string[] }[] = [
   { title: "Matched on what you've done.", body: "Your titles, skills and seniority, not keyword overlap. A senior backend engineer sees senior backend roles.", tags: ["titles", "skills", "seniority"] },
   { title: "Direct from the company.", body: "Pulled from each employer's own hiring system. No reposters, no aggregator spam.", tags: ["greenhouse", "lever", "ashby"] },
   { title: "Live, and checked.", body: "Every board is re-read every few hours. A job gets the live badge only if we saw it in the last 36 hours.", tags: ["● live · checked"] },
-  { title: "Every match explains itself.", body: "A score and the reasons behind it, so an 85 and a 60 look different and you know where to spend your time.", tags: ["score", "why it fits"] },
-  { title: "Filters that mean it.", body: "City, remote / hybrid / onsite and date posted run over your whole match set, not just the first page.", tags: ["seattle", "remote", "past 3 days"] },
+  { title: "An honest verdict on every match.", body: "Apply, Stretch or Skip, with the reason: \"requires an active clearance\", \"asks for 7 years, you have 4\". Stop applying to jobs you can't get.", tags: ["apply", "stretch", "skip"] },
+  { title: "You'll know what happened.", body: "We watch every job you apply to. Taken down, reposted or still open, you hear about it, with a weekly summary and why you might not be hearing back.", tags: ["taken down", "reposted", "weekly"] },
+  { title: "Apply without retyping.", body: "Our browser extension fills application forms from your profile, screening answers included. You review and submit. Firefox today.", tags: ["greenhouse", "lever", "ashby"] },
+  { title: "Your job-search log, done.", body: "On unemployment? Your weekly job-search log fills itself from your applications, in the format Washington's ESD asks for.", tags: ["3 a week", "csv", "print"] },
+  { title: "In your AI tools.", body: "Ask Claude Code or Cursor which of your matches to apply to and what happened to your applications. Connect it in Settings.", tags: ["mcp", "claude", "cursor"] },
   { title: "Free for candidates.", body: "No subscription, no premium tier for job seekers. Companies will pay; people looking for work don't.", tags: ["$0"] },
 ];
 
@@ -523,7 +527,7 @@ function FinalCta({ onStart }: { onStart: () => void }) {
   return (
     <Band inner="px-4 sm:px-10 py-20 sm:py-28 text-center">
       <h2 className="text-3xl sm:text-5xl font-semibold tracking-[-0.035em] mb-4">See what you're a fit for.</h2>
-      <p className="text-lg text-neutral-600 dark:text-neutral-400 mb-9">One resume. A ranked feed of live roles. Free.</p>
+      <p className="text-lg text-neutral-600 dark:text-neutral-400 mb-9">One resume. Live roles you can actually get. Answers after you apply. Free.</p>
       <PrimaryButton onClick={onStart}>
         <Upload className="w-4 h-4" /> Upload resume
       </PrimaryButton>
