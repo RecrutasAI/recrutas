@@ -20,6 +20,7 @@ import {
 import { Calendar, Clock, Eye, MessageSquare, ExternalLink, ChevronRight, FileText, Loader2, Trash2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { ApplicationDiagnosis } from "./application-diagnosis";
+import { JobSearchLog } from "./job-search-log";
 import { formatDistanceToNow } from "date-fns";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -231,6 +232,8 @@ export default function ApplicationTracker() {
       </div>
 
       <ApplicationDiagnosis />
+
+      <JobSearchLog applications={applications.filter(a => a.job)} />
 
       {/* Active Applications */}
       {activeApplications.length > 0 && (

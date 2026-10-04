@@ -59,3 +59,17 @@ describe('application diagnosis', () => {
     expect(screen.getByTestId('diagnosis-next-step')).toHaveTextContent('Next step: Follow up');
   });
 });
+
+describe('job-search log', () => {
+  it('lists this week\'s applications against the weekly minimum', async () => {
+    const recent = new Date().toISOString();
+    renderWith([
+      app(6, { title: 'Help Desk', company: 'PubMatic', location: 'Seattle, WA' }, { appliedAt: recent }),
+      app(7, { title: 'Support Engineer', company: 'Acme', location: 'Remote' }, { appliedAt: recent }),
+    ]);
+    const log = await screen.findByTestId('job-search-log');
+    expect(screen.getByTestId('job-search-log-status')).toHaveTextContent('2 of 3 employer contacts this week');
+    expect(log).toHaveTextContent('Seattle, WA');
+    expect(log).toHaveTextContent('Online · Application/resume');
+  });
+});
