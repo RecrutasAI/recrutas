@@ -42,9 +42,10 @@
 
   function toAuth(s) {
     const md = s.user?.user_metadata || {};
+    // Google sign-ups carry full_name/name instead of first_name.
     const name = md.first_name
       ? `${md.first_name} ${md.last_name || ''}`.trim()
-      : s.user?.email || null;
+      : (md.full_name || md.name || s.user?.email || null);
     return {
       accessToken: s.access_token,
       refreshToken: s.refresh_token,

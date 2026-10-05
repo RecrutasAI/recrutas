@@ -11,6 +11,7 @@ import { phoneFromText } from "./lib/phone";
 import { recordReportedApplication, applicationForUrl } from "./services/application-tracking.service";
 import { diagnoseCandidate } from "./services/application-diagnosis.service";
 import { buildWeeklySummary } from "./services/weekly-summary.service";
+import { displayNameFromMetadata } from "./lib/candidate-name";
 import { verifyUnsubscribe } from "./lib/unsubscribe";
 import { createApiToken, listApiTokens, revokeApiToken, userForToken } from "./services/api-token.service";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -944,9 +945,7 @@ export async function registerRoutes(app: Express): Promise<Express> {
         expiresAt:    Date.now() + (sbBody.expires_in ?? 3600) * 1000,
         user: {
           email: sbBody.user?.email,
-          name:  sbBody.user?.user_metadata?.first_name
-                  ? `${sbBody.user.user_metadata.first_name} ${sbBody.user.user_metadata.last_name || ''}`.trim()
-                  : sbBody.user?.email,
+          name:  displayNameFromMetadata(sbBody.user?.user_metadata) ?? sbBody.user?.email,
         },
       });
     } catch (error) {
@@ -991,9 +990,7 @@ export async function registerRoutes(app: Express): Promise<Express> {
         expiresAt:    Date.now() + (sbBody.expires_in ?? 3600) * 1000,
         user: {
           email: sbBody.user?.email,
-          name:  sbBody.user?.user_metadata?.first_name
-                  ? `${sbBody.user.user_metadata.first_name} ${sbBody.user.user_metadata.last_name || ''}`.trim()
-                  : sbBody.user?.email,
+          name:  displayNameFromMetadata(sbBody.user?.user_metadata) ?? sbBody.user?.email,
         },
       });
     } catch (error) {
@@ -1297,7 +1294,10 @@ Analyze the form and return the actions JSON to fill every field you can.`;
         });
       }
 
-      res.json({ actions, resumeUrl });
+      // The profile points at a resume file that's no longer in storage: say so,
+      // so the candidate re-uploads instead of the field silently staying empty.
+      const resumeMissing = !!profile.resumeUrl && !resumeUrl;
+      res.json({ actions, resumeUrl, resumeMissing });
     } catch (error) {
       console.error('Extension fill-form error:', error);
       res.status(500).json({ message: 'Failed to generate form values' });
@@ -1710,6 +1710,17 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       // Return null for new users (no profile yet) - not an error
       if (!profile) {
         return res.json({ exists: false, profile: null });
+      }
+
+      // The extension names the attached resume "First_Last_resume.pdf" from
+      // this profile; fill a blank name once from the account or the resume.
+      if (!(profile.firstName || '').trim()) {
+        try {
+          const name = await storage.fillCandidateNameIfMissing(req.user.id, req.user.user_metadata);
+          if (name) {Object.assign(profile, name);}
+        } catch (err) {
+          console.warn('[profile] name fill failed (non-fatal):', (err as Error).message);
+        }
       }
 
       res.json({ exists: true, profile });
