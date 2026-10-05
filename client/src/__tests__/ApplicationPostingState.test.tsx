@@ -3,7 +3,7 @@
  * applied: still posted, taken down, or reposted. Recrutas re-reads every
  * employer's careers page daily, so this answers the silence after applying.
  */
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -61,15 +61,42 @@ describe('application diagnosis', () => {
 });
 
 describe('job-search log', () => {
+  it('starts folded to one line at the bottom', async () => {
+    localStorage.clear();
+    renderWith([app(8, { title: 'Help Desk', company: 'PubMatic', location: 'Seattle, WA' }, { appliedAt: new Date().toISOString() })]);
+    const log = await screen.findByTestId('job-search-log');
+    expect(log).toHaveTextContent('Filling a weekly claim?');
+    expect(screen.queryByTestId('job-search-log-status')).toBeNull();
+  });
+
   it('lists this week\'s applications against the weekly minimum', async () => {
+    localStorage.clear();
     const recent = new Date().toISOString();
     renderWith([
       app(6, { title: 'Help Desk', company: 'PubMatic', location: 'Seattle, WA' }, { appliedAt: recent }),
       app(7, { title: 'Support Engineer', company: 'Acme', location: 'Remote' }, { appliedAt: recent }),
     ]);
+    fireEvent.click(await screen.findByRole('button', { name: /Job-search log for unemployment/ }));
     const log = await screen.findByTestId('job-search-log');
+    expect(localStorage.getItem('recrutas_job_search_log_open')).toBe('1');
     expect(screen.getByTestId('job-search-log-status')).toHaveTextContent('2 of 3 employer contacts this week');
     expect(log).toHaveTextContent('Seattle, WA');
     expect(log).toHaveTextContent('Online · Application/resume');
+  });
+});
+
+describe('weekly summary card', () => {
+  it('shows the week and what happened to applications', async () => {
+    server.use(http.get('*/api/candidate/weekly-summary', () => HttpResponse.json({
+      appliedThisWeek: [{ title: 'Help Desk', company: 'PubMatic' }], updates: [{ kind: 'taken_down', title: 'IT Support', company: 'Acme' }],
+      waiting: 4, waitingPastFollowUp: 2, newApplyMatches: 12, topMatches: [{ title: 'Support Engineer', company: 'Rocket Lab', location: 'Remote' }], nextStep: null,
+    })));
+    renderWith([app(9, { title: 'Help Desk', company: 'PubMatic', location: 'Seattle, WA' }, { appliedAt: new Date().toISOString() })]);
+    const card = await screen.findByTestId('weekly-summary');
+    expect(card).toHaveTextContent('1application');
+    expect(card).toHaveTextContent('12new jobs you qualify for');
+    expect(screen.getByTestId('weekly-updates')).toHaveTextContent('Taken down: IT Support at Acme');
+    expect(card).toHaveTextContent('2 are past the usual time to follow up.');
+    expect(card).toHaveTextContent('Support Engineer at Rocket Lab · Remote');
   });
 });

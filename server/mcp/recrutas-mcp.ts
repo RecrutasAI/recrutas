@@ -15,6 +15,7 @@ import { sql } from 'drizzle-orm/sql';
 import { db } from '../db';
 import { storage } from '../storage';
 import { diagnoseCandidate } from '../services/application-diagnosis.service';
+import { buildWeeklySummary, weeklySummaryText } from '../services/weekly-summary.service';
 import {
   extractHardRequirements, verdictFor, yearsFromPositions, descriptionToText,
   type CandidateFacts, type HardRequirements,
@@ -49,7 +50,7 @@ function requirementLines(r: HardRequirements): string[] {
 }
 
 export const MCP_INSTRUCTIONS = `Recrutas finds live jobs taken directly from company career pages, matches them to the user's resume, and tracks what happens after they apply.
-Typical flow: search_my_matches (optionally verdict "apply") → get_job for details and the apply link → the user applies on the company's site (the Recrutas browser extension fills the form; the user submits) → record_application if the extension didn't log it → list_my_applications / why_no_replies later.
+Typical flow: search_my_matches (optionally verdict "apply") → get_job for details and the apply link → the user applies on the company's site (the Recrutas browser extension fills the form; the user submits) → record_application if the extension didn't log it → my_week, list_my_applications or why_no_replies later.
 Verdicts: "apply" = meets stated requirements; "stretch" = a gap; "skip" = a stated requirement the user said they don't meet. "Check" items are requirements the user hasn't answered in Recrutas Settings → Application answers. Never apply or submit anything on the user's behalf.`;
 
 export function buildRecrutasMcpServer(userId: string): McpServer {
@@ -153,6 +154,13 @@ export function buildRecrutasMcpServer(userId: string): McpServer {
     const d = await diagnoseCandidate(userId);
     return text([...d.findings.map(f => `- ${f}`), '', `${d.enoughData ? 'Next step: ' : ''}${d.nextStep.text}`].join('\n').trim());
   });
+
+  server.registerTool('my_week', {
+    title: 'My week',
+    description: "The user's job search this week: what they applied to, what happened (taken down, reposted, employer responded), how many are still waiting, new jobs they qualify for, and one next step.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, async () => text(weeklySummaryText(await buildWeeklySummary(userId))));
 
   return server;
 }

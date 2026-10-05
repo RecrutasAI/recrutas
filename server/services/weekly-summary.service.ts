@@ -1,6 +1,8 @@
 /**
- * The weekly summary: one email a week that tells an active candidate what
- * happened with their search, so the silence after applying has an answer.
+ * The weekly summary: what happened with a candidate's search this week, so
+ * the silence after applying has an answer. Shown in the dashboard and over
+ * MCP (`my_week`). The email sender below is kept but not scheduled: a
+ * commercial email needs a postal address in it (CAN-SPAM).
  *
  *   - what they applied to this week
  *   - what happened to their applications this week (taken down, reposted,
@@ -91,6 +93,23 @@ export async function buildWeeklySummary(candidateId: string): Promise<WeeklySum
     topMatches,
     nextStep: diagnosis.enoughData ? diagnosis.nextStep.text : null,
   };
+}
+
+/** The summary as plain text, for MCP clients. */
+export function weeklySummaryText(s: WeeklySummary): string {
+  const out: string[] = [];
+  const job = (j: { title: string; company: string }) => `${j.title} at ${j.company}`;
+  out.push(s.appliedThisWeek.length
+    ? `Applied this week (${s.appliedThisWeek.length}):\n${s.appliedThisWeek.map(j => `- ${job(j)}`).join('\n')}`
+    : 'No applications recorded this week.');
+  const said = { taken_down: 'taken down', reposted: 'reposted (they are still looking)', replied: 'the employer responded' } as const;
+  if (s.updates.length) {out.push(`What happened:\n${s.updates.map(u => `- ${job(u)}: ${said[u.kind]}`).join('\n')}`);}
+  if (s.waiting) {out.push(`Still waiting on ${s.waiting}${s.waitingPastFollowUp ? `, ${s.waitingPastFollowUp} past the usual follow-up time` : ''}.`);}
+  if (s.newApplyMatches) {
+    out.push(`${s.newApplyMatches} new job${s.newApplyMatches === 1 ? '' : 's'} this week you qualify for${s.topMatches.length ? `, including:\n${s.topMatches.map(j => `- ${job(j)}${j.location ? ` (${j.location})` : ''}`).join('\n')}` : '.'}`);
+  }
+  if (s.nextStep) {out.push(`Next step: ${s.nextStep}`);}
+  return out.join('\n\n');
 }
 
 /** Candidates to consider: active in the last 30 days, with a parsed resume, not sent in the last 6 days. */
