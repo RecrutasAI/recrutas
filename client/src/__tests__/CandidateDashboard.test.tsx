@@ -181,9 +181,8 @@ describe('CandidateDashboard', () => {
     // Verify the ApplicationTracker component rendered (even with no data or loading state)
     await waitFor(() => {
       // Check for either the application tracker content or an empty state
-      const hasApplications = screen.queryByText(/Total Applications/i) || 
-                              screen.queryByText(/No Applications Yet/i) ||
-                              screen.queryByText(/Unknown Job/i);
+      const hasApplications = screen.queryByTestId('applications-overview') ||
+                              screen.queryByText(/No Applications Yet/i);
       expect(hasApplications).toBeTruthy();
     });
   });

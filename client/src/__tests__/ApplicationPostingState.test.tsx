@@ -54,9 +54,12 @@ describe('application diagnosis', () => {
       nextStep: { kind: 'follow_up', text: 'Follow up: 2 applications are past 14 days with the job still posted.' },
     })));
     renderWith([app(5, { postingState: 'live' })]);
-    const card = await screen.findByTestId('application-diagnosis');
-    expect(card).toHaveTextContent('None of your 4 applications has had a reply yet.');
+    const why = await screen.findByTestId('application-diagnosis');
     expect(screen.getByTestId('diagnosis-next-step')).toHaveTextContent('Next step: Follow up');
+    // Findings stay folded until asked for.
+    expect(why).not.toHaveTextContent('None of your 4 applications has had a reply yet.');
+    fireEvent.click(screen.getByRole('button', { name: /Why you're not hearing back/ }));
+    expect(why).toHaveTextContent('None of your 4 applications has had a reply yet.');
   });
 });
 
@@ -85,18 +88,15 @@ describe('job-search log', () => {
   });
 });
 
-describe('weekly summary card', () => {
-  it('shows the week and what happened to applications', async () => {
+describe('applications overview', () => {
+  it('puts the totals and the week on one line, with what happened below', async () => {
     server.use(http.get('*/api/candidate/weekly-summary', () => HttpResponse.json({
       appliedThisWeek: [{ title: 'Help Desk', company: 'PubMatic' }], updates: [{ kind: 'taken_down', title: 'IT Support', company: 'Acme' }],
-      waiting: 4, waitingPastFollowUp: 2, newApplyMatches: 12, topMatches: [{ title: 'Support Engineer', company: 'Rocket Lab', location: 'Remote' }], nextStep: null,
+      waiting: 4, waitingPastFollowUp: 2, newApplyMatches: 12, topMatches: [], nextStep: null,
     })));
     renderWith([app(9, { title: 'Help Desk', company: 'PubMatic', location: 'Seattle, WA' }, { appliedAt: new Date().toISOString() })]);
-    const card = await screen.findByTestId('weekly-summary');
-    expect(card).toHaveTextContent('1application');
-    expect(card).toHaveTextContent('12new jobs you qualify for');
+    expect(await screen.findByTestId('weekly-summary')).toHaveTextContent('This week: 1 applied · 12 new jobs you qualify for');
+    expect(screen.getByTestId('applications-totals')).toHaveTextContent('1 application · 4 waiting (2 past follow-up)');
     expect(screen.getByTestId('weekly-updates')).toHaveTextContent('Taken down: IT Support at Acme');
-    expect(card).toHaveTextContent('2 are past the usual time to follow up.');
-    expect(card).toHaveTextContent('Support Engineer at Rocket Lab · Remote');
   });
 });
