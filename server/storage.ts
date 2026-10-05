@@ -403,6 +403,10 @@ export interface MarketRadar {
   lastBoardRead: string | null;     // last completed sweep of the company boards
   nextBoardRead: string;            // next scheduled sweep (scrape-ats: every 4 h on the hour, UTC)
   events: RadarEvent[];
+  /** Hourly, last 7 days: postings opened and taken down, and the live count at the end of each hour. */
+  series: { t: string; opened: number; closed: number; live: number }[];
+  openedLast24h: number;
+  closedLast24h: number;
 }
 
 export interface JobUrlCheck {
@@ -1049,6 +1053,31 @@ export class DatabaseStorage implements IStorage {
       ...(r.opened ?? []).map((e: any) => shape(e, e.reposted ? 'reposted' : 'new')),
       ...(r.closed ?? []).map((e: any) => shape(e, 'taken_down')),
     ].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 24);
+    // The index line: live jobs per hour for 7 days, rebuilt backwards from the
+    // live count now using the real openings and take-downs in each hour.
+    const hourly = resultRows<any>(await db.execute(sql`
+      SELECT h, sum(opened)::int AS opened, sum(closed)::int AS closed FROM (
+        SELECT date_trunc('hour', created_at) AS h, count(*) AS opened, 0 AS closed
+        FROM job_postings WHERE created_at > now() - interval '7 days' AND ${scoped(words)} GROUP BY 1
+        UNION ALL
+        SELECT date_trunc('hour', updated_at), 0, count(*)
+        FROM job_postings WHERE liveness_status = 'removed' AND external_url IS NOT NULL
+          AND updated_at > now() - interval '7 days' AND ${scoped(words)} GROUP BY 1
+      ) x GROUP BY h`));
+    const byHour = new Map<number, { opened: number; closed: number }>(
+      hourly.map(r => [new Date(r.h).getTime(), { opened: r.opened, closed: r.closed }]));
+    const endHour = new Date(); endHour.setUTCMinutes(0, 0, 0);
+    const series: MarketRadar['series'] = [];
+    let live = r.live ?? 0;
+    for (let i = 0; i < 168; i++) {
+      const t = endHour.getTime() - i * 3600e3;
+      const b = byHour.get(t) ?? { opened: 0, closed: 0 };
+      series.push({ t: new Date(t).toISOString(), opened: b.opened, closed: b.closed, live: Math.max(0, live) });
+      live = live - b.opened + b.closed; // live count before this hour
+    }
+    series.reverse();
+    const last24 = series.slice(-24);
+
     // The last completed board sweep. last_liveness_check is updated at most every
     // 20 h per job (WAL gate), so it understates how recently boards were read.
     const last = resultRows<any>(await db.execute(sql`
@@ -1062,6 +1091,9 @@ export class DatabaseStorage implements IStorage {
       lastBoardRead: last ? new Date(last).toISOString() : null,
       nextBoardRead: next.toISOString(),
       events,
+      series,
+      openedLast24h: last24.reduce((n, b) => n + b.opened, 0),
+      closedLast24h: last24.reduce((n, b) => n + b.closed, 0),
     };
   }
 
