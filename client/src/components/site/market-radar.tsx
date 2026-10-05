@@ -90,8 +90,22 @@ export function chartGeometry(series: NonNullable<MarketRadarData["series"]>) {
 export function valueFor(e: RadarEvent): string {
   if (e.type === "taken_down") {return "Applied? We'd tell you it closed.";}
   if (e.type === "reposted") {return "Applied? We'd tell you they're still looking.";}
-  if (e.flags.length) {return `We'd flag it before you apply: ${e.flags.join(", ")}.`;}
+  const years = e.flags.find(f => /yrs$/.test(f));
+  const hard = e.flags.filter(f => f !== years);
+  if (hard.length) {return `Needs ${hard.join(" and ")}. We'd flag that before you apply.`;}
+  if (years) {return `Asks for ${years.replace(/yrs$/, "years")}. We'd check that against your resume.`;}
   return "We'd match it to your resume within hours.";
+}
+
+/** Alternate openings and take-downs so both kinds of movement pass by. */
+export function interleave<T extends { type: string }>(events: T[]): T[] {
+  const ups = events.filter(e => e.type !== "taken_down"), downs = events.filter(e => e.type === "taken_down");
+  const out: T[] = [];
+  for (let i = 0; i < Math.max(ups.length, downs.length); i++) {
+    if (ups[i]) {out.push(ups[i]);}
+    if (downs[i]) {out.push(downs[i]);}
+  }
+  return out;
 }
 
 /**
@@ -119,7 +133,7 @@ export function MarketRadar({ onStart }: { onStart: () => void }) {
 
   const d = radar.data;
   const geo = useMemo(() => (d?.series ? chartGeometry(d.series) : null), [d]);
-  const stream = useMemo(() => collapseEvents(d?.events ?? []).slice().reverse(), [d]); // oldest first, like a replay
+  const stream = useMemo(() => interleave(collapseEvents(d?.events ?? [])), [d]); // newest first, openings and take-downs alternating
   const [tick, setTick] = useState(0);
   useEffect(() => {
     setTick(0);
