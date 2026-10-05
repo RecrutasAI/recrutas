@@ -18,9 +18,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Calendar, Clock, Eye, MessageSquare, ExternalLink, ChevronRight, FileText, Loader2, Trash2 } from "lucide-react";
-import { Progress } from "@/components/ui/progress";
-import { WeeklySummaryCard } from "@/components/weekly-summary-card";
-import { ApplicationDiagnosis } from "./application-diagnosis";
+import { ApplicationsOverview } from "@/components/applications-overview";
 import { JobSearchLog } from "./job-search-log";
 import { formatDistanceToNow } from "date-fns";
 import { apiRequest } from "@/lib/queryClient";
@@ -148,10 +146,6 @@ export default function ApplicationTracker() {
     );
   };
 
-  const getProgressPercentage = (status: string) => {
-    return statusConfig[status]?.progress || 0;
-  };
-
   if (isLoading) {
     return (
       <div className="space-y-4">
@@ -200,57 +194,27 @@ export default function ApplicationTracker() {
 
   return (
     <div className="space-y-6">
-      {/* Summary Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold text-blue-600">{applications.length}</div>
-            <div className="text-sm text-gray-600">Total Applications</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold text-orange-600">{activeApplications.length}</div>
-            <div className="text-sm text-gray-600">In Progress</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold text-purple-600">
-              {applications.filter(app => app.status === 'interview_scheduled').length}
-            </div>
-            <div className="text-sm text-gray-600">Interviews</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold text-green-600">
-              {applications.filter(app => app.status === 'offer').length}
-            </div>
-            <div className="text-sm text-gray-600">Offers</div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <WeeklySummaryCard />
-
-      <ApplicationDiagnosis />
+      <ApplicationsOverview
+        total={applications.length}
+        interviews={applications.filter(app => app.status === 'interview_scheduled').length}
+        offers={applications.filter(app => app.status === 'offer').length}
+      />
 
       {/* Active Applications */}
       {activeApplications.length > 0 && (
         <div>
-          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Clock className="h-5 w-5" />
-            Active Applications ({activeApplications.length})
+          <h3 className="text-base font-semibold mb-3 flex items-center gap-2">
+            <Clock className="h-4 w-4" />
+            Active applications ({activeApplications.length})
           </h3>
-          <div className="space-y-4">
+          <div className="space-y-3">
             {activeApplications.map((application) => (
               <Card key={application.id} className="hover:shadow-md transition-shadow">
-                <CardHeader className="pb-3">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <CardTitle className="text-lg">{application.job?.title || 'Unknown Job'}</CardTitle>
-                      <CardDescription className="flex items-center gap-2 mt-1">
+                <CardHeader className="p-4 pb-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <CardTitle className="text-base">{application.job?.title || 'Unknown Job'}</CardTitle>
+                      <CardDescription className="flex flex-wrap items-center gap-x-2 mt-0.5">
                         <span>{application.job?.company || 'Unknown Company'}</span>
                         {application.job?.location && (
                           <>
@@ -276,46 +240,12 @@ export default function ApplicationTracker() {
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent className="pt-0">
-                  <div className="space-y-3">
+                <CardContent className="p-4 pt-0">
+                  <div className="space-y-2">
                     <PostingStateNote application={application} />
-                    {/* Progress bar */}
-                    {(() => {
-                      const pct = getProgressPercentage(application.status);
-                      return pct > 0 ? (
-                        <div className="space-y-1">
-                          <Progress value={pct} className="h-1.5" />
-                          <p className="text-xs text-gray-500">
-                            {application.job?.externalUrl ? 'Status self-reported' : 'Status updated by employer'}
-                          </p>
-                        </div>
-                      ) : null;
-                    })()}
-                    {/* Self-service status update for external jobs (hidden while agent is still queued/submitting) */}
-                    {application.job?.externalUrl && application.status !== 'submitting' && application.status !== 'queued' && (
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-gray-600">Update Status:</span>
-                        <Select
-                          value={application.status === 'applied' ? 'submitted' : application.status}
-                          onValueChange={(newStatus) => updateStatusMutation.mutate({ applicationId: application.id, status: newStatus })}
-                        >
-                          <SelectTrigger className="w-[180px] h-8">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="submitted">Submitted</SelectItem>
-                            <SelectItem value="screening">In Progress</SelectItem>
-                            <SelectItem value="interview_scheduled">Interview</SelectItem>
-                            <SelectItem value="offer">Offer</SelectItem>
-                            <SelectItem value="rejected">Not Selected</SelectItem>
-                            <SelectItem value="withdrawn">Withdrawn</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    )}
 
                     {/* Timeline Info */}
-                    <div className="flex items-center justify-between text-sm text-gray-600">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-gray-600">
                       <div className="flex items-center gap-4">
                         <span className="flex items-center gap-1">
                           <Calendar className="h-4 w-4" />
@@ -330,7 +260,26 @@ export default function ApplicationTracker() {
                           </span>
                         )}
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
+                        {/* Self-reported status for external jobs (hidden while the agent is still queued/submitting) */}
+                        {application.job?.externalUrl && application.status !== 'submitting' && application.status !== 'queued' && (
+                          <Select
+                            value={application.status === 'applied' ? 'submitted' : application.status}
+                            onValueChange={(newStatus) => updateStatusMutation.mutate({ applicationId: application.id, status: newStatus })}
+                          >
+                            <SelectTrigger className="w-[150px] h-8" aria-label="Update status">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="submitted">Submitted</SelectItem>
+                              <SelectItem value="screening">In Progress</SelectItem>
+                              <SelectItem value="interview_scheduled">Interview</SelectItem>
+                              <SelectItem value="offer">Offer</SelectItem>
+                              <SelectItem value="rejected">Not Selected</SelectItem>
+                              <SelectItem value="withdrawn">Withdrawn</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        )}
                         {/* Take Exam button: internal jobs with exam, submitted/applied status */}
                         {!application.job?.externalUrl && application.job?.hasExam && ['applied', 'submitted'].includes(application.status) && (
                           <Button variant="outline" size="sm" className="border-purple-300 text-purple-700 hover:bg-purple-50 dark:border-purple-700 dark:text-purple-400" onClick={() => setLocation(`/exam/${application.job?.id}`)}>
@@ -398,9 +347,9 @@ export default function ApplicationTracker() {
       {closedApplications.length > 0 && (
         <div>
           <Separator />
-          <div className="flex items-center justify-between mb-4 mt-6">
-            <h3 className="text-lg font-semibold flex items-center gap-2">
-              Past Applications ({closedApplications.length})
+          <div className="flex items-center justify-between mb-3 mt-5">
+            <h3 className="text-base font-semibold flex items-center gap-2">
+              Past applications ({closedApplications.length})
             </h3>
             <AlertDialog>
               <AlertDialogTrigger asChild>
