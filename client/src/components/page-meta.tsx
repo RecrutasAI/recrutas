@@ -65,7 +65,7 @@ const ROUTES: Record<string, RouteMeta> = {
   },
   '/privacy': {
     title: `Privacy Policy | ${SITE}`,
-    description: 'Learn how Recrutas collects, uses, and protects your personal data.',
+    description: 'What Recrutas collects, how it is used (including the browser extension, AI processing and the MCP connector), who processes it, and your choices.',
   },
   '/terms': {
     title: `Terms of Service | ${SITE}`,
