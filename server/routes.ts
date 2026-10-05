@@ -10,6 +10,7 @@ import { z } from "zod";
 import { phoneFromText } from "./lib/phone";
 import { recordReportedApplication, applicationForUrl } from "./services/application-tracking.service";
 import { diagnoseCandidate } from "./services/application-diagnosis.service";
+import { buildWeeklySummary } from "./services/weekly-summary.service";
 import { verifyUnsubscribe } from "./lib/unsubscribe";
 import { createApiToken, listApiTokens, revokeApiToken, userForToken } from "./services/api-token.service";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -2005,6 +2006,11 @@ Analyze the form and return the actions JSON to fill every field you can.`;
   // "Why am I hearing nothing?": a diagnosis of the candidate's own applications.
   app.get('/api/candidate/application-diagnosis', isAuthenticated, asyncHandler(async (req: any, res) => {
     res.json(await diagnoseCandidate(req.user.id));
+  }));
+
+  // This week's summary: applications, what happened to them, new jobs they qualify for.
+  app.get('/api/candidate/weekly-summary', isAuthenticated, asyncHandler(async (req: any, res) => {
+    res.json(await buildWeeklySummary(req.user.id));
   }));
 
   app.get('/api/candidate/applications', isAuthenticated, asyncHandler(async (req: any, res) => {

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, Download, Printer } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Download, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -36,9 +36,14 @@ function downloadCsv(entries: LogEntry[], weekEnding: Date) {
   URL.revokeObjectURL(url);
 }
 
+const OPEN_KEY = "recrutas_job_search_log_open";
+const readOpen = (): boolean => { try { return localStorage.getItem(OPEN_KEY) === "1"; } catch { return false; } };
+
 /**
  * The week's applications as an unemployment job-search log (Washington ESD's
  * fields). Recrutas fills in what it knows; the claimant completes the rest.
+ * Folded to one line by default (most candidates aren't claiming); whoever
+ * opens it finds it open next time.
  */
 export function JobSearchLog({ applications }: { applications: LoggableApplication[] }) {
   const [weekOf, setWeekOf] = useState(() => new Date());
@@ -47,12 +52,35 @@ export function JobSearchLog({ applications }: { applications: LoggableApplicati
   const shift = (days: number) => setWeekOf(d => new Date(d.getFullYear(), d.getMonth(), d.getDate() + days));
   const isCurrentWeek = claimWeek(new Date()).weekEnding.getTime() === weekEnding.getTime();
   const met = entries.length >= REQUIRED_PER_WEEK;
+  const [open, setOpen] = useState(readOpen);
+  const toggle = () => setOpen(o => {
+    try { localStorage.setItem(OPEN_KEY, o ? "0" : "1"); } catch { /* storage blocked */ }
+    return !o;
+  });
+
+  if (!open) {
+    return (
+      <Card data-testid="job-search-log">
+        <button type="button" onClick={toggle} aria-expanded={false}
+          className="w-full flex items-center justify-between gap-3 p-4 sm:px-5 text-left hover:bg-slate-50 dark:hover:bg-slate-900 rounded-lg">
+          <span>
+            <span className="block text-base font-semibold text-slate-900 dark:text-slate-100">Job-search log for unemployment</span>
+            <span className="block text-sm text-slate-500 dark:text-slate-400">Filling a weekly claim? Your applications, ready as a CSV or printable log.</span>
+          </span>
+          <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
+        </button>
+      </Card>
+    );
+  }
 
   return (
     <Card data-testid="job-search-log">
       <CardContent className="p-4 sm:p-5 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Job-search log for unemployment</h3>
+          <button type="button" onClick={toggle} aria-expanded className="flex items-center gap-2 text-left">
+            <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Job-search log for unemployment</h3>
+            <ChevronDown className="h-4 w-4 rotate-180 text-slate-400" />
+          </button>
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="sm" onClick={() => shift(-7)} aria-label="Previous week"><ChevronLeft className="h-4 w-4" /></Button>
             <span className="text-sm tabular-nums">Week ending {mmddyyyy(weekEnding)}</span>

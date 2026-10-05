@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Calendar, Clock, Eye, MessageSquare, ExternalLink, ChevronRight, FileText, Loader2, Trash2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import { WeeklySummaryCard } from "@/components/weekly-summary-card";
 import { ApplicationDiagnosis } from "./application-diagnosis";
 import { JobSearchLog } from "./job-search-log";
 import { formatDistanceToNow } from "date-fns";
@@ -231,9 +232,9 @@ export default function ApplicationTracker() {
         </Card>
       </div>
 
-      <ApplicationDiagnosis />
+      <WeeklySummaryCard />
 
-      <JobSearchLog applications={applications.filter(a => a.job)} />
+      <ApplicationDiagnosis />
 
       {/* Active Applications */}
       {activeApplications.length > 0 && (
@@ -453,6 +454,8 @@ export default function ApplicationTracker() {
           </div>
         </div>
       )}
+
+      <JobSearchLog applications={applications.filter(a => a.job)} />
     </div>
   );
 }

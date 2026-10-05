@@ -38,9 +38,9 @@ beforeAll(async () => {
 });
 
 describe('Recrutas MCP server', () => {
-  it('exposes the five tools, read-only except recording an application', async () => {
+  it('exposes the six tools, read-only except recording an application', async () => {
     const { tools } = await client.listTools();
-    expect(tools.map(t => t.name).sort()).toEqual(['get_job', 'list_my_applications', 'record_application', 'search_my_matches', 'why_no_replies']);
+    expect(tools.map(t => t.name).sort()).toEqual(['get_job', 'list_my_applications', 'my_week', 'record_application', 'search_my_matches', 'why_no_replies']);
     expect(tools.find(t => t.name === 'search_my_matches')?.annotations?.readOnlyHint).toBe(true);
     expect(tools.find(t => t.name === 'record_application')?.annotations?.readOnlyHint).toBe(false);
   });

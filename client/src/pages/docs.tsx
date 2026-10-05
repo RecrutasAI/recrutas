@@ -10,6 +10,7 @@ const TOOLS: { name: string; does: string; example: string }[] = [
   { name: "get_job", does: "One job: what the posting requires, your verdict, whether it's still on the company's careers page, a description excerpt, and the link to apply.", example: "Tell me about #574586. Do I meet the requirements?" },
   { name: "list_my_applications", does: "Everything you applied to and what happened since: still posted, taken down by the company, or reposted.", example: "What happened to my applications?" },
   { name: "record_application", does: "Records that you applied, if the browser extension didn't log it. Your AI tool should only call it after you confirm you submitted.", example: "I applied to #574586." },
+  { name: "my_week", does: "Your week: what you applied to, what happened to those applications, new jobs you qualify for, and one next step.", example: "How did my job search go this week?" },
   { name: "why_no_replies", does: "A diagnosis of your own applications: replies, take-downs, timing and fit, with one next step.", example: "Why am I not hearing back?" },
 ];
 

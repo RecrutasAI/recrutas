@@ -16,8 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import { 
   Upload, FileText, Globe, Github, Linkedin, User, Sparkles, 
   X, Check, Briefcase, ArrowRight, ArrowLeft, PartyPopper,
-  MapPin, DollarSign, Building, Clock, Award
-} from "lucide-react";
+  MapPin, DollarSign, Building, Clock, Award, Trash2 } from "lucide-react";
 import { Badge } from "./ui/badge";
 
 interface ExtractedInfo {
@@ -700,9 +699,10 @@ export default function ProfileWizard({ onComplete, skipResumeStep = false }: Pr
                     <Label className="font-semibold">Your Saved Skills</Label>
                     <Button
                       type="button"
-                      variant="ghost"
+                      variant="destructive"
                       size="sm"
-                      className="h-6 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                      className="h-8 px-3 gap-1.5 bg-red-600 text-white hover:bg-red-700 dark:bg-red-600 dark:hover:bg-red-500 shadow-sm"
+                      aria-label="Clear all skills"
                       onClick={async () => {
                         if (!confirm('This will clear all your skills and take you back to upload a new resume. Continue?')) return;
                         try {
@@ -717,6 +717,7 @@ export default function ProfileWizard({ onComplete, skipResumeStep = false }: Pr
                         }
                       }}
                     >
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden />
                       Clear all
                     </Button>
                   </div>

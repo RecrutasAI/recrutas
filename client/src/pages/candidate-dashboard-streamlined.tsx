@@ -789,7 +789,6 @@ function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [jobAlerts, setJobAlerts] = useState(true);
   const [applicationUpdates, setApplicationUpdates] = useState(true);
-  const [weeklySummary, setWeeklySummary] = useState(true);
 
   const { data: savedPrefs } = useQuery({
     queryKey: ['/api/candidate/notification-preferences'],
@@ -805,7 +804,6 @@ function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
       setEmailNotifications(savedPrefs.emailNotifications ?? true);
       setJobAlerts(savedPrefs.inAppNotifications ?? true);
       setApplicationUpdates(savedPrefs.applicationUpdates ?? true);
-      setWeeklySummary(savedPrefs.weeklySummary ?? true);
     }
   }, [savedPrefs]);
 
@@ -815,7 +813,6 @@ function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
         emailNotifications,
         inAppNotifications: jobAlerts,
         applicationUpdates,
-        weeklySummary,
       });
       if (!res.ok) {throw new Error('Failed to save');}
       return res.json();
@@ -888,17 +885,6 @@ function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
 
               {emailNotifications && (
                 <>
-                  <div className="flex items-center justify-between px-4 py-3">
-                    <div>
-                      <Label htmlFor="weekly-summary" className="text-sm font-medium">Weekly summary</Label>
-                      <p className="text-xs text-slate-500">Mondays: your applications, what happened, new jobs you qualify for</p>
-                    </div>
-                    <Switch
-                      id="weekly-summary"
-                      checked={weeklySummary}
-                      onCheckedChange={setWeeklySummary}
-                    />
-                  </div>
                   <div className="flex items-center justify-between px-4 py-3">
                     <div>
                       <Label htmlFor="job-alerts" className="text-sm font-medium">New Job Matches</Label>

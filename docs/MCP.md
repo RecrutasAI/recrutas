@@ -28,6 +28,7 @@ claude mcp add --transport http recrutas https://www.recrutas.ai/api/mcp \
 | `list_my_applications` | Applications with posting state (still posted / taken down / reposted) |
 | `record_application` | Record that you applied (only after you confirm); idempotent |
 | `why_no_replies` | Diagnosis of your applications and one next step |
+| `my_week` | This week: what you applied to, what happened, new jobs you qualify for |
 
 The connector never applies on your behalf.
 
