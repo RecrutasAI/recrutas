@@ -841,6 +841,7 @@
       const BATCH = 45;
       const actions = [];
       let resumeUrl;
+      let resumeMissing = false;
       for (let start = 0; start < fields.length; start += BATCH) {
         if (btn && fields.length > BATCH) {
           btn.textContent = `AI filling… (${Math.min(start + BATCH, fields.length)}/${fields.length} fields)`;
@@ -871,6 +872,7 @@
 
         actions.push(...(response.actions || []));
         resumeUrl = resumeUrl || response.resumeUrl;
+        resumeMissing = resumeMissing || !!response.resumeMissing;
       }
 
       if (!actions || actions.length === 0) {
@@ -892,7 +894,10 @@
         success: filled > 0,
       }).catch(() => {});
 
-      if (filled === 0) {
+      const wantsResume = actions.some(a => a.action === 'upload_resume');
+      if (wantsResume && resumeMissing) {
+        showBanner('Your resume file is missing. Upload it again in Recrutas, then attach it here.', 'warning');
+      } else if (filled === 0) {
         showBanner('Could not fill any fields — try a different page', 'warning');
       } else if (failed.length > 0) {
         showBanner(`Filled ${filled} field${filled !== 1 ? 's' : ''} · ${failed.length} skipped — review before submitting`, 'success');

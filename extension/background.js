@@ -258,15 +258,15 @@ async function fillFormAI(fields, jobContext) {
 
 // ── Download resume ──────────────────────────────────────────────────────────
 
-// Name the uploaded résumé file "First_Last_resume.ext" (recruiters expect a
-// human-readable name, not the storage UUID). Falls back to the stored userName,
-// then to a bare "resume". Preserves the real extension (pdf/docx/etc).
+// Name the uploaded resume file "First_Last_resume.ext" (recruiters expect a
+// human-readable name, not the storage UUID). Falls back to the stored userName
+// (unless it's an email), then to "Resume". Preserves the real extension.
 async function buildResumeFilename(originalName, mimeType) {
   let ext = '';
   const m = /\.([a-z0-9]{1,5})$/i.exec(originalName || '');
   if (m) ext = m[1].toLowerCase();
   if (!ext) {
-    ext = /word|officedocument|msword/i.test(mimeType || '') ? 'docx' : 'pdf';
+    ext = /officedocument/i.test(mimeType || '') ? 'docx' : /msword/i.test(mimeType || '') ? 'doc' : 'pdf';
   }
 
   let first = '';
@@ -277,7 +277,9 @@ async function buildResumeFilename(originalName, mimeType) {
       first = profileCache.firstName || '';
       last = profileCache.lastName || '';
     }
-    if (!first && !last && userName) {
+    // userName falls back to the email when there's no name; an address
+    // never belongs in the file name recruiters see.
+    if (!first && !last && userName && !String(userName).includes('@')) {
       const parts = String(userName).trim().split(/\s+/);
       first = parts[0] || '';
       last = parts.slice(1).join(' ');
@@ -292,8 +294,8 @@ async function buildResumeFilename(originalName, mimeType) {
       .replace(/[^A-Za-z0-9]+/g, '_')
       .replace(/^_+|_+$/g, '');
 
-  const base = [sanitize(first), sanitize(last), 'resume'].filter(Boolean).join('_');
-  return `${base || 'resume'}.${ext}`;
+  const named = [sanitize(first), sanitize(last)].filter(Boolean);
+  return named.length ? `${[...named, 'resume'].join('_')}.${ext}` : `Resume.${ext}`;
 }
 
 async function downloadResume(url) {

@@ -64,6 +64,7 @@ import { eq, desc, asc, and, or } from "drizzle-orm";
 import { getTableColumns } from "drizzle-orm/utils";
 import { sql, isNotNull, type SQL } from "drizzle-orm/sql";
 import { inArray } from "drizzle-orm/sql/expressions";
+import { resolveCandidateName, type PersonName } from "./lib/candidate-name";
 import { jobPostUrlSqlCondition } from "./lib/job-post-url";
 import { supabaseAdmin } from "./lib/supabase-admin";
 import { extractHardRequirements, verdictFor, yearsFromPositions, type CandidateFacts, type HardRequirements } from './lib/hard-requirements';
@@ -88,6 +89,7 @@ export interface IStorage {
 
   // Candidate operations
   getCandidateUser(userId: string): Promise<CandidateProfile | undefined>;
+  fillCandidateNameIfMissing(userId: string, authMetadata?: Record<string, unknown> | null): Promise<PersonName | null>;
   upsertCandidateUser(profile: InsertCandidateProfile): Promise<CandidateProfile>;
   getAllCandidateUsers(): Promise<CandidateProfile[]>;
   getCandidatesForParseRetry(limit: number): Promise<CandidateProfile[]>;
@@ -710,6 +712,33 @@ export class DatabaseStorage implements IStorage {
       console.error('Error fetching candidate profile:', error);
       throw error;
     }
+  }
+
+  /**
+   * Saves the candidate's name on their profile when it's blank, from their
+   * account row, sign-in metadata (incl. Google's full_name) or parsed resume.
+   * The extension names the attached resume file from it; without it, files
+   * went out named after the email address. Never overwrites a typed name.
+   */
+  async fillCandidateNameIfMissing(userId: string, authMetadata?: Record<string, unknown> | null): Promise<PersonName | null> {
+    const [row] = await db.select({
+      pf: candidateProfiles.firstName, pl: candidateProfiles.lastName,
+      parsed: candidateProfiles.resumeParsingData,
+      uf: users.first_name, ul: users.last_name,
+    }).from(candidateProfiles).leftJoin(users, eq(users.id, candidateProfiles.userId))
+      .where(eq(candidateProfiles.userId, userId));
+    if (!row) {return null;}
+    if ((row.pf || '').trim()) {return { firstName: row.pf!.trim(), lastName: (row.pl || '').trim() };}
+    const name = resolveCandidateName({
+      user: { firstName: row.uf, lastName: row.ul },
+      authMetadata,
+      resumeName: (row.parsed as any)?.personalInfo?.name,
+    });
+    if (!name) {return null;}
+    await db.update(candidateProfiles)
+      .set({ firstName: name.firstName, lastName: name.lastName || null })
+      .where(and(eq(candidateProfiles.userId, userId), sql`coalesce(trim(${candidateProfiles.firstName}), '') = ''`));
+    return name;
   }
 
   async upsertCandidateUser(profile: InsertCandidateProfile): Promise<CandidateProfile> {
