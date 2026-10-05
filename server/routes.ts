@@ -851,6 +851,34 @@ export async function registerRoutes(app: Express): Promise<Express> {
     }
   }));
 
+  // Homepage "your market": a role's live jobs and how many this visitor can
+  // actually apply to, from their answers (nothing is stored), plus what's moving.
+  app.get('/api/platform/my-market', rateLimit({ windowMs: 60 * 1000, max: 30 }), asyncHandler(async (req, res) => {
+    const clean = (v: unknown, max: number) =>
+      typeof v === 'string' ? v.toLowerCase().replace(/[^a-z0-9 +#./&'-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) : '';
+    const yn = (v: unknown): 'yes' | 'no' | undefined => (v === 'yes' || v === 'no' ? v : undefined);
+    const words = clean(req.query.q, 60).split(' ').filter(w => w.length >= 2).slice(0, 5);
+    const location = clean(req.query.location, 40);
+    const yearsRaw = Number(req.query.years);
+    const facts = {
+      usCitizen: yn(req.query.citizen), needsSponsorship: yn(req.query.sponsorship), hasClearance: yn(req.query.clearance),
+      years: Number.isFinite(yearsRaw) && req.query.years !== '' && req.query.years !== undefined ? Math.max(0, Math.min(40, Math.round(yearsRaw))) : undefined,
+    };
+    if (!db) {return res.status(503).json({ message: 'Temporarily unavailable' });}
+    try {
+      const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('My market timeout')), 15000));
+      const result = await Promise.race([
+        storage.personalMarket({ words, location: location.length >= 2 ? location : undefined, remoteOnly: req.query.remote === '1' }, facts),
+        timeout,
+      ]);
+      res.set('Cache-Control', 'public, max-age=60, s-maxage=120, stale-while-revalidate=600');
+      res.json(result);
+    } catch (error) {
+      console.error('Error in my-market:', error);
+      res.status(503).json({ message: 'Temporarily unavailable' });
+    }
+  }));
+
   // "Is this job still real?" — database lookup of a pasted posting URL.
   // The URL is never fetched.
   app.get('/api/platform/check-job', rateLimit({ windowMs: 60 * 1000, max: 20 }), asyncHandler(async (req, res) => {

@@ -10,6 +10,9 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 
 # Scrape ATS Jobs — every 4 hours
 0 */4 * * * $RUN scrape-ats-jobs 60 npx tsx scripts/scrape-all-company-jobs.ts
+# Read hard requirements (clearance, citizenship, sponsorship, years) for jobs
+# the sweep just added. Feeds the homepage "your market" number and verdicts.
+45 */4 * * * $RUN compute-job-requirements 30 npx tsx scripts/compute-job-requirements.ts
 
 # Batch Embeddings (JOBS) — every 6h. The local provider (EMBED_PROVIDER=local,
 # bge-small) has no quota, so cadence is driven by feed freshness rather than by

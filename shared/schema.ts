@@ -889,6 +889,20 @@ export type WaitlistEntry = typeof waitlistEntries.$inferSelect;
 // Lightweight counter table: one row per user per action per day.
 // Checked before expensive operations (resume upload, job post, application).
 
+// Hard requirements read from each posting (lib/hard-requirements.ts). Own
+// table so filling it never rewrites job_postings rows. See
+// migrations/add-job-hard-requirements.sql and scripts/compute-job-requirements.ts.
+export const jobHardRequirements = pgTable("job_hard_requirements", {
+  jobId: integer("job_id").primaryKey().references(() => jobPostings.id, { onDelete: 'cascade' }),
+  clearance: varchar("clearance", { length: 16 }),
+  obtainable: boolean("obtainable").notNull().default(false),
+  usCitizen: boolean("us_citizen").notNull().default(false),
+  usPerson: boolean("us_person").notNull().default(false),
+  noSponsorship: boolean("no_sponsorship").notNull().default(false),
+  minYears: integer("min_years"), // SMALLINT in the database
+  computedAt: timestamp("computed_at").notNull().defaultNow(),
+});
+
 // Personal access tokens (MCP connector). Only a SHA-256 hash is stored; see
 // migrations/add-api-tokens.sql and server/services/api-token.service.ts.
 export const apiTokens = pgTable("api_tokens", {
