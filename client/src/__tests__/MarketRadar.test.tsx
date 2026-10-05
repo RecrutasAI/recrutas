@@ -37,7 +37,8 @@ describe('index helpers', () => {
   it('says what Recrutas does with each movement', () => {
     expect(valueFor(ev({ type: 'taken_down' }))).toBe("Applied? We'd tell you it closed.");
     expect(valueFor(ev({ type: 'reposted' }))).toBe("Applied? We'd tell you they're still looking.");
-    expect(valueFor(ev({ flags: ['secret clearance'] }))).toBe("We'd flag it before you apply: secret clearance.");
+    expect(valueFor(ev({ flags: ['secret clearance', '5+ yrs'] }))).toBe("Needs secret clearance. We'd flag that before you apply.");
+    expect(valueFor(ev({ flags: ['4+ yrs'] }))).toBe("Asks for 4+ years. We'd check that against your resume.");
     expect(valueFor(ev({}))).toBe("We'd match it to your resume within hours.");
   });
 });
@@ -57,11 +58,19 @@ describe('MarketRadar', () => {
     expect(within(radar).getByText('▼ 386 taken down')).toBeInTheDocument();
     expect(within(radar).getByText('last sweep 4m ago · next in 18 min')).toBeInTheDocument();
     expect(within(radar).getByRole('img')).toHaveAttribute('aria-label', expect.stringContaining('Live jobs over the last 7 days'));
-    // The stream replays oldest first: the C3EL take-down passes first, with what we'd do about it.
+    // Newest first, openings and take-downs alternating: the PubMatic opening passes first.
     const stream = within(radar).getByTestId('index-stream');
-    expect(stream).toHaveTextContent('▼ Taken down');
-    expect(stream).toHaveTextContent('Sr Help Desk');
-    expect(stream).toHaveTextContent("Applied? We'd tell you it closed.");
+    expect(stream).toHaveTextContent('▲ Opened');
+    expect(stream).toHaveTextContent('IT Support Engineer');
+    expect(stream).toHaveTextContent("We'd match it to your resume within hours.");
     expect(within(radar).getByText('Replaying the latest changes detected on company boards')).toBeInTheDocument();
+  });
+});
+
+describe('stream order', () => {
+  it('alternates openings and take-downs', async () => {
+    const { interleave } = await import('../components/site/market-radar');
+    const order = interleave([{ type: 'new' }, { type: 'new' }, { type: 'taken_down' }, { type: 'reposted' }, { type: 'taken_down' }]).map(e => e.type);
+    expect(order).toEqual(['new', 'taken_down', 'new', 'taken_down', 'reposted']);
   });
 });
