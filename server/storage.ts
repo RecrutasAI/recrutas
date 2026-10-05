@@ -66,7 +66,7 @@ import { sql, isNotNull, type SQL } from "drizzle-orm/sql";
 import { inArray } from "drizzle-orm/sql/expressions";
 import { jobPostUrlSqlCondition } from "./lib/job-post-url";
 import { supabaseAdmin } from "./lib/supabase-admin";
-import { extractHardRequirements, verdictFor, yearsFromPositions, type CandidateFacts } from './lib/hard-requirements';
+import { extractHardRequirements, verdictFor, yearsFromPositions, type CandidateFacts, type HardRequirements } from './lib/hard-requirements';
 import { normalizeSkills, parseSkillsInput } from "./skill-normalizer";
 import { scoreJob, computeRecencyScore, getFreshnessLabel, inferJobLevel, getRoleTitleKeywords } from "./job-scorer";
 
@@ -393,6 +393,7 @@ export interface RadarEvent {
   workType: string | null;
   externalUrl: string | null;
   flags: string[];                  // stated hard requirements, e.g. "no sponsorship"
+  req?: HardRequirements;           // parsed requirements (server-side use; stripped from public responses)
 }
 export interface MarketRadar {
   scope: 'role' | 'market';         // 'market' when the role had no events this week
@@ -407,6 +408,24 @@ export interface MarketRadar {
   series: { t: string; opened: number; closed: number; live: number }[];
   openedLast24h: number;
   closedLast24h: number;
+}
+
+/** Homepage "your market": a role's live jobs, how many the visitor can actually apply to, and what's moving. */
+export interface VisitorFacts { usCitizen?: 'yes' | 'no'; needsSponsorship?: 'yes' | 'no'; hasClearance?: 'yes' | 'no'; years?: number }
+export interface PersonalMarket {
+  scope: 'role' | 'market';
+  live: number;
+  answered: boolean;                    // the visitor gave at least one fact
+  eligible: number | null;              // live jobs with no stated requirement that rules them out
+  restrictedShare: number;              // share requiring citizenship/US person/clearance (for the unanswered state)
+  shutOut: { citizenship: number; clearance: number; sponsorship: number; years: number };
+  coverage: number;                     // share of live jobs whose requirements have been read
+  openedLast24h: number;
+  closedLast24h: number;
+  sparkline: number[];                  // live count at the end of each of the last 7 days
+  lastBoardRead: string | null;
+  nextBoardRead: string;
+  events: Array<Omit<RadarEvent, 'req'> & { verdict: { label: 'apply' | 'stretch' | 'skip' | 'closed'; reason: string } }>;
 }
 
 export interface JobUrlCheck {
@@ -1048,6 +1067,7 @@ export class DatabaseStorage implements IStorage {
       title: String(e.title).trim(), company: displayCompanyName(e.company, String(e.title)),
       location: e.location, workType: e.work_type, externalUrl: e.external_url,
       flags: type === 'taken_down' ? [] : flagsOf(e.description || ''),
+      ...(type === 'taken_down' ? {} : { req: extractHardRequirements(e.description || '') }),
     });
     const events = [
       ...(r.opened ?? []).map((e: any) => shape(e, e.reposted ? 'reposted' : 'new')),
@@ -1094,6 +1114,70 @@ export class DatabaseStorage implements IStorage {
       series,
       openedLast24h: last24.reduce((n, b) => n + b.opened, 0),
       closedLast24h: last24.reduce((n, b) => n + b.closed, 0),
+    };
+  }
+
+  /**
+   * The homepage "your market": for a role and the visitor's answers, how many
+   * live jobs they can actually apply to and what shuts them out, plus what's
+   * moving (from marketRadar) with a verdict for them on each passing job.
+   * An unanswered question never counts against them. Clearance: only an
+   * active Secret or above shuts someone out (Public Trust is post-offer).
+   */
+  async personalMarket(opts: { words: string[]; location?: string; remoteOnly?: boolean }, facts: VisitorFacts): Promise<PersonalMarket> {
+    const radar = await this.marketRadar(opts);
+    const words = radar.scope === 'role' ? opts.words : [];
+    const likeEsc = (v: string) => v.replace(/[\\%_]/g, c => `\\${c}`);
+    const conds = [sql`job_postings.status = 'active'`, sql`job_postings.source LIKE 'ATS:%'`, ...words.map(w => w.length >= 3
+      ? sql`job_postings.title ILIKE ${'%' + likeEsc(w) + '%'}`
+      : sql`job_postings.title ~* ${'\\m' + w.replace(/[^a-z0-9]/gi, '') + '\\M'}`)];
+    if (opts.location) {conds.push(sql`job_postings.location ILIKE ${'%' + likeEsc(opts.location) + '%'}`);}
+    if (opts.remoteOnly) {conds.push(sql`job_postings.work_type = 'remote'`);}
+    const notCitizen = facts.usCitizen === 'no';
+    const needsVisa = facts.needsSponsorship === 'yes';
+    const noClearance = facts.hasClearance === 'no';
+    const years = typeof facts.years === 'number' && facts.years >= 0 ? facts.years : null;
+    const citizenshipBlock = notCitizen
+      ? (needsVisa ? sql`(r.us_citizen OR r.obtainable OR r.us_person)` : sql`(r.us_citizen OR r.obtainable)`)
+      : sql`false`;
+    const clearanceBlock = noClearance ? sql`(r.clearance IN ('secret', 'top_secret', 'ts_sci'))` : sql`false`;
+    const sponsorshipBlock = needsVisa ? sql`(r.no_sponsorship OR r.us_citizen OR r.us_person)` : sql`false`;
+    const yearsBlock = years !== null ? sql`(r.min_years IS NOT NULL AND r.min_years - ${years} >= 4)` : sql`false`;
+    const c = resultRows<any>(await db.execute(sql`
+      SELECT count(*)::int AS live,
+        count(r.job_id)::int AS read,
+        count(*) FILTER (WHERE r.us_citizen OR r.us_person OR r.obtainable OR r.clearance IN ('secret', 'top_secret', 'ts_sci'))::int AS restricted,
+        count(*) FILTER (WHERE COALESCE(${citizenshipBlock}, false))::int AS citizenship,
+        count(*) FILTER (WHERE COALESCE(${clearanceBlock}, false))::int AS clearance,
+        count(*) FILTER (WHERE COALESCE(${sponsorshipBlock}, false))::int AS sponsorship,
+        count(*) FILTER (WHERE COALESCE(${yearsBlock}, false))::int AS years,
+        count(*) FILTER (WHERE NOT COALESCE(${citizenshipBlock} OR ${clearanceBlock} OR ${sponsorshipBlock} OR ${yearsBlock}, false))::int AS eligible
+      FROM job_postings LEFT JOIN job_hard_requirements r ON r.job_id = job_postings.id
+      WHERE ${sql.join(conds, sql` AND `)} AND ${usPriorityOrder} <> 2`))[0] ?? {};
+    const answered = !!(facts.usCitizen || facts.needsSponsorship || facts.hasClearance || years !== null);
+    const candidateFacts: CandidateFacts = {
+      usCitizen: facts.usCitizen, needsSponsorship: facts.needsSponsorship,
+      securityClearance: facts.hasClearance === 'no' ? 'none' : undefined, years,
+    };
+    const events = radar.events.map(({ req, ...e }) => {
+      if (e.type === 'taken_down') {return { ...e, verdict: { label: 'closed' as const, reason: 'Closed. If you had applied, you would know now.' } };}
+      const v = verdictFor(req ?? extractHardRequirements(''), candidateFacts, 70);
+      const reason = v.label !== 'apply' ? v.reasons[0]
+        : v.toCheck.length ? `${v.toCheck[0]}. Tell us yours to check.`
+        : answered ? 'You qualify.' : 'No citizenship, clearance or sponsorship requirement stated.';
+      return { ...e, verdict: { label: v.label, reason } };
+    });
+    const days = radar.series.filter((_, i) => (radar.series.length - 1 - i) % 24 === 0).map(s => s.live);
+    const live = c.live ?? 0;
+    return {
+      scope: radar.scope, live, answered,
+      eligible: answered ? (c.eligible ?? 0) : null,
+      restrictedShare: live ? (c.restricted ?? 0) / live : 0,
+      shutOut: { citizenship: c.citizenship ?? 0, clearance: c.clearance ?? 0, sponsorship: c.sponsorship ?? 0, years: c.years ?? 0 },
+      coverage: live ? (c.read ?? 0) / live : 0,
+      openedLast24h: radar.openedLast24h, closedLast24h: radar.closedLast24h,
+      sparkline: days, lastBoardRead: radar.lastBoardRead, nextBoardRead: radar.nextBoardRead,
+      events,
     };
   }
 

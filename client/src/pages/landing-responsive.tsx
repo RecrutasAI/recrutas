@@ -7,7 +7,7 @@ import {
   SiteShell, Band, SectionLabel, Tag, PrimaryButton, useSiteNav,
 } from "@/components/site/site-shell";
 import { getUserRole } from "@/lib/auth-role";
-import { MarketRadar } from "@/components/site/market-radar";
+import { PersonalMarket } from "@/components/site/personal-market";
 
 const RULE = "border-neutral-200 dark:border-neutral-800";
 
@@ -54,7 +54,7 @@ export default function LandingResponsive() {
   return (
     <SiteShell active="home">
       <Hero onStart={goToApp} />
-      <MarketRadar onStart={goToApp} />
+      <PersonalMarket onStart={goToApp} />
       <HowItWorks />
       <WhyRecrutas />
       <EmployerInterest />

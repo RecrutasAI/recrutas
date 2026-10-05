@@ -65,6 +65,7 @@ import { Label } from "@/components/ui/label";
 import { useTheme } from "@/components/theme-provider";
 import { AccountSettings } from "@/components/account-settings";
 import { ApplicationAnswers } from "@/components/application-answers";
+import { useCarryDemoAnswers } from "@/lib/demo-answers";
 import { AiConnectorSettings } from "@/components/ai-connector-settings";
 
 interface DashboardStats {
@@ -99,6 +100,7 @@ export default function CandidateStreamlinedDashboard() {
   const supabase = useSupabaseClient();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  useCarryDemoAnswers(isAuthenticated && !isLoading);
   const [activeTab, setActiveTab] = useState<'jobs' | 'saved' | 'applications' | 'profile' | 'agent'>('jobs');
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
