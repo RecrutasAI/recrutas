@@ -1,10 +1,10 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, ArrowUpRight } from "lucide-react";
+import { ArrowRight, Bell, ShieldCheck, Target } from "lucide-react";
 import { Band, SectionLabel, PrimaryButton } from "@/components/site/site-shell";
 
 const RULE = "border-neutral-200 dark:border-neutral-800";
-const ROLE_SUGGESTIONS = ["software engineer", "it support", "data analyst", "product manager", "nurse", "sales"];
+const ROLE_SUGGESTIONS = ["software engineer", "it support", "data analyst", "nurse", "sales"];
 
 export interface RadarEvent {
   type: "new" | "taken_down" | "reposted";
@@ -25,13 +25,10 @@ export interface MarketRadarData {
   lastBoardRead: string | null;
   nextBoardRead?: string;
   events: RadarEvent[];
+  series?: { t: string; opened: number; closed: number; live: number }[];
+  openedLast24h?: number;
+  closedLast24h?: number;
 }
-
-const BADGE: Record<RadarEvent["type"], { label: string; cls: string; note: string }> = {
-  new: { label: "Opened", cls: "text-emerald-700 bg-emerald-50 border-emerald-200 dark:text-emerald-300 dark:bg-emerald-500/10 dark:border-emerald-500/30", note: "" },
-  taken_down: { label: "Taken down", cls: "text-neutral-600 bg-neutral-100 border-neutral-300 dark:text-neutral-300 dark:bg-neutral-800 dark:border-neutral-700", note: "likely filled" },
-  reposted: { label: "Reposted", cls: "text-amber-800 bg-amber-50 border-amber-200 dark:text-amber-300 dark:bg-amber-500/10 dark:border-amber-500/30", note: "posted again" },
-};
 
 export function until(iso: string | undefined, now = Date.now()): string {
   if (!iso) {return "";}
@@ -47,12 +44,6 @@ export function ago(iso: string | null, now = Date.now()): string {
   return h < 48 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
 }
 
-const place = (e: RadarEvent) => {
-  if (!e.location?.trim()) {return e.workType === "remote" ? "Remote" : "";}
-  const parts = e.location.split(/\s*[|;•]\s*/).filter(Boolean);
-  return parts.length > 1 ? `${parts[0].trim()} +${parts.length - 1}` : e.location.trim();
-};
-
 /** One row per posting: the same role at the same company in several cities is one event with a count. */
 export function collapseEvents(events: RadarEvent[]): Array<RadarEvent & { count: number }> {
   const out: Array<RadarEvent & { count: number }> = [];
@@ -63,31 +54,47 @@ export function collapseEvents(events: RadarEvent[]): Array<RadarEvent & { count
   return out;
 }
 
-const keyOf = (e: RadarEvent) => `${e.type}|${e.title}|${e.company}|${e.at}`;
+const W = 1000, H = 300, LINE_TOP = 16, LINE_BOTTOM = 200, VOL_MID = 250, VOL_HALF = 40;
+
+export interface ChartBar { kind: "opened" | "closed"; x: number; y: number; h: number; w: number }
+
+/** SVG geometry for the index: the live-jobs line and opened/closed volume bars. Pure, for testing. */
+export function chartGeometry(series: NonNullable<MarketRadarData["series"]>) {
+  if (series.length < 2) {return null;}
+  const lives = series.map(s => s.live);
+  const lo = Math.min(...lives), hi = Math.max(...lives);
+  const pad = Math.max(1, (hi - lo) * 0.12);
+  const y = (v: number) => LINE_BOTTOM - ((v - (lo - pad)) / ((hi + pad) - (lo - pad))) * (LINE_BOTTOM - LINE_TOP);
+  const x = (i: number) => (i / (series.length - 1)) * W;
+  const line = series.map((s, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(s.live).toFixed(1)}`).join(" ");
+  const area = `${line} L${W},${LINE_BOTTOM} L0,${LINE_BOTTOM} Z`;
+  const maxVol = Math.max(1, ...series.map(s => Math.max(s.opened, s.closed)));
+  const barW = Math.max(1.5, W / series.length - 1.5);
+  const bars: ChartBar[] = series.flatMap((s, i) => [
+    ...(s.opened ? [{ kind: "opened" as const, x: x(i) - barW / 2, y: VOL_MID - (s.opened / maxVol) * VOL_HALF, h: (s.opened / maxVol) * VOL_HALF, w: barW }] : []),
+    ...(s.closed ? [{ kind: "closed" as const, x: x(i) - barW / 2, y: VOL_MID, h: (s.closed / maxVol) * VOL_HALF, w: barW }] : []),
+  ]);
+  const days = series.map((s, i) => ({ i, d: new Date(s.t) })).filter(({ d }) => d.getHours() === 0)
+    .map(({ i, d }) => ({ x: x(i), label: d.toLocaleDateString("en-US", { weekday: "short" }) }));
+  return { line, area, bars, days, last: { x: W, y: y(lives[lives.length - 1]) }, hi, lo };
+}
 
 /**
- * The homepage radar: real events Recrutas detected on company job boards
- * this week, for a role or the whole market. Postings that opened, were taken
- * down, or came back as reposts, with the hard requirements they state.
- * Refreshes every two minutes; new events slide in.
+ * The homepage job index: live jobs over the last 7 days, moving like a stock
+ * chart, with what opened and closed each hour and a ticker of real events.
+ * Everything shown is real data from company job boards. Below it, what
+ * Recrutas does with each movement for the person using it.
  */
 export function MarketRadar({ onStart }: { onStart: () => void }) {
   const [role, setRole] = useState("");
-  const [city, setCity] = useState("");
-  const [remote, setRemote] = useState(false);
-  const [query, setQuery] = useState({ q: "", location: "", remote: false });
-  const seen = useRef<Set<string>>(new Set());
+  const [query, setQuery] = useState("");
 
   const radar = useQuery<MarketRadarData>({
     queryKey: ["/api/platform/radar", query],
     queryFn: async () => {
-      const p = new URLSearchParams();
-      if (query.q) {p.set("q", query.q);}
-      if (query.location) {p.set("location", query.location);}
-      if (query.remote) {p.set("remote", "1");}
-      const res = await fetch(`/api/platform/radar?${p}`);
+      const res = await fetch(`/api/platform/radar${query ? `?q=${encodeURIComponent(query)}` : ""}`);
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) {throw new Error(res.status === 429 ? "Lots of searches in a short time. Try again in a minute." : body.message || "The radar is unavailable right now.");}
+      if (!res.ok) {throw new Error(res.status === 429 ? "Lots of searches in a short time. Try again in a minute." : body.message || "The index is unavailable right now.");}
       return body;
     },
     refetchInterval: 120_000,
@@ -95,139 +102,149 @@ export function MarketRadar({ onStart }: { onStart: () => void }) {
     retry: false,
   });
 
-  const rows = useMemo(() => collapseEvents(radar.data?.events ?? []), [radar.data]);
-  // Events that arrived after the first load of this query get a highlight.
-  const fresh = useMemo(() => {
-    const keys = rows.map(r => keyOf(r));
-    const firstLoad = seen.current.size === 0;
-    const isFresh = new Set(firstLoad ? [] : keys.filter(k => !seen.current.has(k)));
-    keys.forEach(k => seen.current.add(k));
-    return isFresh;
-  }, [rows]);
-
-  const run = (q = role, location = city, r = remote) => {
-    seen.current = new Set();
-    setQuery({ q: q.trim(), location: location.trim(), remote: r });
-  };
   const d = radar.data;
-  const label = query.q ? `"${query.q}"${query.location ? ` · ${query.location}` : ""}${query.remote ? " · remote" : ""}` : "all roles";
+  const geo = useMemo(() => (d?.series ? chartGeometry(d.series) : null), [d]);
+  const ticker = useMemo(() => collapseEvents(d?.events ?? []), [d]);
+  const name = d?.scope === "role" && query ? query : "all roles";
+  const run = (q: string) => { setRole(q); setQuery(q.trim()); };
 
   return (
     <Band id="live" inner="px-4 sm:px-10 py-14 sm:py-20">
       <style>{`
-        @keyframes radar-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
-        .radar-row { animation: radar-in .45s ease-out both; }
-        @keyframes radar-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
-        .radar-sweep { animation: radar-sweep 3.2s linear infinite; }
-        @media (prefers-reduced-motion: reduce) { .radar-row, .radar-sweep { animation: none; } }
+        @keyframes idx-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+        .idx-line { stroke-dasharray: 1; animation: idx-draw 2.2s ease-out both; }
+        @keyframes idx-fade { from { opacity: 0; } to { opacity: 1; } }
+        .idx-fill, .idx-bars { animation: idx-fade 1.6s ease-out .4s both; }
+        @keyframes idx-tape { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+        .idx-tape { animation: idx-tape 60s linear infinite; }
+        .idx-tape-wrap:hover .idx-tape { animation-play-state: paused; }
+        @media (prefers-reduced-motion: reduce) { .idx-line, .idx-fill, .idx-bars, .idx-tape { animation: none; stroke-dasharray: none; } }
       `}</style>
-      <SectionLabel>Live radar</SectionLabel>
-      <h2 className="text-3xl sm:text-5xl font-semibold tracking-[-0.035em] max-w-3xl mb-3">Watch the job market move.</h2>
+      <SectionLabel>Live index</SectionLabel>
+      <h2 className="text-3xl sm:text-5xl font-semibold tracking-[-0.035em] max-w-3xl mb-3">The job market, live.</h2>
       <p className="text-lg text-neutral-600 dark:text-neutral-400 max-w-2xl mb-8">
-        We read company job boards around the clock. See what just opened, what just closed, and what's being reposted for your role, with what each job really requires.
+        Every hour, jobs open and jobs disappear. We read company job boards around the clock so you see it as it happens, and so you never apply into the void.
       </p>
 
-      <form onSubmit={(e) => { e.preventDefault(); run(); }} className={`grid sm:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_auto_auto] border ${RULE}`}>
-        <label className="sr-only" htmlFor="radar-role">Role</label>
-        <input id="radar-role" value={role} onChange={(e) => setRole(e.target.value)} placeholder="Your role, e.g. it support" maxLength={60}
-          className={`h-12 px-4 bg-transparent text-[15px] outline-none placeholder:text-neutral-400 border-b sm:border-b-0 sm:border-r ${RULE}`} />
-        <label className="sr-only" htmlFor="radar-city">City</label>
-        <input id="radar-city" value={city} onChange={(e) => setCity(e.target.value)} placeholder="City (optional)" maxLength={40}
-          className={`h-12 px-4 bg-transparent text-[15px] outline-none placeholder:text-neutral-400 border-b sm:border-b-0 sm:border-r ${RULE}`} />
-        <button type="button" aria-pressed={remote} onClick={() => setRemote(!remote)}
-          className={`h-12 px-4 font-geist-mono text-[11px] uppercase tracking-[0.14em] border-b sm:border-b-0 sm:border-r ${RULE} transition-colors ${remote ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400" : "text-neutral-500 hover:text-neutral-900 dark:hover:text-white"}`}>
-          {remote ? "✓ " : ""}Remote only
-        </button>
-        <button type="submit" className="h-12 px-6 bg-emerald-600 text-white text-[15px] font-medium hover:bg-emerald-500 transition-colors">Track</button>
-      </form>
-      <div className="flex flex-wrap gap-2 mt-3">
-        {ROLE_SUGGESTIONS.map((sug) => (
-          <button key={sug} onClick={() => { setRole(sug); run(sug); }}
-            className={`px-2.5 h-7 border ${RULE} font-geist-mono text-[10px] uppercase tracking-[0.12em] text-neutral-500 hover:text-neutral-900 dark:hover:text-white hover:border-neutral-900 dark:hover:border-white transition-colors`}>
-            {sug}
-          </button>
-        ))}
-      </div>
-
-      <div className={`mt-8 border ${RULE} bg-white dark:bg-black`} data-testid="market-radar">
-        {/* Status bar: what we're watching and when boards were last read. */}
-        <div className={`relative overflow-hidden flex items-center justify-between gap-3 px-4 sm:px-5 py-3 border-b ${RULE}`}>
-          <div aria-hidden className="radar-sweep pointer-events-none absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-emerald-500/10 to-transparent" />
-          <div className="relative flex items-center gap-2 font-geist-mono text-[11px] uppercase tracking-[0.14em]">
-            <span className="relative flex w-2 h-2">
-              <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-60 animate-ping" />
-              <span className="relative inline-flex w-2 h-2 rounded-full bg-emerald-500" />
-            </span>
-            Watching {label}
+      <div className={`border ${RULE} bg-white dark:bg-black`} data-testid="market-radar">
+        {/* Header: index name, live value, 24h change, sweep status. */}
+        <div className="flex flex-wrap items-end justify-between gap-4 px-4 sm:px-6 pt-5 pb-3">
+          <div>
+            <div className="flex items-center gap-2 font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500">
+              <span className="relative flex w-2 h-2">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-60 animate-ping" />
+                <span className="relative inline-flex w-2 h-2 rounded-full bg-emerald-500" />
+              </span>
+              Recrutas job index · {name}
+            </div>
+            <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+              <span className="font-geist-mono text-4xl sm:text-5xl tracking-tight tabular-nums" data-testid="index-live">{d ? d.live.toLocaleString() : "—"}</span>
+              <span className="text-sm text-neutral-500">live jobs</span>
+              {d && typeof d.openedLast24h === "number" && (
+                <span className="font-geist-mono text-sm tabular-nums">
+                  <span className="text-emerald-600 dark:text-emerald-400">▲ {d.openedLast24h.toLocaleString()} opened</span>
+                  <span className="text-neutral-400"> · </span>
+                  <span className="text-red-600 dark:text-red-400">▼ {(d.closedLast24h ?? 0).toLocaleString()} taken down</span>
+                  <span className="text-neutral-500"> · 24h</span>
+                </span>
+              )}
+            </div>
           </div>
-          <span className="relative font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500">
+          <span className="font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500">
             {d?.lastBoardRead ? `last sweep ${ago(d.lastBoardRead)}${d.nextBoardRead ? ` · next in ${until(d.nextBoardRead)}` : ""}` : "reading boards…"}
           </span>
         </div>
 
-        {radar.isError ? (
-          <p className="px-5 py-8 text-sm text-red-600 dark:text-red-400" role="alert">{(radar.error as Error).message}</p>
-        ) : !d ? (
-          <p className="px-5 py-10 font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500">Reading company boards…</p>
-        ) : (
-          <>
-            <dl className={`grid grid-cols-2 sm:grid-cols-4 border-b ${RULE}`}>
-              {[
-                [d.live.toLocaleString(), "live now"],
-                [`+${d.openedThisWeek.toLocaleString()}`, "opened this week"],
-                [`−${d.takenDownThisWeek.toLocaleString()}`, "taken down this week"],
-                [typeof d.medianLifetimeDays === "number" ? `${d.medianLifetimeDays}d` : "—", "a posting usually lasts"],
-              ].map(([v, l], i) => (
-                <div key={l} className={`px-4 sm:px-5 py-4 ${i % 2 ? "" : `border-r ${RULE}`} sm:border-r ${RULE} ${i === 3 ? "sm:border-r-0" : ""}`}>
-                  <dd className="font-geist-mono text-2xl sm:text-3xl tracking-tight tabular-nums">{v}</dd>
-                  <dt className="font-geist-mono text-[10px] sm:text-[11px] uppercase tracking-[0.14em] text-neutral-500 mt-1">{l}</dt>
-                </div>
+        {/* The chart. */}
+        <div className="px-2 sm:px-4">
+          {radar.isError ? (
+            <p className="px-3 py-16 text-sm text-red-600 dark:text-red-400" role="alert">{(radar.error as Error).message}</p>
+          ) : !geo ? (
+            <div className="h-[220px] sm:h-[300px] flex items-center justify-center font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500">Reading company boards…</div>
+          ) : (
+            <svg key={query} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="w-full h-[220px] sm:h-[300px]" role="img"
+              aria-label={`Live jobs over the last 7 days for ${name}, from ${geo.lo.toLocaleString()} to ${geo.hi.toLocaleString()}`}>
+              <defs>
+                <linearGradient id="idx-grad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="rgb(16 185 129)" stopOpacity="0.28" />
+                  <stop offset="100%" stopColor="rgb(16 185 129)" stopOpacity="0" />
+                </linearGradient>
+              </defs>
+              {[0.25, 0.5, 0.75].map(f => (
+                <line key={f} x1="0" x2={W} y1={LINE_TOP + f * (LINE_BOTTOM - LINE_TOP)} y2={LINE_TOP + f * (LINE_BOTTOM - LINE_TOP)} className="stroke-neutral-200 dark:stroke-neutral-800" strokeWidth="1" vectorEffect="non-scaling-stroke" />
               ))}
-            </dl>
-            {d.scope === "market" && query.q && (
-              <p className="px-4 sm:px-5 py-2 text-sm text-neutral-500 border-b border-neutral-100 dark:border-neutral-900">
-                Nothing for "{query.q}" this week, so here's the whole market.
-              </p>
-            )}
-            <ul aria-live="polite" aria-label="Events detected on company job boards">
-              {rows.map((e, i) => {
-                const b = BADGE[e.type];
-                const linked = e.type !== "taken_down" && e.externalUrl;
-                const body = (
-                  <>
-                    <span className="font-geist-mono text-[11px] text-neutral-500 tabular-nums w-14 shrink-0">{ago(e.at)}</span>
-                    <span className={`shrink-0 border px-1.5 py-0.5 font-geist-mono text-[10px] uppercase tracking-[0.1em] ${b.cls}`}>{b.label}</span>
-                    <span className="min-w-0 flex-1">
-                      <span className="text-[15px] font-medium">{e.title}</span>
-                      {e.count > 1 && <span className="font-geist-mono text-xs text-neutral-500"> ×{e.count}</span>}
-                      <span className="text-sm text-neutral-600 dark:text-neutral-400"> · {e.company}{place(e) ? ` · ${place(e)}` : ""}{b.note ? ` · ${b.note}` : ""}</span>
-                      {e.flags.length > 0 && (
-                        <span className="flex flex-wrap gap-1 mt-1">
-                          {e.flags.map(f => <span key={f} className={`border ${RULE} px-1.5 font-geist-mono text-[10px] uppercase tracking-[0.08em] text-neutral-600 dark:text-neutral-400`}>{f}</span>)}
-                        </span>
-                      )}
-                    </span>
-                    {linked && <ArrowUpRight className="w-3.5 h-3.5 text-neutral-400 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />}
-                  </>
-                );
-                const cls = `group flex items-start gap-3 px-4 sm:px-5 py-3 ${fresh.has(keyOf(e)) ? "bg-emerald-50/70 dark:bg-emerald-500/[0.07]" : ""}`;
-                return (
-                  <li key={keyOf(e)} className={`radar-row ${i > 0 ? `border-t ${RULE}` : ""}`} style={{ animationDelay: `${Math.min(i, 12) * 70}ms` }}>
-                    {linked
-                      ? <a href={e.externalUrl!} target="_blank" rel="noopener noreferrer" className={`${cls} hover:bg-emerald-50/60 dark:hover:bg-emerald-500/[0.06] transition-colors`}>{body}</a>
-                      : <div className={cls}>{body}</div>}
-                  </li>
-                );
-              })}
-              {rows.length === 0 && <li className="px-5 py-8 text-sm text-neutral-500">No events this week. Try a broader role.</li>}
-            </ul>
-            <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-4 border-t ${RULE} bg-neutral-50 dark:bg-neutral-950`}>
-              <p className="text-sm text-neutral-600 dark:text-neutral-400 max-w-xl">
-                That's the market. Upload your resume to see which of these you'd actually get, and to hear the moment a job you applied to closes.
-              </p>
-              <PrimaryButton onClick={onStart}>Track my search <ArrowRight className="w-4 h-4" /></PrimaryButton>
+              <path d={geo.area} fill="url(#idx-grad)" className="idx-fill" />
+              <path d={geo.line} pathLength={1} fill="none" stroke="rgb(16 185 129)" strokeWidth="2.2" vectorEffect="non-scaling-stroke" className="idx-line" />
+              <g className="idx-bars">
+                <line x1="0" x2={W} y1={VOL_MID} y2={VOL_MID} className="stroke-neutral-200 dark:stroke-neutral-800" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                {geo.bars.map((b, i) => (
+                  <rect key={i} x={b.x} y={b.y} width={b.w} height={Math.max(1, b.h)} className={b.kind === "opened" ? "fill-emerald-500/80" : "fill-red-500/70"} />
+                ))}
+              </g>
+              {geo.days.map(t => (
+                <text key={t.x} x={t.x + 4} y={H - 2} className="fill-neutral-400 font-geist-mono" fontSize="11">{t.label}</text>
+              ))}
+              <circle cx={geo.last.x - 4} cy={geo.last.y} r="4" fill="rgb(16 185 129)">
+                <animate attributeName="r" values="4;7;4" dur="2s" repeatCount="indefinite" />
+              </circle>
+            </svg>
+          )}
+        </div>
+
+        {/* Ticker tape of real events. */}
+        {ticker.length > 0 && (
+          <div className={`idx-tape-wrap overflow-hidden border-y ${RULE} bg-neutral-50 dark:bg-neutral-950`} aria-label="Latest openings and take-downs">
+            <div className="idx-tape flex w-max">
+              {[0, 1].map(copy => (
+                <ul key={copy} className="flex shrink-0" aria-hidden={copy === 1}>
+                  {ticker.map((e, i) => (
+                    <li key={`${copy}-${i}`} className="flex items-center gap-2 px-5 py-2.5 whitespace-nowrap font-geist-mono text-xs">
+                      <span className={e.type === "taken_down" ? "text-red-600 dark:text-red-400" : e.type === "reposted" ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}>
+                        {e.type === "taken_down" ? "▼" : e.type === "reposted" ? "↻" : "▲"}
+                      </span>
+                      <span className="uppercase tracking-[0.08em] text-neutral-900 dark:text-white">{e.company}</span>
+                      <span className="text-neutral-600 dark:text-neutral-400">{e.title}{e.count > 1 ? ` ×${e.count}` : ""}</span>
+                      <span className="text-neutral-400">{e.type === "taken_down" ? "taken down" : e.type === "reposted" ? "reposted" : "opened"} {ago(e.at)}</span>
+                    </li>
+                  ))}
+                </ul>
+              ))}
             </div>
-          </>
+          </div>
+        )}
+
+        {/* What Recrutas does with each movement. */}
+        <div className="grid sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-neutral-200 dark:divide-neutral-800">
+          {[
+            { icon: Target, title: "A job opens", body: "We match it to your resume within hours of it appearing." },
+            { icon: ShieldCheck, title: "Before you apply", body: "We flag what rules you out: clearance, citizenship, sponsorship, years." },
+            { icon: Bell, title: "A job closes", body: "If you applied, we tell you. No more waiting on silence." },
+          ].map(v => (
+            <div key={v.title} className="px-4 sm:px-6 py-5">
+              <div className="flex items-center gap-2 mb-1.5">
+                <v.icon className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <h3 className="font-semibold tracking-tight">{v.title}</h3>
+              </div>
+              <p className="text-sm text-neutral-600 dark:text-neutral-400 leading-relaxed">{v.body}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-6 py-4 border-t ${RULE}`}>
+          <form onSubmit={(e) => { e.preventDefault(); run(role); }} className="flex flex-wrap items-center gap-2">
+            <label className="sr-only" htmlFor="radar-role">Your role</label>
+            <input id="radar-role" value={role} onChange={(e) => setRole(e.target.value)} placeholder="See your role, e.g. nurse" maxLength={60}
+              className={`h-9 w-48 px-3 bg-transparent text-sm border ${RULE} outline-none placeholder:text-neutral-400`} />
+            {ROLE_SUGGESTIONS.map(s => (
+              <button key={s} type="button" onClick={() => run(s)}
+                className={`h-7 px-2 border ${RULE} font-geist-mono text-[10px] uppercase tracking-[0.12em] text-neutral-500 hover:text-neutral-900 dark:hover:text-white`}>{s}</button>
+            ))}
+            {query && <button type="button" onClick={() => run("")} className="h-7 px-2 font-geist-mono text-[10px] uppercase tracking-[0.12em] text-neutral-500 underline">all roles</button>}
+          </form>
+          <PrimaryButton onClick={onStart}>Track my search <ArrowRight className="w-4 h-4" /></PrimaryButton>
+        </div>
+        {d?.scope === "market" && query && (
+          <p className="px-4 sm:px-6 pb-4 text-sm text-neutral-500">Not much for "{query}" this week, so this is the whole market.</p>
         )}
       </div>
     </Band>
