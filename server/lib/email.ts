@@ -7,6 +7,8 @@ interface SendEmailOptions {
   to: string;
   subject: string;
   html: string;
+  /** Extra headers, e.g. List-Unsubscribe (see lib/unsubscribe.ts). */
+  headers?: Record<string, string>;
 }
 
 export interface MatchedJob {
@@ -43,6 +45,7 @@ export async function sendEmail(opts: SendEmailOptions): Promise<void> {
       to: opts.to,
       subject: opts.subject,
       html: opts.html,
+      ...(opts.headers ? { headers: opts.headers } : {}),
     }),
   });
 
@@ -178,7 +181,11 @@ export function matchesReadyEmail(candidateName: string, matchCount: number, job
 
 // ── Shared base layout ────────────────────────────────────────────────────────
 
-function emailBase(body: string, footerNote = "You're receiving this as a Recrutas user."): string {
+// Physical postal address required in commercial email (CAN-SPAM). Set
+// EMAIL_POSTAL_ADDRESS on the VPS and Vercel; until then it is omitted.
+const postalAddress = (): string => (process.env.EMAIL_POSTAL_ADDRESS || '').trim();
+
+function emailBase(body: string, footerNote = "You're receiving this as a Recrutas user.", unsubscribeUrl?: string): string {
   return `
 <!DOCTYPE html>
 <html lang="en">
@@ -199,7 +206,7 @@ function emailBase(body: string, footerNote = "You're receiving this as a Recrut
 
   <!-- Footer -->
   <p style="margin:20px 0 40px;text-align:center;font-size:12px;color:#9ca3af;">
-    ${footerNote} · <a href="https://www.recrutas.ai" style="color:#6b7280;">recrutas.ai</a>
+    ${footerNote} · <a href="https://www.recrutas.ai" style="color:#6b7280;">recrutas.ai</a>${unsubscribeUrl ? ` · <a href="${unsubscribeUrl}" style="color:#6b7280;">Unsubscribe</a>` : ''}${postalAddress() ? `<br/>Recrutas · ${escapeHtml(postalAddress())}` : ''}
   </p>
 
 </div>
@@ -717,6 +724,7 @@ const escapeHtml = (s: string): string =>
 export function applicationUpdatesDigestEmail(
   firstName: string | null | undefined,
   items: Array<{ kind: 'closed' | 'reposted'; title: string; message: string }>,
+  unsubscribeUrl?: string,
 ): string {
   const greeting = firstName ? `Hi ${escapeHtml(firstName.split(' ')[0])},` : 'Hi,';
   const cards = items.map(i => `
@@ -736,7 +744,7 @@ export function applicationUpdatesDigestEmail(
         See your applications
       </a>
     </div>
-  `, "You're receiving this because you applied to these jobs. Turn off application updates in Settings.");
+  `, "You're receiving this because you applied to these jobs.", unsubscribeUrl);
 }
 
 /** The weekly summary: applications, what happened to them, new jobs they qualify for. */
@@ -751,6 +759,7 @@ export function weeklySummaryEmail(
     topMatches: Array<{ title: string; company: string; location: string | null }>;
     nextStep: string | null;
   },
+  unsubscribeUrl?: string,
 ): string {
   const e = escapeHtml;
   const greeting = firstName ? `Hi ${e(firstName.split(' ')[0])},` : 'Hi,';
@@ -783,5 +792,5 @@ export function weeklySummaryEmail(
   body += `<div style="text-align:center;margin:28px 0 8px;">
       <a href="https://www.recrutas.ai/candidate-dashboard" style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 24px;border-radius:8px;">Open your feed</a>
     </div>`;
-  return emailBase(body, "You're receiving this weekly summary because you used Recrutas this month. Turn off application updates in Settings.");
+  return emailBase(body, "You're receiving this weekly summary because you used Recrutas this month.", unsubscribeUrl);
 }

@@ -18,6 +18,7 @@ import { sql } from 'drizzle-orm/sql';
 import { storage } from '../storage';
 import { diagnoseCandidate } from './application-diagnosis.service';
 import { sendEmail, weeklySummaryEmail } from '../lib/email';
+import { unsubscribeHeaders, unsubscribeUrl } from '../lib/unsubscribe';
 
 const rows = (r: any): any[] => (r?.rows ?? r) as any[];
 const titleCase = (c: string) => (c === c.toLowerCase() ? c.replace(/\b\w/g, ch => ch.toUpperCase()) : c);
@@ -102,7 +103,7 @@ export async function eligibleCandidates(limit = 200): Promise<Array<{ id: strin
       AND jsonb_array_length(COALESCE(c.skills, '[]'::jsonb)) > 0
       AND (c.last_feed_visit > NOW() - INTERVAL '30 days'
            OR EXISTS (SELECT 1 FROM job_applications a WHERE a.candidate_id = u.id AND a.applied_at > NOW() - INTERVAL '30 days'))
-      AND COALESCE(p.email_notifications, true) AND COALESCE(p.application_updates, true)
+      AND COALESCE(p.email_notifications, true) AND COALESCE(p.application_updates, true) AND COALESCE(p.weekly_summary, true)
       AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.user_id = u.id AND n.type = 'weekly_summary'
                       AND n.created_at > NOW() - INTERVAL '6 days')
     ORDER BY u.id
@@ -122,7 +123,11 @@ export async function runWeeklySummaries(opts: { apply: boolean; log?: (s: strin
       const subject = summarySubject(summary);
       log(`[WeeklySummary] ${opts.apply ? 'send' : 'would send'} to ${c.id.slice(0, 8)}: ${subject}`);
       if (!opts.apply) {continue;}
-      await sendEmail({ to: c.email, subject, html: weeklySummaryEmail(c.firstName, summary) });
+      await sendEmail({
+        to: c.email, subject,
+        html: weeklySummaryEmail(c.firstName, summary, unsubscribeUrl(c.id, 'weekly')),
+        headers: unsubscribeHeaders(c.id, 'weekly'),
+      });
       // In-app copy, and the marker that stops a second send this week.
       await db.execute(sql`
         INSERT INTO notifications (user_id, type, title, message, data, priority)
