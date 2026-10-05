@@ -43,9 +43,9 @@ describe('PersonalMarket', () => {
   it('shows the live count and how many are restricted before any answers', async () => {
     serve(() => base);
     renderIt();
-    fireEvent.click(screen.getByRole('button', { name: 'it support' }));
+    fireEvent.click(screen.getByRole('button', { name: 'IT support' }));
     const head = await screen.findByTestId('pm-headline');
-    expect(head).toHaveTextContent('1,429 live it support jobs.');
+    expect(head).toHaveTextContent('1,429 live IT support jobs.');
     expect(head).toHaveTextContent('1 in 7 require US citizenship or a clearance.');
     expect(screen.getByText('Requires an active Secret clearance.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /See your matches/ })).toBeInTheDocument();
@@ -55,10 +55,10 @@ describe('PersonalMarket', () => {
     serve(q => (q.get('citizen') ? { ...base, answered: true, eligible: 1214, shutOut: { citizenship: 150, clearance: 40, sponsorship: 0, years: 25 } } : base));
     let started = false;
     renderIt(() => { started = true; });
-    fireEvent.click(screen.getByRole('button', { name: 'it support' }));
+    fireEvent.click(screen.getByRole('button', { name: 'IT support' }));
     await screen.findByTestId('pm-headline');
     fireEvent.click(screen.getAllByRole('button', { name: 'no' })[0]); // US citizen? no
-    await waitFor(() => expect(screen.getByTestId('pm-headline')).toHaveTextContent('You can apply to 1,214 of 1,429 live it support jobs.'));
+    await waitFor(() => expect(screen.getByTestId('pm-headline')).toHaveTextContent('You can apply to 1,214 of 1,429 live IT support jobs.'));
     expect(lastQuery?.get('citizen')).toBe('no');
     expect(screen.getByTestId('pm-shutout')).toHaveTextContent('150 need US citizenship');
     fireEvent.click(screen.getByRole('button', { name: /See the 1,214 you can apply to/ }));
@@ -69,7 +69,7 @@ describe('PersonalMarket', () => {
   it('says plainly when the search is rate-limited', async () => {
     server.use(http.get('/api/platform/my-market', () => HttpResponse.json({}, { status: 429 })));
     renderIt();
-    fireEvent.click(screen.getByRole('button', { name: 'nurse' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Nurse' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Try again in a minute');
   });
 });

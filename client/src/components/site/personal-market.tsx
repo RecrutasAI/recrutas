@@ -6,7 +6,7 @@ import { ago, until, collapseEvents, interleave, type RadarEvent } from "@/compo
 import { track } from "@/lib/analytics";
 
 const RULE = "border-neutral-200 dark:border-neutral-800";
-const ROLES = ["software engineer", "it support", "data analyst", "nurse", "sales", "product manager"];
+const ROLES = ["Software engineer", "IT support", "Data analyst", "Nurse", "Sales", "Product manager"];
 import { DEMO_ANSWERS_KEY } from "@/lib/demo-answers";
 
 type YN = "yes" | "no" | "";
