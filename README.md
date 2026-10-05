@@ -29,7 +29,7 @@ Job seekers send applications into silence. Recrutas is built to answer two ques
 | **Matched to your resume** | Upload a resume once; get up to 100 live matches ranked by your titles, skills and seniority, each with the reason it fits. |
 | **An honest verdict** | Every match is marked **Apply**, **Stretch** or **Skip**, with the reason: *requires an active Secret clearance*, *asks for 7 years, you have 4*, *won't sponsor a visa*. |
 | **Apply without retyping** | A browser extension (Firefox) fills application forms from your profile, screening answers included. You review and submit; nothing is ever sent for you. |
-| **Know what happened** | Recrutas watches every job you applied to and tells you when it's taken down or reposted, explains why you may not be hearing back, and sums up your week in the dashboard. |
+| **Know what happened** | Recrutas watches every job you applied to and tells you when it's taken down or reposted, explains why you may not be hearing back, and (over MCP) sums up your week. |
 | **Job-search log** | On unemployment? Your weekly log fills itself from your applications (Washington ESD format), with CSV and print. |
 | **In your AI tools** | An [MCP connector](https://www.recrutas.ai/docs) for Claude Code, Cursor and other MCP clients: ask which matches to apply to and what happened to your applications. |
 

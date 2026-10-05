@@ -49,7 +49,7 @@ describe('application posting state', () => {
 describe('application diagnosis', () => {
   it('shows findings and one next step', async () => {
     server.use(http.get('*/api/candidate/application-diagnosis', () => HttpResponse.json({
-      applications: 4, enoughData: true,
+      applications: 4, enoughData: true, answers: { replied: 0, takenDown: 0, reposted: 0, waiting: 4, waitingPastFollowUp: 2 },
       findings: ['None of your 4 applications has had a reply yet.', '2 are still posted with no reply after 14+ days.'],
       nextStep: { kind: 'follow_up', text: 'Follow up: 2 applications are past 14 days with the job still posted.' },
     })));
@@ -89,14 +89,14 @@ describe('job-search log', () => {
 });
 
 describe('applications overview', () => {
-  it('puts the totals and the week on one line, with what happened below', async () => {
-    server.use(http.get('*/api/candidate/weekly-summary', () => HttpResponse.json({
-      appliedThisWeek: [{ title: 'Help Desk', company: 'PubMatic' }], updates: [{ kind: 'taken_down', title: 'IT Support', company: 'Acme' }],
-      waiting: 4, waitingPastFollowUp: 2, newApplyMatches: 12, topMatches: [], nextStep: null,
+  it('shows the totals with how many are waiting', async () => {
+    server.use(http.get('*/api/candidate/application-diagnosis', () => HttpResponse.json({
+      applications: 1, enoughData: false, answers: { replied: 0, takenDown: 0, reposted: 0, waiting: 4, waitingPastFollowUp: 2 },
+      findings: [], nextStep: { kind: 'apply_more', text: 'Apply to a few more.' },
     })));
     renderWith([app(9, { title: 'Help Desk', company: 'PubMatic', location: 'Seattle, WA' }, { appliedAt: new Date().toISOString() })]);
-    expect(await screen.findByTestId('weekly-summary')).toHaveTextContent('This week: 1 applied · 12 new jobs you qualify for');
+    await screen.findByText(/4 waiting/);
     expect(screen.getByTestId('applications-totals')).toHaveTextContent('1 application · 4 waiting (2 past follow-up)');
-    expect(screen.getByTestId('weekly-updates')).toHaveTextContent('Taken down: IT Support at Acme');
+    expect(screen.queryByTestId('weekly-summary')).toBeNull();
   });
 });
