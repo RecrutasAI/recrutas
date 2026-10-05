@@ -11,7 +11,7 @@ import { phoneFromText } from "./lib/phone";
 import { recordReportedApplication, applicationForUrl } from "./services/application-tracking.service";
 import { diagnoseCandidate } from "./services/application-diagnosis.service";
 import { buildWeeklySummary } from "./services/weekly-summary.service";
-import { displayNameFromMetadata } from "./lib/candidate-name";
+import { displayNameFromMetadata, resumeFileName } from "./lib/candidate-name";
 import { verifyUnsubscribe } from "./lib/unsubscribe";
 import { createApiToken, listApiTokens, revokeApiToken, userForToken } from "./services/api-token.service";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -1838,6 +1838,36 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       console.error("Error fetching job stats:", error?.message);
       res.status(500).json({ message: "Failed to fetch statistics" });
     }
+  }));
+
+  // The resume on file, as recruiters receive it: the same file and the same
+  // name the extension attaches, with short-lived links to view or download it.
+  app.get('/api/candidate/resume-file', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const profile = await storage.getCandidateUser(req.user.id);
+    const key = (profile?.resumeUrl || '').trim();
+    if (!key) {return res.json({ onFile: false });}
+    const name = await storage.fillCandidateNameIfMissing(req.user.id, req.user.user_metadata).catch(() => null);
+    if (key.startsWith('http')) {
+      return res.json({ onFile: true, exists: true, fileName: resumeFileName(name, null), viewUrl: key, downloadUrl: key });
+    }
+    const bucket = supabaseAdmin.storage.from('resumes');
+    const { data: info } = await bucket.info(key);
+    if (!info) {return res.json({ onFile: true, exists: false });}
+    const anyInfo = info as any;
+    const contentType: string | null = anyInfo.contentType || anyInfo.metadata?.mimetype || null;
+    const fileName = resumeFileName(name, contentType);
+    const [view, download] = await Promise.all([
+      bucket.createSignedUrl(key, 300),
+      bucket.createSignedUrl(key, 300, { download: fileName }),
+    ]);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({
+      onFile: true, exists: true, fileName, contentType,
+      size: anyInfo.size ?? anyInfo.metadata?.size ?? null,
+      uploadedAt: anyInfo.createdAt || anyInfo.created_at || null,
+      viewUrl: view.data?.signedUrl || null,
+      downloadUrl: download.data?.signedUrl || null,
+    });
   }));
 
   // Get signed URL for resume (secure access)

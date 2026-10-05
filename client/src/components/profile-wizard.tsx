@@ -1,3 +1,4 @@
+import { ResumeOnFile } from "@/components/resume-on-file";
 import { useState, useRef, useEffect } from "react";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { useSessionContext } from "@supabase/auth-helpers-react";
@@ -327,6 +328,7 @@ export default function ProfileWizard({ onComplete, skipResumeStep = false }: Pr
       setParsedResumeData(data.extractedInfo ?? null);
       setPendingFile(null);
       queryClient.invalidateQueries({ queryKey: ['/api/candidate/profile'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/candidate/resume-file'] });
       toast({
         title: "Resume Uploaded!",
         description: "We've extracted your information. Review and confirm below.",
@@ -514,13 +516,7 @@ export default function ProfileWizard({ onComplete, skipResumeStep = false }: Pr
               </div>
             )}
 
-            {(profile as any)?.resumeUrl && !parsedResumeData && (
-              <div className="p-3 bg-green-50 dark:bg-green-950/20 rounded-lg border border-green-200">
-                <p className="text-sm font-medium text-green-800 dark:text-green-200 flex items-center gap-2">
-                  <Check className="h-4 w-4" /> You have a resume on file!
-                </p>
-              </div>
-            )}
+            {(profile as any)?.resumeUrl && !parsedResumeData && <ResumeOnFile />}
 
             <div className="bg-gray-50 dark:bg-gray-800/50 p-4 rounded-lg">
               <p className="text-sm text-gray-600 dark:text-gray-400">
