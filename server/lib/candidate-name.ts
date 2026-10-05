@@ -43,3 +43,15 @@ export function displayNameFromMetadata(md: Record<string, unknown> | null | und
   const n = resolveCandidateName({ authMetadata: md });
   return n ? `${n.firstName} ${n.lastName}`.trim() : null;
 }
+
+/**
+ * The file name recruiters receive when the extension attaches the resume.
+ * Mirrors buildResumeFilename in extension/background.js; keep them in step.
+ */
+export function resumeFileName(name: PersonName | null, contentType: string | null | undefined): string {
+  const ext = /officedocument/i.test(contentType || '') ? 'docx' : /msword/i.test(contentType || '') ? 'doc' : 'pdf';
+  const sanitize = (s: string) => s.normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  const parts = name ? [sanitize(name.firstName), sanitize(name.lastName)].filter(Boolean) : [];
+  return parts.length ? `${[...parts, 'resume'].join('_')}.${ext}` : `Resume.${ext}`;
+}

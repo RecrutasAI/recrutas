@@ -24,3 +24,13 @@ describe('candidate name for the resume file', () => {
     expect(resolveCandidateName({ profile: { firstName: '' }, authMetadata: {} })).toBeNull();
   });
 });
+
+describe('resume file name (mirrors the extension)', () => {
+  it('names the file after the person, by file type', async () => {
+    const { resumeFileName } = await import('../server/lib/candidate-name');
+    expect(resumeFileName({ firstName: 'José', lastName: 'Ñúñez' }, 'application/pdf')).toBe('Jose_Nunez_resume.pdf');
+    expect(resumeFileName({ firstName: 'Jane', lastName: '' }, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')).toBe('Jane_resume.docx');
+    expect(resumeFileName(null, 'application/msword')).toBe('Resume.doc');
+    expect(resumeFileName(null, null)).toBe('Resume.pdf');
+  });
+});
