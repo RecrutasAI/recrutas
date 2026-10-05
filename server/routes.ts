@@ -10,6 +10,7 @@ import { z } from "zod";
 import { phoneFromText } from "./lib/phone";
 import { recordReportedApplication, applicationForUrl } from "./services/application-tracking.service";
 import { diagnoseCandidate } from "./services/application-diagnosis.service";
+import { verifyUnsubscribe } from "./lib/unsubscribe";
 import { createApiToken, listApiTokens, revokeApiToken, userForToken } from "./services/api-token.service";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildRecrutasMcpServer } from "./mcp/recrutas-mcp";
@@ -1900,6 +1901,35 @@ Analyze the form and return the actions JSON to fill every field you can.`;
   }));
 
   // Candidate applications
+  // ── Email unsubscribe ──────────────────────────────────────────────────────
+  // Links in emails are signed (lib/unsubscribe.ts) and work without signing in.
+  // GET shows a confirmation page with a button: link scanners in mail security
+  // tools open every link, so a GET must never unsubscribe. POST unsubscribes;
+  // mail apps' one-click unsubscribe (RFC 8058) POSTs here directly.
+  const UNSUB_WHAT: Record<string, string> = {
+    weekly: 'the weekly summary email',
+    updates: 'email updates about jobs you applied to',
+  };
+  const unsubPage = (title: string, body: string) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} · Recrutas</title>
+<style>body{font:16px/1.6 system-ui,sans-serif;background:#f3f4f6;color:#111827;margin:0;padding:48px 16px}main{max-width:480px;margin:0 auto;background:#fff;border-radius:12px;padding:32px}button{font:inherit;background:#111827;color:#fff;border:0;border-radius:8px;padding:10px 20px;cursor:pointer}a{color:#047857}</style></head><body><main>${body}</main></body></html>`;
+
+  app.get('/api/email/unsubscribe', (req, res) => {
+    const { u, k, s } = req.query;
+    if (!verifyUnsubscribe(u, k, s)) {
+      return res.status(400).type('html').send(unsubPage('Link not valid', '<h1>This link isn\'t valid</h1><p>It may be incomplete. You can change email settings in your <a href="https://www.recrutas.ai/candidate-dashboard">Recrutas settings</a>.</p>'));
+    }
+    const q = `u=${encodeURIComponent(String(u))}&k=${k}&s=${encodeURIComponent(String(s))}`;
+    res.type('html').send(unsubPage('Unsubscribe', `<h1>Unsubscribe?</h1><p>Stop ${UNSUB_WHAT[k as string]}.</p>
+<form method="post" action="/api/email/unsubscribe?${q}"><button type="submit">Unsubscribe</button></form>`));
+  });
+
+  app.post('/api/email/unsubscribe', rateLimit({ windowMs: 60 * 1000, max: 30 }), asyncHandler(async (req: any, res) => {
+    const { u, k, s } = req.query;
+    if (!verifyUnsubscribe(u, k, s)) {return res.status(400).type('html').send(unsubPage('Link not valid', '<h1>This link isn\'t valid</h1>'));}
+    await storage.updateNotificationPreferences(String(u), (k === 'weekly' ? { weeklySummary: false } : { emailNotifications: false }) as any);
+    res.type('html').send(unsubPage('Unsubscribed', `<h1>You're unsubscribed</h1><p>We won't send ${UNSUB_WHAT[k as string]} anymore. Changed your mind? Turn it back on in your <a href="https://www.recrutas.ai/candidate-dashboard">Recrutas settings</a>.</p>`));
+  }));
+
   // ── Personal access tokens (MCP connector) ─────────────────────────────────
   app.get('/api/account/api-tokens', isAuthenticated, asyncHandler(async (req: any, res) => {
     res.json(await listApiTokens(req.user.id));

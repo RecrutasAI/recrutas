@@ -21,6 +21,7 @@
 import { db } from '../db';
 import { sql } from 'drizzle-orm/sql';
 import { applicationUpdatesDigestEmail, sendEmail } from '../lib/email';
+import { unsubscribeHeaders, unsubscribeUrl } from '../lib/unsubscribe';
 
 export type AlertKind = 'closed' | 'reposted';
 
@@ -180,7 +181,8 @@ export async function runApplicationAlerts(opts: { apply: boolean; log?: (s: str
           await sendEmail({
             to: user.email,
             subject: alerts.length === 1 ? alertText(alerts[0]).title : `Updates on ${alerts.length} jobs you applied to`,
-            html: applicationUpdatesDigestEmail(user.first_name, alerts.map(a => ({ kind: a.kind, ...alertText(a) }))),
+            html: applicationUpdatesDigestEmail(user.first_name, alerts.map(a => ({ kind: a.kind, ...alertText(a) })), unsubscribeUrl(candidateId, 'updates')),
+            headers: unsubscribeHeaders(candidateId, 'updates'),
           });
           stats.emailed++;
         } catch (err) {

@@ -405,6 +405,7 @@ export const notificationPreferences = pgTable("notification_preferences", {
   examAlerts: boolean("exam_alerts").default(true),
   messageNotifications: boolean("message_notifications").default(true),
   highPriorityOnly: boolean("high_priority_only").default(false),
+  weeklySummary: boolean("weekly_summary").notNull().default(true), // migrations/add-weekly-summary-pref.sql
   quietHours: jsonb("quiet_hours"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
