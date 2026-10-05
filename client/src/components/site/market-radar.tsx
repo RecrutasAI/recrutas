@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, Bell, ShieldCheck, Target } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { Band, SectionLabel, PrimaryButton } from "@/components/site/site-shell";
 
 const RULE = "border-neutral-200 dark:border-neutral-800";
@@ -76,7 +76,22 @@ export function chartGeometry(series: NonNullable<MarketRadarData["series"]>) {
   ]);
   const days = series.map((s, i) => ({ i, d: new Date(s.t) })).filter(({ d }) => d.getHours() === 0)
     .map(({ i, d }) => ({ x: x(i), label: d.toLocaleDateString("en-US", { weekday: "short" }) }));
-  return { line, area, bars, days, last: { x: W, y: y(lives[lives.length - 1]) }, hi, lo };
+  const t0 = new Date(series[0].t).getTime(), t1 = new Date(series[series.length - 1].t).getTime();
+  /** Where an event at time `iso` sits on the line (clamped to the chart). */
+  const pointAt = (iso: string) => {
+    const f = Math.min(1, Math.max(0, (new Date(iso).getTime() - t0) / Math.max(1, t1 - t0)));
+    const i = Math.round(f * (series.length - 1));
+    return { x: x(i), y: y(series[i].live) };
+  };
+  return { line, area, bars, days, last: { x: W, y: y(lives[lives.length - 1]) }, hi, lo, pointAt };
+}
+
+/** What Recrutas does with one movement, in a line. */
+export function valueFor(e: RadarEvent): string {
+  if (e.type === "taken_down") {return "Applied? We'd tell you it closed.";}
+  if (e.type === "reposted") {return "Applied? We'd tell you they're still looking.";}
+  if (e.flags.length) {return `We'd flag it before you apply: ${e.flags.join(", ")}.`;}
+  return "We'd match it to your resume within hours.";
 }
 
 /**
@@ -104,7 +119,16 @@ export function MarketRadar({ onStart }: { onStart: () => void }) {
 
   const d = radar.data;
   const geo = useMemo(() => (d?.series ? chartGeometry(d.series) : null), [d]);
-  const ticker = useMemo(() => collapseEvents(d?.events ?? []), [d]);
+  const stream = useMemo(() => collapseEvents(d?.events ?? []).slice().reverse(), [d]); // oldest first, like a replay
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    setTick(0);
+    if (stream.length < 2) {return;}
+    const id = setInterval(() => setTick(t => t + 1), 3200);
+    return () => clearInterval(id);
+  }, [stream]);
+  const current = stream.length ? stream[tick % stream.length] : null;
+  const spot = current && geo ? geo.pointAt(current.at) : null;
   const name = d?.scope === "role" && query ? query : "all roles";
   const run = (q: string) => { setRole(q); setQuery(q.trim()); };
 
@@ -115,10 +139,11 @@ export function MarketRadar({ onStart }: { onStart: () => void }) {
         .idx-line { stroke-dasharray: 1; animation: idx-draw 2.2s ease-out both; }
         @keyframes idx-fade { from { opacity: 0; } to { opacity: 1; } }
         .idx-fill, .idx-bars { animation: idx-fade 1.6s ease-out .4s both; }
-        @keyframes idx-tape { from { transform: translateX(0); } to { transform: translateX(-50%); } }
-        .idx-tape { animation: idx-tape 60s linear infinite; }
-        .idx-tape-wrap:hover .idx-tape { animation-play-state: paused; }
-        @media (prefers-reduced-motion: reduce) { .idx-line, .idx-fill, .idx-bars, .idx-tape { animation: none; stroke-dasharray: none; } }
+        @keyframes idx-flow { 0% { opacity: 0; transform: translateX(48px); } 14% { opacity: 1; transform: none; } 86% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateX(-48px); } }
+        .idx-flow { animation: idx-flow 3.2s ease-in-out both; }
+        @keyframes idx-ping { from { transform: scale(.4); opacity: .9; } to { transform: scale(2.2); opacity: 0; } }
+        .idx-ping { transform-box: fill-box; transform-origin: center; animation: idx-ping 1.4s ease-out infinite; }
+        @media (prefers-reduced-motion: reduce) { .idx-line, .idx-fill, .idx-bars, .idx-flow, .idx-ping { animation: none; stroke-dasharray: none; } }
       `}</style>
       <SectionLabel>Live index</SectionLabel>
       <h2 className="text-3xl sm:text-5xl font-semibold tracking-[-0.035em] max-w-3xl mb-3">The job market, live.</h2>
@@ -187,48 +212,38 @@ export function MarketRadar({ onStart }: { onStart: () => void }) {
               <circle cx={geo.last.x - 4} cy={geo.last.y} r="4" fill="rgb(16 185 129)">
                 <animate attributeName="r" values="4;7;4" dur="2s" repeatCount="indefinite" />
               </circle>
+              {spot && current && (
+                <g key={tick}>
+                  <circle cx={spot.x} cy={spot.y} r="10" className={`idx-ping ${current.type === "taken_down" ? "fill-red-500/40" : "fill-emerald-500/40"}`} />
+                  <circle cx={spot.x} cy={spot.y} r="4.5" className={current.type === "taken_down" ? "fill-red-500" : "fill-emerald-500"} />
+                </g>
+              )}
             </svg>
           )}
         </div>
 
-        {/* Ticker tape of real events. */}
-        {ticker.length > 0 && (
-          <div className={`idx-tape-wrap overflow-hidden border-y ${RULE} bg-neutral-50 dark:bg-neutral-950`} aria-label="Latest openings and take-downs">
-            <div className="idx-tape flex w-max">
-              {[0, 1].map(copy => (
-                <ul key={copy} className="flex shrink-0" aria-hidden={copy === 1}>
-                  {ticker.map((e, i) => (
-                    <li key={`${copy}-${i}`} className="flex items-center gap-2 px-5 py-2.5 whitespace-nowrap font-geist-mono text-xs">
-                      <span className={e.type === "taken_down" ? "text-red-600 dark:text-red-400" : e.type === "reposted" ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}>
-                        {e.type === "taken_down" ? "▼" : e.type === "reposted" ? "↻" : "▲"}
-                      </span>
-                      <span className="uppercase tracking-[0.08em] text-neutral-900 dark:text-white">{e.company}</span>
-                      <span className="text-neutral-600 dark:text-neutral-400">{e.title}{e.count > 1 ? ` ×${e.count}` : ""}</span>
-                      <span className="text-neutral-400">{e.type === "taken_down" ? "taken down" : e.type === "reposted" ? "reposted" : "opened"} {ago(e.at)}</span>
-                    </li>
-                  ))}
-                </ul>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* What Recrutas does with each movement. */}
-        <div className="grid sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-neutral-200 dark:divide-neutral-800">
-          {[
-            { icon: Target, title: "A job opens", body: "We match it to your resume within hours of it appearing." },
-            { icon: ShieldCheck, title: "Before you apply", body: "We flag what rules you out: clearance, citizenship, sponsorship, years." },
-            { icon: Bell, title: "A job closes", body: "If you applied, we tell you. No more waiting on silence." },
-          ].map(v => (
-            <div key={v.title} className="px-4 sm:px-6 py-5">
-              <div className="flex items-center gap-2 mb-1.5">
-                <v.icon className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                <h3 className="font-semibold tracking-tight">{v.title}</h3>
+        {/* The live stream: one real change at a time passes by, with what Recrutas does about it. */}
+        <div className={`border-t ${RULE} px-4 sm:px-6 py-4 min-h-[92px] overflow-hidden`} aria-live="off" data-testid="index-stream">
+          {current ? (
+            <div key={tick} className="idx-flow flex items-start gap-3">
+              <span className={`mt-0.5 shrink-0 border px-1.5 py-0.5 font-geist-mono text-[10px] uppercase tracking-[0.1em] ${
+                current.type === "taken_down" ? "text-red-700 border-red-200 bg-red-50 dark:text-red-300 dark:border-red-500/30 dark:bg-red-500/10"
+                : current.type === "reposted" ? "text-amber-800 border-amber-200 bg-amber-50 dark:text-amber-300 dark:border-amber-500/30 dark:bg-amber-500/10"
+                : "text-emerald-700 border-emerald-200 bg-emerald-50 dark:text-emerald-300 dark:border-emerald-500/30 dark:bg-emerald-500/10"}`}>
+                {current.type === "taken_down" ? "▼ Taken down" : current.type === "reposted" ? "↻ Reposted" : "▲ Opened"}
+              </span>
+              <div className="min-w-0">
+                <div className="text-[15px] sm:text-base font-medium truncate">
+                  {current.title}{current.count > 1 ? ` ×${current.count}` : ""} <span className="font-normal text-neutral-500">· {current.company} · {ago(current.at)}</span>
+                </div>
+                <div className="text-sm text-emerald-700 dark:text-emerald-400 mt-0.5">{valueFor(current)}</div>
               </div>
-              <p className="text-sm text-neutral-600 dark:text-neutral-400 leading-relaxed">{v.body}</p>
             </div>
-          ))}
+          ) : (
+            <p className="font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-500">Waiting for the next change…</p>
+          )}
         </div>
+        <p className="px-4 sm:px-6 pb-3 -mt-1 font-geist-mono text-[10px] uppercase tracking-[0.14em] text-neutral-400">Replaying the latest changes detected on company boards</p>
 
         <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-6 py-4 border-t ${RULE}`}>
           <form onSubmit={(e) => { e.preventDefault(); run(role); }} className="flex flex-wrap items-center gap-2">
