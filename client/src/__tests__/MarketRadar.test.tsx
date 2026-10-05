@@ -3,7 +3,7 @@ import { http, HttpResponse } from 'msw';
 import { describe, it, expect, afterEach } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { server } from '../mocks/server';
-import { MarketRadar, collapseEvents, ago, chartGeometry, type RadarEvent } from '../components/site/market-radar';
+import { MarketRadar, collapseEvents, ago, chartGeometry, valueFor, type RadarEvent } from '../components/site/market-radar';
 
 const now = Date.now();
 const ev = (o: Partial<RadarEvent>): RadarEvent => ({ type: 'new', at: new Date(now - 3 * 3600e3).toISOString(), title: 'IT Support Engineer', company: 'PubMatic', location: 'Seattle, WA', workType: 'onsite', externalUrl: 'https://jobs.lever.co/pubmatic/1', flags: [], ...o });
@@ -28,6 +28,18 @@ describe('index helpers', () => {
     expect(g.bars.every(b => (b.kind === 'opened' ? b.y + b.h <= 250.01 : b.y >= 250))).toBe(true);
     expect(chartGeometry(series.slice(0, 1))).toBeNull();
   });
+  it('places an event on the line by its time', () => {
+    const g = chartGeometry(series)!;
+    expect(g.pointAt(series[0].t).x).toBe(0);
+    expect(g.pointAt(series[47].t).x).toBe(1000);
+    expect(g.pointAt('2000-01-01T00:00:00Z').x).toBe(0); // clamped
+  });
+  it('says what Recrutas does with each movement', () => {
+    expect(valueFor(ev({ type: 'taken_down' }))).toBe("Applied? We'd tell you it closed.");
+    expect(valueFor(ev({ type: 'reposted' }))).toBe("Applied? We'd tell you they're still looking.");
+    expect(valueFor(ev({ flags: ['secret clearance'] }))).toBe("We'd flag it before you apply: secret clearance.");
+    expect(valueFor(ev({}))).toBe("We'd match it to your resume within hours.");
+  });
 });
 
 describe('MarketRadar', () => {
@@ -45,7 +57,11 @@ describe('MarketRadar', () => {
     expect(within(radar).getByText('▼ 386 taken down')).toBeInTheDocument();
     expect(within(radar).getByText('last sweep 4m ago · next in 18 min')).toBeInTheDocument();
     expect(within(radar).getByRole('img')).toHaveAttribute('aria-label', expect.stringContaining('Live jobs over the last 7 days'));
-    expect(within(radar).getAllByText('PubMatic').length).toBeGreaterThan(0);
-    expect(within(radar).getByText('A job closes')).toBeInTheDocument();
+    // The stream replays oldest first: the C3EL take-down passes first, with what we'd do about it.
+    const stream = within(radar).getByTestId('index-stream');
+    expect(stream).toHaveTextContent('▼ Taken down');
+    expect(stream).toHaveTextContent('Sr Help Desk');
+    expect(stream).toHaveTextContent("Applied? We'd tell you it closed.");
+    expect(within(radar).getByText('Replaying the latest changes detected on company boards')).toBeInTheDocument();
   });
 });
