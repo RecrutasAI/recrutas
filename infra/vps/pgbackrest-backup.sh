@@ -36,9 +36,13 @@ DB_URL="${POSTGRES_URL_NON_POOLING:-${POSTGRES_URL:-}}"
 
 heartbeat() { # status, message, bytes
   [ -z "$DB_URL" ] && return 0
+  # items_processed is a 32-bit integer: bytes overflowed it once backups passed
+  # 2.1 GB (2026-10-04) and the insert failed silently. Record megabytes there;
+  # the exact byte count goes in stats (jsonb).
+  local mb=$(( ${3:-0} / 1048576 ))
   "$PSQL" "$DB_URL" -v ON_ERROR_STOP=0 -q >/dev/null 2>&1 <<SQL || true
 INSERT INTO pipeline_runs (pipeline, status, started_at, finished_at, items_processed, message, stats)
-VALUES ('pgbackrest-backup', '$1', '${STARTED}', now(), ${3:-0},
+VALUES ('pgbackrest-backup', '$1', '${STARTED}', now(), ${mb},
         '$(printf '%s' "$2" | sed "s/'/''/g")', jsonb_build_object('bytes', ${3:-0}, 'type', '${TYPE}'));
 SQL
 }
