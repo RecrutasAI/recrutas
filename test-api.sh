@@ -4,7 +4,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-EMAIL="${1:-abaskabato@gmail.com}"
+EMAIL="${1:-<candidate test account>}"
 ENDPOINT="${2:-/api/auth/role}"
 METHOD="${3:-POST}"
 # For complex JSON, pass it as a single quoted string

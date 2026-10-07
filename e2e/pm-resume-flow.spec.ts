@@ -62,8 +62,8 @@ test.describe('PM Resume Flow', () => {
   
   test('should authenticate and access candidate dashboard', async ({ page }) => {
     await page.goto('/auth');
-    await page.locator('input[type="email"]').fill('abaskabato@gmail.com');
-    await page.locator('input[type="password"]').fill('123456');
+    await page.locator('input[type="email"]').fill((process.env.E2E_CANDIDATE_EMAIL ?? ''));
+    await page.locator('input[type="password"]').fill((process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await page.getByRole('button', { name: /sign in|login/i }).click();
     
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 15000 });
@@ -74,8 +74,8 @@ test.describe('PM Resume Flow', () => {
 
   test('should get candidate profile with skills', async ({ page }) => {
     await page.goto('/auth');
-    await page.locator('input[type="email"]').fill('abaskabato@gmail.com');
-    await page.locator('input[type="password"]').fill('123456');
+    await page.locator('input[type="email"]').fill((process.env.E2E_CANDIDATE_EMAIL ?? ''));
+    await page.locator('input[type="password"]').fill((process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await page.getByRole('button', { name: /sign in|login/i }).click();
     
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 15000 });
@@ -104,8 +104,8 @@ test.describe('PM Resume Flow', () => {
 
   test('should verify PM skills are extracted from resume', async ({ page }) => {
     await page.goto('/auth');
-    await page.locator('input[type="email"]').fill('abaskabato@gmail.com');
-    await page.locator('input[type="password"]').fill('123456');
+    await page.locator('input[type="email"]').fill((process.env.E2E_CANDIDATE_EMAIL ?? ''));
+    await page.locator('input[type="password"]').fill((process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await page.getByRole('button', { name: /sign in|login/i }).click();
     
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 15000 });
@@ -141,8 +141,8 @@ test.describe('PM Resume Flow', () => {
 
   test('should have resume uploaded', async ({ page }) => {
     await page.goto('/auth');
-    await page.locator('input[type="email"]').fill('abaskabato@gmail.com');
-    await page.locator('input[type="password"]').fill('123456');
+    await page.locator('input[type="email"]').fill((process.env.E2E_CANDIDATE_EMAIL ?? ''));
+    await page.locator('input[type="password"]').fill((process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await page.getByRole('button', { name: /sign in|login/i }).click();
     
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 15000 });
@@ -167,8 +167,8 @@ test.describe('PM Resume Flow', () => {
 
   test('should complete resume parsing and show extracted data', async ({ page }) => {
     await page.goto('/auth');
-    await page.locator('input[type="email"]').fill('abaskabato@gmail.com');
-    await page.locator('input[type="password"]').fill('123456');
+    await page.locator('input[type="email"]').fill((process.env.E2E_CANDIDATE_EMAIL ?? ''));
+    await page.locator('input[type="password"]').fill((process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await page.getByRole('button', { name: /sign in|login/i }).click();
     
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 15000 });

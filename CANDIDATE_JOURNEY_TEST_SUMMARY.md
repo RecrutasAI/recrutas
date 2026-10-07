@@ -60,7 +60,7 @@ npx tsx server/get-token.ts
 
 ## Test Data
 
-**Test User**: `abaskabato@gmail.com`
+**Test User**: `<candidate test account>`
 **User ID**: `94592c0d-223a-4f08-9889-36b67ef783b7`
 **Role**: `candidate`
 

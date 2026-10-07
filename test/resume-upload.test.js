@@ -8,8 +8,8 @@ import FormData from 'form-data';
 
 async function runResumeUploadTest() {
   // 1. Login to get an auth token
-  const email = 'abaskabato@gmail.com';
-  const password = '123456';
+  const email = (process.env.E2E_CANDIDATE_EMAIL ?? '');
+  const password = (process.env.E2E_CANDIDATE_PASSWORD ?? '');
   const { data, error } = await supabase.auth.signInWithPassword({
     email,
     password,

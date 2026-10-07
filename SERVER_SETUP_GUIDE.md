@@ -67,10 +67,10 @@ A helper script `test-api.sh` has been created to easily test authenticated endp
 ./test-api.sh user@example.com
 
 # Test different endpoint
-./test-api.sh abaskabato@gmail.com /api/candidate/profile GET
+./test-api.sh <candidate test account> /api/candidate/profile GET
 
 # Test with custom data
-./test-api.sh abaskabato@gmail.com /api/auth/role POST '{"role":"talent_owner"}'
+./test-api.sh <candidate test account> /api/auth/role POST '{"role":"talent_owner"}'
 ```
 
 ### Manual Testing with curl

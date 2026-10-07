@@ -4,8 +4,8 @@
 **Test Duration:** ~5 minutes  
 **Environment:** Local development (localhost:5173 / localhost:5000)  
 **Test Credentials:**
-- Candidate: abaskabato@gmail.com / 123456
-- Recruiter: rainierit@proton.me / rainierit08
+- Candidate: <candidate test account>
+- Recruiter: <talent test account>
 
 ---
 
@@ -27,8 +27,8 @@
 ### 1. Authentication System (3/4 tests passed)
 
 **✅ PASSED:**
-- ✅ Candidate login with valid credentials (abaskabato@gmail.com)
-- ✅ Recruiter login with valid credentials (rainierit@proton.me)
+- ✅ Candidate login with valid credentials (<candidate test account>)
+- ✅ Recruiter login with valid credentials (<talent test account>)
 - ✅ Recruiter dashboard loads successfully
 
 **❌ FAILED:**
@@ -144,8 +144,8 @@ The test captured a screenshot showing the candidate dashboard fully loaded with
 
 | # | Test | Status | Duration | Details |
 |---|------|--------|----------|---------|
-| 1 | Candidate login with valid credentials | ✅ PASS | 7.7s | abaskabato@gmail.com logged in successfully |
-| 2 | Recruiter login with valid credentials | ✅ PASS | 7.6s | rainierit@proton.me logged in successfully |
+| 1 | Candidate login with valid credentials | ✅ PASS | 7.7s | <candidate test account> logged in successfully |
+| 2 | Recruiter login with valid credentials | ✅ PASS | 7.6s | <talent test account> logged in successfully |
 | 3 | Session persistence | ✅ PASS | - | Session maintained across reloads |
 | 4 | Unauthenticated redirect | ❌ FAIL | - | No redirect to /auth (security issue) |
 
