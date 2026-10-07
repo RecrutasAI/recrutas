@@ -29,20 +29,55 @@
 
   // ── Native value setter (React/Angular/Vue compatible) ─────────────────────
 
-  function setNativeValue(el, value) {
-    const proto = el.tagName === 'TEXTAREA'
-      ? HTMLTextAreaElement.prototype
-      : el.tagName === 'SELECT'
-      ? HTMLSelectElement.prototype
-      : HTMLInputElement.prototype;
-    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-    if (setter) {
-      setter.call(el, value);
-    } else {
-      el.value = value;
+  // The element's own value setter, looked up in the element's window (a field
+  // in a same-origin iframe belongs to that frame's classes). Null when the
+  // element isn't an input / textarea / select: calling another class's setter
+  // on it throws ("'set value' called on an object that does not implement
+  // interface HTMLInputElement" in Firefox, "Illegal invocation" in Chrome).
+  function valueSetterFor(el) {
+    const wins = [el?.ownerDocument?.defaultView, window].filter(Boolean);
+    for (const w of wins) {
+      for (const C of [w.HTMLInputElement, w.HTMLTextAreaElement, w.HTMLSelectElement]) {
+        if (C && el instanceof C) return Object.getOwnPropertyDescriptor(C.prototype, 'value')?.set || null;
+      }
     }
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return null;
+  }
+
+  // The element that actually holds the text. The model sometimes names a
+  // wrapper: a web component (SmartRecruiters) or a div around the real field.
+  function valueTarget(el) {
+    if (!el || valueSetterFor(el) || el.isContentEditable) return el;
+    const inner = el.shadowRoot?.querySelector('input:not([type=hidden]), textarea, select, [contenteditable="true"]')
+      || el.querySelector?.('input:not([type=hidden]), textarea, select, [contenteditable="true"]');
+    return inner || el;
+  }
+
+  // Set a field's value so React/Angular/Vue see it. Returns false (instead of
+  // throwing) when the element can't hold a value, so one odd field can't abort
+  // the whole fill.
+  function setNativeValue(el, value, { change = true } = {}) {
+    const target = valueTarget(el);
+    if (!target) return false;
+    const setter = valueSetterFor(target);
+    try {
+      if (setter) {
+        setter.call(target, value);
+      } else if (target.isContentEditable) {
+        target.focus();
+        target.textContent = value;
+      } else if ('value' in target) {
+        target.value = value;
+      } else {
+        return false;
+      }
+    } catch (err) {
+      console.debug('[Recrutas] Could not set value:', err.message);
+      return false;
+    }
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+    if (change) target.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
   }
 
   // ── Shadow-DOM-aware queries ───────────────────────────────────────────────
@@ -345,10 +380,10 @@
   // ACTION: type
   function executeType(el, value) {
     el.focus();
-    setNativeValue(el, value);
+    const ok = setNativeValue(el, value);
     el.blur();
-    highlightFilled(el);
-    return true;
+    if (ok) highlightFilled(el);
+    return ok;
   }
 
   // ACTION: select
@@ -366,15 +401,14 @@
         opt.text?.trim().toLowerCase().includes(valueLower) ||
         valueLower.includes(opt.text?.trim().toLowerCase())
       );
-      if (fuzzy) {
-        setNativeValue(el, fuzzy.value);
+      if (fuzzy && setNativeValue(el, fuzzy.value)) {
         highlightFilled(el);
         return true;
       }
       return false;
     }
 
-    setNativeValue(el, option.value);
+    if (!setNativeValue(el, option.value)) return false;
     highlightFilled(el);
     return true;
   }
@@ -460,10 +494,7 @@
   // event is read as a blur and closes the menu empty).
   function typeFilter(input, value) {
     if (!input || input.value === undefined) return;
-    const proto = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-    if (setter) setter.call(input, value); else input.value = value;
-    input.dispatchEvent(new Event('input', { bubbles: true }));
+    setNativeValue(input, value, { change: false });
   }
 
   const isDialCode = s => /^\+?\d[\d\s().-]*$/.test((s || '').trim());
@@ -732,6 +763,8 @@
 
       for (let attempt = 0; attempt < maxAttempts && !success; attempt++) {
         if (attempt > 0) await sleep(300);
+        // One field that throws must not abort the rest of the form.
+        try {
 
         // Radio groups: whatever action the model emitted (select / radio /
         // click_then_type), selecting the matching option is the only sane fill.
@@ -774,6 +807,10 @@
             break;
           default:
             console.debug(`[Recrutas] Unknown action: ${action.action}`);
+        }
+        } catch (err) {
+          console.debug(`[Recrutas] Field ${action.fieldId} failed:`, err.message);
+          success = false;
         }
       }
 
