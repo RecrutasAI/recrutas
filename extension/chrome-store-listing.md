@@ -4,13 +4,15 @@
 > (no HTML — same as AMO). Mirror of the live Firefox AMO listing, adapted to Chrome's
 > field limits and required Privacy practices tab.
 
+> ⚠️ Chrome rejected (1) a description listing ATS brand names as keyword stuffing ("Yellow Argon") and (2) the unused `tabs` permission ("Purple Potassium"). Don't reintroduce either.
+
 ## Store listing tab
 
 ### Name (max 75 chars)
 Recrutas Auto-Fill
 
 ### Summary / short description (max 132 chars)
-One-click AI auto-fill for job applications, using your Recrutas profile. Works on Greenhouse, Lever, Workday & 30+ ATS.
+One-click AI auto-fill for job applications, using your Recrutas profile. Works on most major application systems.
 
 ### Detailed description (plain text, max 16,000 chars)
 Stop copy-pasting your name, email, and work history into every job application. Recrutas Auto-Fill uses AI to fill entire application forms in one click using your Recrutas profile.
@@ -33,7 +35,7 @@ FEATURES:
 • Resume auto-attached from your Recrutas profile
 
 SUPPORTED PLATFORMS:
-Greenhouse, Lever, Workday, Ashby, iCIMS, SmartRecruiters, Jobvite, BambooHR, Workable, Recruitee, Breezy, JazzHR, Taleo, SuccessFactors, and more. Also works on manual trigger for any website.
+Works on the application pages of most major hiring systems used by US employers.
 
 PRIVACY:
 • Your data stays in your Recrutas account
@@ -84,7 +86,6 @@ re-type their details on every application.
 - **storage** — Stores the user's Recrutas sign-in session locally so they stay logged in between page visits. No browsing data is stored.
 - **activeTab** — Reads the form fields of the job-application page the user is currently on, only when they trigger a fill (button click or Alt+Shift+R), so the extension can populate that page.
 - **scripting** — Injects the form-filling logic into the active job-application page to enter the user's profile values into the matching fields after they trigger a fill.
-- **tabs** — Detects the active tab's URL to recognize when the user is on a supported job-application page and to coordinate the fill action with the page.
 - **Host permissions (ATS/job-board domains + recrutas.ai)** — On supported job-board and ATS sites (Greenhouse, Lever, Workday, Ashby, etc.) the extension reads and fills the application form. The recrutas.ai hosts let it fetch the signed-in user's profile and resume to use as the fill source. The extension does not run on any other sites.
 
 ### Data usage — disclosures
