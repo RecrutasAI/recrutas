@@ -1,6 +1,6 @@
 # Recrutas MCP connector
 
-Use your Recrutas job search from Claude Code, Cursor or any MCP client. The full guide is at **https://www.recrutas.ai/docs**; this file is the same reference for contributors.
+Use your Recrutas job search from Claude Code, Codex, Cursor or any MCP client. The full guide is at **https://www.recrutas.ai/docs**; this file is the same reference for contributors.
 
 ## Connect
 
@@ -12,6 +12,19 @@ Use your Recrutas job search from Claude Code, Cursor or any MCP client. The ful
 # Claude Code
 claude mcp add --transport http recrutas https://www.recrutas.ai/api/mcp \
   --header "Authorization: Bearer YOUR_TOKEN"
+```
+
+```bash
+# Codex (reads the token from an environment variable)
+export RECRUTAS_TOKEN="YOUR_TOKEN"
+codex mcp add recrutas --url https://www.recrutas.ai/api/mcp --bearer-token-env-var RECRUTAS_TOKEN
+```
+
+```toml
+# or in ~/.codex/config.toml
+[mcp_servers.recrutas]
+url = "https://www.recrutas.ai/api/mcp"
+bearer_token_env_var = "RECRUTAS_TOKEN"
 ```
 
 ```json

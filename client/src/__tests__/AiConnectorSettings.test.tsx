@@ -5,7 +5,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { server } from '../mocks/server';
 import { queryClient } from '@/lib/queryClient';
-import { AiConnectorSettings, claudeCodeCommand } from '../components/ai-connector-settings';
+import { AiConnectorSettings, claudeCodeCommand, codexCommand } from '../components/ai-connector-settings';
 
 const TOKEN = 'rk_' + 'a'.repeat(43);
 afterEach(() => { queryClient.clear(); server.resetHandlers(); });
@@ -19,6 +19,8 @@ describe('Connect your AI tools', () => {
     render(<QueryClientProvider client={queryClient}><AiConnectorSettings /></QueryClientProvider>);
     await userEvent.click(screen.getByRole('button', { name: /create token/i }));
     expect(await screen.findByTestId('connector-claude-code')).toHaveTextContent(claudeCodeCommand(TOKEN));
+    expect(screen.getByTestId('connector-codex').textContent).toBe(codexCommand(TOKEN));
+    expect(codexCommand(TOKEN)).toContain('--bearer-token-env-var RECRUTAS_TOKEN');
     expect(screen.getByTestId('connector-json')).toHaveTextContent('"Authorization": "Bearer ' + TOKEN);
     await userEvent.click(screen.getByRole('button', { name: /done/i }));
     expect(screen.queryByTestId('connector-claude-code')).toBeNull();
