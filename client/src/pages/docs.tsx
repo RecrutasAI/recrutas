@@ -51,7 +51,7 @@ export default function DocsPage() {
           Recrutas in your AI tools.
         </h1>
         <p className="text-lg sm:text-xl leading-relaxed text-neutral-600 dark:text-neutral-400 max-w-2xl">
-          Connect Claude Code, Cursor or any MCP client to your Recrutas account. Ask which of your matches to apply to,
+          Connect Claude Code, Codex, Cursor or any MCP client to your Recrutas account. Ask which of your matches to apply to,
           check a job's requirements, and find out what happened to your applications, without leaving your editor.
         </p>
       </Band>
@@ -67,12 +67,20 @@ export default function DocsPage() {
             In your dashboard, open <strong>Settings → Connect your AI tools</strong> and create a token. It's shown once: copy it then.
           </Step>
           <Step n={3} title="Add the connector">
-            Run the command below (Claude Code) or add the config (Cursor and other clients). Then ask your assistant about your job search.
+            Run the command for your tool below (Claude Code or Codex), or add the config (Cursor and other clients). Then ask your assistant about your job search.
           </Step>
         </ol>
         <div className="max-w-3xl mt-10">
           <h3 className="font-semibold tracking-tight">Claude Code</h3>
           <Code label="terminal" value={`claude mcp add --transport http recrutas ${MCP_URL} \\\n  --header "Authorization: Bearer YOUR_TOKEN"`} />
+          <h3 className="font-semibold tracking-tight mt-8">Codex</h3>
+          <p className="text-neutral-600 dark:text-neutral-400 mt-1">Codex reads the token from an environment variable. Set it in your shell profile, then add the server:</p>
+          <Code label="terminal" value={`export RECRUTAS_TOKEN="YOUR_TOKEN"\ncodex mcp add recrutas --url ${MCP_URL} \\\n  --bearer-token-env-var RECRUTAS_TOKEN`} />
+          <p className="text-neutral-600 dark:text-neutral-400 mt-3">Or add it to <code className="font-geist-mono text-sm">~/.codex/config.toml</code>:</p>
+          <Code label="config.toml" value={`[mcp_servers.recrutas]\nurl = "${MCP_URL}"\nbearer_token_env_var = "RECRUTAS_TOKEN"`} />
+          <p className="text-neutral-600 dark:text-neutral-400 mt-3 text-sm">
+            Check it with <code className="font-geist-mono">codex mcp list</code>, or type <code className="font-geist-mono">/mcp</code> inside Codex.
+          </p>
           <h3 className="font-semibold tracking-tight mt-8">Cursor and other MCP clients</h3>
           <p className="text-neutral-600 dark:text-neutral-400 mt-1">Add to your client's MCP configuration (for Cursor, <code className="font-geist-mono text-sm">~/.cursor/mcp.json</code>):</p>
           <Code label="mcp.json" value={JSON.stringify({ mcpServers: { recrutas: { url: MCP_URL, headers: { Authorization: "Bearer YOUR_TOKEN" } } } }, null, 2)} />

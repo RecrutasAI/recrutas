@@ -31,7 +31,7 @@ const ROUTES: Record<string, RouteMeta> = {
   '/docs': {
     title: `Developer docs: MCP connector | ${SITE}`,
     description:
-      'Connect Claude Code, Cursor or any MCP client to Recrutas: your job matches with honest verdicts, job requirements, and what happened to your applications.',
+      'Connect Claude Code, Codex, Cursor or any MCP client to Recrutas: your job matches with honest verdicts, job requirements, and what happened to your applications.',
   },
   '/pricing': {
     title: `Pricing | ${SITE}`,

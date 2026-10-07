@@ -14,6 +14,9 @@ interface ApiToken { id: number; name: string; prefix: string; lastUsedAt: strin
 
 export const claudeCodeCommand = (token: string) =>
   `claude mcp add --transport http recrutas ${MCP_URL} --header "Authorization: Bearer ${token}"`;
+// Codex reads bearer tokens from an environment variable, not a header flag.
+export const codexCommand = (token: string) =>
+  `export RECRUTAS_TOKEN="${token}"\ncodex mcp add recrutas --url ${MCP_URL} --bearer-token-env-var RECRUTAS_TOKEN`;
 export const mcpJsonConfig = (token: string) =>
   JSON.stringify({ mcpServers: { recrutas: { url: MCP_URL, headers: { Authorization: `Bearer ${token}` } } } }, null, 2);
 
@@ -36,7 +39,7 @@ function CopyBlock({ label, value, testId }: { label: string; value: string; tes
 
 /**
  * Personal access tokens for the Recrutas MCP connector: the candidate's
- * matches, verdicts and applications inside Claude Code, Cursor and other
+ * matches, verdicts and applications inside Claude Code, Codex, Cursor and other
  * MCP clients. A token is shown once; only its hash is stored.
  */
 export function AiConnectorSettings() {
@@ -62,7 +65,7 @@ export function AiConnectorSettings() {
       <div>
         <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Connect your AI tools</h3>
         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          Use your matches, verdicts and applications from Claude Code, Cursor or any MCP client: "which of my matches should I apply to?",
+          Use your matches, verdicts and applications from Claude Code, Codex, Cursor or any MCP client: "which of my matches should I apply to?",
           "what happened to my applications?". Your AI tool can read your Recrutas data and record that you applied; it can never apply for you.
         </p>
       </div>
@@ -71,6 +74,7 @@ export function AiConnectorSettings() {
         <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 p-3">
           <p className="text-xs font-medium text-amber-900 dark:text-amber-200">Copy this now: it won't be shown again. Anyone with it can read your Recrutas data, so keep it private.</p>
           <CopyBlock label="Claude Code: run in your terminal" value={claudeCodeCommand(newToken)} testId="connector-claude-code" />
+          <CopyBlock label="Codex: run in your terminal (keep the export in your shell profile)" value={codexCommand(newToken)} testId="connector-codex" />
           <CopyBlock label="Cursor and other MCP clients: add to your MCP config" value={mcpJsonConfig(newToken)} testId="connector-json" />
           <div className="flex justify-end"><Button size="sm" variant="outline" onClick={() => setNewToken(null)}>Done</Button></div>
         </div>

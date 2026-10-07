@@ -5,41 +5,14 @@ import { SiteShell, Band, SectionLabel, PrimaryButton } from "@/components/site/
 
 const RULE = "border-neutral-200 dark:border-neutral-800";
 
-// The build order is the launch plan: each phase ships when the one before it
-// works for real people. Status labels must stay true to what is live.
-const STEPS: { n: string; status: string; live?: boolean; body: ReactNode }[] = [
-  {
-    n: "step one",
-    status: "live today",
-    live: true,
-    body: <>Give job seekers a feed they can trust: live US roles, straight from the source, ranked against their resume, each one telling you why it fits.</>,
-  },
-  {
-    n: "step two",
-    status: "next",
-    body: <>Open the other side, on one condition: everyone who shows they can do the work hears back. Not a promise to try. A promise kept, for every candidate who clears the company's own bar.<Fn n={6} /></>,
-  },
-  {
-    n: "step three",
-    status: "started · extension live",
-    body: <>Be everywhere you already are. Recrutas stops being a site you visit and becomes a layer: on any application form, inside the AI tools you already use, through an open API, and on your phone. Your matches, one call away from wherever you are.<Fn n={7} /></>,
-  },
-  {
-    n: "step four",
-    status: "where this goes",
-    body: <>Make searching disappear. Something that works for you around the clock, watching every company's board, putting you forward only where you truly fit, and staying with it until you hear back. You don't look for work. The right work finds you.<Fn n={8} /></>,
-  },
-];
-
 const NOTES: ReactNode[] = [
   <>Not on who you know, which keywords you guessed, or how many times you can retype the same work history.</>,
   <>An answer means a reply to every application, even a no.</>,
-  <>As of September 2026, counting only roles we read directly from employers' own career pages. US roles only, for now.</>,
+  <>As of October 2026, counting only roles we read directly from employers' own hiring systems. US roles only, for now.</>,
   <>The cover letter nobody reads is the whip socket of hiring.</>,
   <>Greenhouse, Lever, Ashby, SmartRecruiters and more. No aggregators, no reposters.</>,
-  <>Built, and waiting for its first employers. We won't open it until we can keep the promise.</>,
-  <>The Auto-Fill extension is live on Firefox today. An MCP server and a public API are next.</>,
-  <>Nothing is ever sent in your name without your say-so. An agent you can't trust is just another way to be ignored.</>,
+  <>Citizenship, security clearance, visa sponsorship and years of experience: the requirements that end an application before anyone reads it.</>,
+  <>Nothing is ever sent in your name without your say-so. A tool you can't trust is just another way to be ignored.</>,
 ];
 
 export default function ManifestoPage() {
@@ -64,8 +37,8 @@ export default function ManifestoPage() {
 
           <Section label="we already have the jobs">
             <p>
-              The problem was never a shortage of openings. On any given day we track more than 140,000
-              live roles from over 4,000 companies<Fn n={3} />, and those are only the ones employers post
+              The problem was never a shortage of openings. On any given day we track more than 145,000
+              live roles from over 2,500 companies<Fn n={3} />, and those are only the ones employers post
               themselves.
             </p>
             <p>
@@ -116,24 +89,29 @@ export default function ManifestoPage() {
             </p>
           </Section>
 
-          <Section label="the order we're building it in">
-            <p>Each step ships when the one before it works for real people.</p>
+          <Section label="what we believe">
+            <p>
+              <Strong>The truth is a kindness.</Strong> Most applications are decided before anyone reads
+              them, by a requirement buried in the posting.<Fn n={6} /> You deserve to know that before you
+              spend the evening, not after weeks of silence. So every job tells you plainly: apply, stretch,
+              or skip, and why.
+            </p>
+            <p>
+              <Strong>Your time is not free.</Strong> No one should type the same work history into a
+              hundred forms. The forms should fill themselves from what you've already told us. But the
+              choice to apply is yours alone, and it stays yours: we fill, you decide, you submit.<Fn n={7} />
+            </p>
+            <p>
+              <Strong>Silence is not an answer.</Strong> The moment you apply is where every other job site
+              stops paying attention. It's where we start. When a company takes a posting down or puts the
+              same job back up, you hear it from us, instead of wondering forever.
+            </p>
+            <p>
+              <Strong>Your search belongs to you.</Strong> Your resume, your answers, your history. We don't
+              sell them, and we meet you where you already work, in your browser and in the AI tools you
+              already use, instead of asking you to live on one more site.
+            </p>
           </Section>
-          <ol className={`mt-6 border-t border-l ${RULE}`}>
-            {STEPS.map((s) => (
-              <li key={s.n} className={`grid sm:grid-cols-[150px_1fr] gap-x-6 gap-y-2 p-5 sm:p-6 border-r border-b ${RULE}`}>
-                <div>
-                  <div className="font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-900 dark:text-white">{s.n}</div>
-                  <div className={`font-geist-mono text-[10px] uppercase tracking-[0.14em] mt-1 ${
-                    s.live ? "text-emerald-600 dark:text-emerald-400" : "text-neutral-500"
-                  }`}>
-                    {s.live && "● "}{s.status}
-                  </div>
-                </div>
-                <p className="text-[15px] sm:text-base leading-[1.7] text-neutral-700 dark:text-neutral-300">{s.body}</p>
-              </li>
-            ))}
-          </ol>
 
           <div className="mt-14">
             <Prose>
