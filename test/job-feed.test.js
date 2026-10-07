@@ -3,8 +3,8 @@ import { supabase } from '../server/lib/supabase-client.ts';
 import { DatabaseStorage } from '../server/storage.ts';
 
 export async function runJobFeedAPITest() {
-  const email = 'abaskabato@gmail.com';
-  const password = '123456';
+  const email = (process.env.E2E_CANDIDATE_EMAIL ?? '');
+  const password = (process.env.E2E_CANDIDATE_PASSWORD ?? '');
   const { data, error } = await supabase.auth.signInWithPassword({
     email,
     password,

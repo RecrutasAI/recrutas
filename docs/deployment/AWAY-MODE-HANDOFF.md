@@ -60,7 +60,7 @@ Nothing depends on them; the extension is already published.
 ## 2. What will reach you while you're away
 
 **Alert delivery is verified end-to-end, not assumed.** A real test alert was sent
-through the live path and confirmed delivered to `abaskabato@gmail.com` at
+through the live path and confirmed delivered to `<candidate test account>` at
 2026-07-26 04:56:48 UTC.
 
 | Channel | Covers | Runs on |

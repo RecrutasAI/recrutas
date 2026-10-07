@@ -8,8 +8,8 @@
  *  4. Real resume upload (valid PDF with proper magic bytes, full Supabase round-trip)
  *
  * Credentials:
- *   Candidate:     abaskabato@gmail.com / 123456
- *   Talent Owner:  rainierit@proton.me  / rainierit08
+ *   Candidate:     E2E_CANDIDATE_EMAIL / E2E_CANDIDATE_PASSWORD (env)
+ *   Talent Owner:  E2E_TALENT_EMAIL / E2E_TALENT_PASSWORD (env)
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -94,7 +94,7 @@ test.describe('1. Exam End-to-End Flow', () => {
   test.setTimeout(60000); // exam generation is async, give it time
 
   test('talent owner creates job with hasExam:true', async ({ page }) => {
-    await loginAs(page, 'rainierit@proton.me', 'rainierit08');
+    await loginAs(page, (process.env.E2E_TALENT_EMAIL ?? ''), (process.env.E2E_TALENT_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/talent-dashboard/, { timeout: 20000 });
 
     const title = `Exam Test Job ${Date.now()}`;
@@ -122,7 +122,7 @@ test.describe('1. Exam End-to-End Flow', () => {
 
   test('exam is auto-generated within 30s of job creation', async ({ page }) => {
     if (!examJobId) {return test.skip();}
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
 
     // Poll until the exam is in the DB.
@@ -146,7 +146,7 @@ test.describe('1. Exam End-to-End Flow', () => {
 
   test('candidate can apply to job with exam', async ({ page }) => {
     if (!examJobId) {return test.skip();}
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
 
     const { status } = await apiPost(page, `/api/candidate/apply/${examJobId}`, {});
@@ -156,7 +156,7 @@ test.describe('1. Exam End-to-End Flow', () => {
 
   test('candidate fetches exam questions (no correct answers exposed)', async ({ page }) => {
     if (!examJobId) {return test.skip();}
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
 
     const { status, body } = await apiGet(page, `/api/jobs/${examJobId}/exam`);
@@ -173,7 +173,7 @@ test.describe('1. Exam End-to-End Flow', () => {
 
   test('candidate submits exam answers and receives a score', async ({ page }) => {
     if (!examJobId || !examQuestions?.length) {return test.skip();}
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
 
     // Build answers: for multiple-choice pick option index 2 (Advanced);
@@ -197,7 +197,7 @@ test.describe('1. Exam End-to-End Flow', () => {
 
   test('talent owner can see exam score in applicants list', async ({ page }) => {
     if (!examJobId) {return test.skip();}
-    await loginAs(page, 'rainierit@proton.me', 'rainierit08');
+    await loginAs(page, (process.env.E2E_TALENT_EMAIL ?? ''), (process.env.E2E_TALENT_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/talent-dashboard/, { timeout: 20000 });
 
     const { status, body } = await apiGet(page, `/api/jobs/${examJobId}/applicants`);
@@ -220,7 +220,7 @@ test.describe('2. Chat End-to-End Flow', () => {
   test.setTimeout(60000);
 
   test('get candidate user ID from profile', async ({ page }) => {
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
 
     // Get user ID from the Supabase auth session
@@ -244,7 +244,7 @@ test.describe('2. Chat End-to-End Flow', () => {
   });
 
   test('talent owner gets a job to associate with chat', async ({ page }) => {
-    await loginAs(page, 'rainierit@proton.me', 'rainierit08');
+    await loginAs(page, (process.env.E2E_TALENT_EMAIL ?? ''), (process.env.E2E_TALENT_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/talent-dashboard/, { timeout: 20000 });
 
     const { status, body } = await apiGet(page, '/api/talent-owner/jobs');
@@ -257,7 +257,7 @@ test.describe('2. Chat End-to-End Flow', () => {
 
   test('talent owner creates chat room for candidate', async ({ page }) => {
     if (!chatJobId || !candidateUserId) {return test.skip();}
-    await loginAs(page, 'rainierit@proton.me', 'rainierit08');
+    await loginAs(page, (process.env.E2E_TALENT_EMAIL ?? ''), (process.env.E2E_TALENT_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/talent-dashboard/, { timeout: 20000 });
     // Allow session to fully stabilize before making auth-sensitive API calls
     await page.waitForTimeout(1500);
@@ -275,7 +275,7 @@ test.describe('2. Chat End-to-End Flow', () => {
 
   test('talent owner sends first message', async ({ page }) => {
     if (!chatRoomId) {return test.skip();}
-    await loginAs(page, 'rainierit@proton.me', 'rainierit08');
+    await loginAs(page, (process.env.E2E_TALENT_EMAIL ?? ''), (process.env.E2E_TALENT_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/talent-dashboard/, { timeout: 20000 });
 
     const { status, body } = await apiPost(
@@ -292,7 +292,7 @@ test.describe('2. Chat End-to-End Flow', () => {
 
   test('candidate sees the chat room in their rooms list', async ({ page }) => {
     if (!chatRoomId) {return test.skip();}
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
 
     const { status, body } = await apiGet(page, '/api/chat/rooms');
@@ -304,7 +304,7 @@ test.describe('2. Chat End-to-End Flow', () => {
 
   test('candidate reads messages and sees talent owner message', async ({ page }) => {
     if (!chatRoomId) {return test.skip();}
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
 
     const { status, body } = await apiGet(page, `/api/chat/rooms/${chatRoomId}/messages`);
@@ -320,7 +320,7 @@ test.describe('2. Chat End-to-End Flow', () => {
 
   test('candidate replies in chat', async ({ page }) => {
     if (!chatRoomId) {return test.skip();}
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
 
     const { status, body } = await apiPost(
@@ -334,7 +334,7 @@ test.describe('2. Chat End-to-End Flow', () => {
 
   test('talent owner sees candidate reply', async ({ page }) => {
     if (!chatRoomId) {return test.skip();}
-    await loginAs(page, 'rainierit@proton.me', 'rainierit08');
+    await loginAs(page, (process.env.E2E_TALENT_EMAIL ?? ''), (process.env.E2E_TALENT_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/talent-dashboard/, { timeout: 20000 });
 
     const { status, body } = await apiGet(page, `/api/chat/rooms/${chatRoomId}/messages`);
@@ -350,7 +350,7 @@ test.describe('2. Chat End-to-End Flow', () => {
 
   test('chat message sanitizes HTML (XSS prevention)', async ({ page }) => {
     if (!chatRoomId) {return test.skip();}
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
 
     const { status, body } = await apiPost(
@@ -368,7 +368,7 @@ test.describe('2. Chat End-to-End Flow', () => {
 
   test('chat enforces message length limit (>5000 chars rejected)', async ({ page }) => {
     if (!chatRoomId) {return test.skip();}
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
 
     const tooLong = 'a'.repeat(5001);
@@ -412,8 +412,8 @@ test.describe('3. Mobile Viewport (375×812 — iPhone SE)', () => {
 
   test('candidate dashboard renders on mobile', async ({ page }) => {
     await page.goto('/auth');
-    await page.locator('input[type="email"]').fill('abaskabato@gmail.com');
-    await page.locator('input[type="password"]').fill('123456');
+    await page.locator('input[type="email"]').fill((process.env.E2E_CANDIDATE_EMAIL ?? ''));
+    await page.locator('input[type="password"]').fill((process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await page.getByRole('button', { name: /sign in|login/i }).click();
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
     await page.waitForTimeout(2000);
@@ -424,8 +424,8 @@ test.describe('3. Mobile Viewport (375×812 — iPhone SE)', () => {
 
   test('talent owner dashboard renders on mobile', async ({ page }) => {
     await page.goto('/auth');
-    await page.locator('input[type="email"]').fill('rainierit@proton.me');
-    await page.locator('input[type="password"]').fill('rainierit08');
+    await page.locator('input[type="email"]').fill((process.env.E2E_TALENT_EMAIL ?? ''));
+    await page.locator('input[type="password"]').fill((process.env.E2E_TALENT_PASSWORD ?? ''));
     await page.getByRole('button', { name: /sign in|login/i }).click();
     await expect(page).toHaveURL(/\/talent-dashboard/, { timeout: 20000 });
     await page.waitForTimeout(2000);
@@ -441,7 +441,7 @@ test.describe('4. Resume Upload — Supabase Storage Round-trip', () => {
   test.setTimeout(45000);
 
   test('valid PDF uploads successfully and returns resumeUrl', async ({ page }) => {
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
 
     const token = await getAuthToken(page);
@@ -474,7 +474,7 @@ test.describe('4. Resume Upload — Supabase Storage Round-trip', () => {
   });
 
   test('resume URL is accessible after upload (profile updated)', async ({ page }) => {
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
 
     const { status, body } = await apiGet(page, '/api/candidate/profile');
@@ -485,7 +485,7 @@ test.describe('4. Resume Upload — Supabase Storage Round-trip', () => {
   });
 
   test('wrong file type (txt) is rejected with 400, not 500', async ({ page }) => {
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
 
     const token = await getAuthToken(page);
@@ -506,7 +506,7 @@ test.describe('4. Resume Upload — Supabase Storage Round-trip', () => {
   });
 
   test('file exceeding 4MB is rejected', async ({ page }) => {
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
 
     const token = await getAuthToken(page);

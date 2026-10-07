@@ -8,8 +8,8 @@
 
 import { test, expect } from '@playwright/test';
 
-const EMPLOYER_EMAIL = 'rainierit@proton.me';
-const EMPLOYER_PASSWORD = 'rainierit08';
+const EMPLOYER_EMAIL = (process.env.E2E_TALENT_EMAIL ?? '');
+const EMPLOYER_PASSWORD = (process.env.E2E_TALENT_PASSWORD ?? '');
 
 test.describe('Job Posting (Employer)', () => {
   async function goToJobsTab(page: any) {

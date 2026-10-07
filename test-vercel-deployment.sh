@@ -4,8 +4,8 @@
 set -e
 
 DEPLOYMENT_URL="${1:-https://recrutas-5c99uji9q-abas-kabatos-projects.vercel.app}"
-EMAIL="abaskabato@gmail.com"
-PASSWORD="123456"
+EMAIL="${E2E_CANDIDATE_EMAIL:?set E2E_CANDIDATE_EMAIL}"
+PASSWORD="${E2E_CANDIDATE_PASSWORD:?set E2E_CANDIDATE_PASSWORD}"
 
 echo "=========================================="
 echo "Testing Vercel Deployment: $DEPLOYMENT_URL"

@@ -64,7 +64,7 @@ if [ -n "$ANON_KEY" ]; then
     AUTH_RESPONSE=$(curl -s -X POST "$BASE_URL/auth/v1/token?grant_type=password" \
         -H "Content-Type: application/json" \
         -H "apikey: $ANON_KEY" \
-        -d '{"email":"abaskabato@gmail.com","password":"123456"}' 2>&1)
+        -d "{\"email\":\"${E2E_CANDIDATE_EMAIL:?}\",\"password\":\"${E2E_CANDIDATE_PASSWORD:?}\"}" 2>&1)
     
     if echo "$AUTH_RESPONSE" | grep -q "access_token"; then
         TOKEN=$(echo "$AUTH_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('access_token', ''))" 2>/dev/null || echo "")

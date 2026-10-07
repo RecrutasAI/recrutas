@@ -1,16 +1,16 @@
 /**
  * E2E Tests: Exam and Chat Flows
  *
- * Candidate:  abaskabato@gmail.com / 123456
- * Talent:     rainierit@proton.me  / rainierit08
+ * Candidate:  E2E_CANDIDATE_EMAIL / E2E_CANDIDATE_PASSWORD (env)
+ * Talent:     E2E_TALENT_EMAIL / E2E_TALENT_PASSWORD (env)
  */
 
 import { test, expect, Page } from '@playwright/test';
 
-const CANDIDATE_EMAIL = 'abaskabato@gmail.com';
-const CANDIDATE_PASSWORD = '123456';
-const TALENT_EMAIL = 'rainierit@proton.me';
-const TALENT_PASSWORD = 'rainierit08';
+const CANDIDATE_EMAIL = (process.env.E2E_CANDIDATE_EMAIL ?? '');
+const CANDIDATE_PASSWORD = (process.env.E2E_CANDIDATE_PASSWORD ?? '');
+const TALENT_EMAIL = (process.env.E2E_TALENT_EMAIL ?? '');
+const TALENT_PASSWORD = (process.env.E2E_TALENT_PASSWORD ?? '');
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

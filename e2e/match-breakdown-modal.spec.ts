@@ -13,7 +13,7 @@ test('match breakdown modal shows score breakdown + bulleted explanation', async
   });
   page.on('pageerror', (err) => console.log('[pageerror]', err.message));
 
-  await loginAs(page, 'abaskabato@gmail.com', '123456');
+  await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
   await page.waitForURL(/candidate-dashboard|dashboard/i, { timeout: 30000 });
 
   // The feed lives on candidate dashboard. Match cards each have a Sparkles

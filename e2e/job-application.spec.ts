@@ -8,8 +8,8 @@
 
 import { test, expect } from '@playwright/test';
 
-const CANDIDATE_EMAIL = 'abaskabato@gmail.com';
-const CANDIDATE_PASSWORD = '123456';
+const CANDIDATE_EMAIL = (process.env.E2E_CANDIDATE_EMAIL ?? '');
+const CANDIDATE_PASSWORD = (process.env.E2E_CANDIDATE_PASSWORD ?? '');
 
 test.describe('Job Application', () => {
   test.beforeEach(async ({ page }) => {

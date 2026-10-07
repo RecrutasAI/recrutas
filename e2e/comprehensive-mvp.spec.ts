@@ -10,8 +10,8 @@
  * - Cross-role access control
  *
  * Credentials:
- *   Candidate: abaskabato@gmail.com / 123456
- *   Talent Owner: rainierit@proton.me / rainierit08
+ *   Candidate: E2E_CANDIDATE_EMAIL / E2E_CANDIDATE_PASSWORD (env)
+ *   Talent Owner: E2E_TALENT_EMAIL / E2E_TALENT_PASSWORD (env)
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -245,12 +245,12 @@ test.describe('3. Authentication', () => {
   });
 
   test('candidate login redirects to candidate-dashboard', async ({ page }) => {
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
   });
 
   test('talent owner login redirects to talent-dashboard', async ({ page }) => {
-    await loginAs(page, 'rainierit@proton.me', 'rainierit08');
+    await loginAs(page, (process.env.E2E_TALENT_EMAIL ?? ''), (process.env.E2E_TALENT_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/talent-dashboard/, { timeout: 20000 });
   });
 });
@@ -259,7 +259,7 @@ test.describe('3. Authentication', () => {
 
 test.describe('4. Candidate Dashboard', () => {
   test.beforeEach(async ({ page }) => {
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
   });
 
@@ -404,7 +404,7 @@ test.describe('5. Candidate - Job Interactions', () => {
   let firstJobId: number;
 
   test.beforeEach(async ({ page }) => {
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
   });
 
@@ -445,7 +445,7 @@ test.describe('5. Candidate - Job Interactions', () => {
 
 test.describe('6. Candidate - Logout', () => {
   test('candidate can log out and gets redirected to auth', async ({ page }) => {
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
 
     await page.waitForTimeout(1000);
@@ -472,7 +472,7 @@ test.describe('6. Candidate - Logout', () => {
 
 test.describe('7. Talent Owner Dashboard', () => {
   test.beforeEach(async ({ page }) => {
-    await loginAs(page, 'rainierit@proton.me', 'rainierit08');
+    await loginAs(page, (process.env.E2E_TALENT_EMAIL ?? ''), (process.env.E2E_TALENT_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/talent-dashboard/, { timeout: 20000 });
   });
 
@@ -532,7 +532,7 @@ test.describe('8. Talent Owner - Job Posting', () => {
   let createdJobId: number;
 
   test.beforeEach(async ({ page }) => {
-    await loginAs(page, 'rainierit@proton.me', 'rainierit08');
+    await loginAs(page, (process.env.E2E_TALENT_EMAIL ?? ''), (process.env.E2E_TALENT_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/talent-dashboard/, { timeout: 20000 });
   });
 
@@ -616,7 +616,7 @@ test.describe('8. Talent Owner - Job Posting', () => {
 
 test.describe('9. Talent Owner - Applicant Management', () => {
   test.beforeEach(async ({ page }) => {
-    await loginAs(page, 'rainierit@proton.me', 'rainierit08');
+    await loginAs(page, (process.env.E2E_TALENT_EMAIL ?? ''), (process.env.E2E_TALENT_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/talent-dashboard/, { timeout: 20000 });
   });
 
@@ -648,7 +648,7 @@ test.describe('9. Talent Owner - Applicant Management', () => {
 
 test.describe('10. Exam Flow', () => {
   test.beforeEach(async ({ page }) => {
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
   });
 
@@ -682,7 +682,7 @@ test.describe('10. Exam Flow', () => {
 
 test.describe('11. Chat Flow', () => {
   test.beforeEach(async ({ page }) => {
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
   });
 
@@ -698,7 +698,7 @@ test.describe('11. Chat Flow', () => {
 
 test.describe('12. Talent Owner - Logout', () => {
   test('talent owner can log out and gets redirected to auth', async ({ page }) => {
-    await loginAs(page, 'rainierit@proton.me', 'rainierit08');
+    await loginAs(page, (process.env.E2E_TALENT_EMAIL ?? ''), (process.env.E2E_TALENT_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/talent-dashboard/, { timeout: 20000 });
 
     // Clear auth tokens to simulate logout
@@ -721,7 +721,7 @@ test.describe('12. Talent Owner - Logout', () => {
 
 test.describe('13. Cross-Role Access Control', () => {
   test('candidate role guard blocks talent-dashboard', async ({ page }) => {
-    await loginAs(page, 'abaskabato@gmail.com', '123456');
+    await loginAs(page, (process.env.E2E_CANDIDATE_EMAIL ?? ''), (process.env.E2E_CANDIDATE_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/candidate-dashboard/, { timeout: 20000 });
     await page.goto('/talent-dashboard');
     await page.waitForTimeout(3000);
@@ -730,7 +730,7 @@ test.describe('13. Cross-Role Access Control', () => {
   });
 
   test('talent owner role guard blocks candidate-dashboard', async ({ page }) => {
-    await loginAs(page, 'rainierit@proton.me', 'rainierit08');
+    await loginAs(page, (process.env.E2E_TALENT_EMAIL ?? ''), (process.env.E2E_TALENT_PASSWORD ?? ''));
     await expect(page).toHaveURL(/\/talent-dashboard/, { timeout: 20000 });
     await page.goto('/candidate-dashboard');
     await page.waitForTimeout(3000);

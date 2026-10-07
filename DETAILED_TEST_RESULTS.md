@@ -3,8 +3,8 @@
 **Date:** 2026-02-08  
 **Test Type:** Playwright E2E Automation  
 **Credentials Used:**
-- Candidate: abaskabato@gmail.com / 123456
-- Recruiter: rainierit@proton.me / rainierit08
+- Candidate: <candidate test account>
+- Recruiter: <talent test account>
 
 ---
 

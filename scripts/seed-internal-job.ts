@@ -4,8 +4,8 @@
  * → generateExamQuestions → createJobExam → match candidates (findMatchingCandidates
  * + createJobMatch + notification).
  *
- * Owner: rainierit@proton.me (talent_owner the user manages — NOT a third party).
- * The role is tailored to the user's real candidate profile (abaskabato@gmail.com,
+ * Owner: <talent test account> (talent_owner the user manages — NOT a third party).
+ * The role is tailored to the user's real candidate profile (<candidate test account>,
  * Senior IT Support / Systems Engineer) so it actually surfaces as a match.
  *
  * ⚠️  Writes to the PRODUCTION database.
@@ -20,8 +20,8 @@ import { storage } from "../server/storage.js";
 import { notificationService } from "../server/notification-service.js";
 import { callAI, isAIAvailable } from "../server/lib/ai-client.js";
 
-const OWNER_ID = "854622b0-c0ac-4566-a287-3d457c46a810"; // rainierit@proton.me
-const CANDIDATE_ID = "94592c0d-223a-4f08-9889-36b67ef783b7"; // abaskabato@gmail.com
+const OWNER_ID = "854622b0-c0ac-4566-a287-3d457c46a810"; // <talent test account>
+const CANDIDATE_ID = "94592c0d-223a-4f08-9889-36b67ef783b7"; // <candidate test account>
 const SEED_TAG = "[SEED:core-loop]"; // marker in description for easy identification
 
 const MODE_DELETE = process.argv.includes("--delete");
@@ -147,9 +147,9 @@ async function createSeed() {
     if (candidate.candidateId === CANDIDATE_ID) abasMatched = true;
   }
   console.log(`  ✅ matched ${candidates.length} candidates`);
-  console.log(`  ${abasMatched ? "✅" : "⚠️ "} abaskabato@gmail.com ${abasMatched ? "received a match — visible in their feed" : "did NOT match (check skills/embedding threshold)"}`);
+  console.log(`  ${abasMatched ? "✅" : "⚠️ "} <candidate test account> ${abasMatched ? "received a match — visible in their feed" : "did NOT match (check skills/embedding threshold)"}`);
 
-  console.log(`\nSeed complete. Job id=${job.id}. Log in as abaskabato@gmail.com to apply → take exam → chat.`);
+  console.log(`\nSeed complete. Job id=${job.id}. Log in as <candidate test account> to apply → take exam → chat.`);
   console.log(`Clean up later with: npx tsx scripts/seed-internal-job.ts --delete`);
 }
 
