@@ -18,6 +18,20 @@ const ALLOWLIST = {
       'user input reaches a glob pattern at runtime.',
     reviewBy: '2026-11-03',
   },
+  // tinypool: both advisories need tinypool >= 2.1.2, which only vitest 4
+  // brings (a major upgrade of the test runner). Test-only: tinypool runs our
+  // own test workers in CI and dev, never in production, and its options come
+  // from our config, not user input.
+  'GHSA-5gmw-xhrv-c9v3': {
+    package: 'tinypool',
+    reason: 'Test runner only (vitest 3 -> tinypool 1.x); fix needs vitest 4. Never shipped; worker options come from our own config.',
+    reviewBy: '2026-11-07',
+  },
+  'GHSA-85c8-ppgw-ccpr': {
+    package: 'tinypool',
+    reason: 'Test runner only (vitest 3 -> tinypool 1.x); fix needs vitest 4. Never shipped; run() options come from our own config.',
+    reviewBy: '2026-11-07',
+  },
 };
 
 const BLOCKING = new Set(['high', 'critical']);
