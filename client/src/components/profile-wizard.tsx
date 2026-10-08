@@ -520,8 +520,8 @@ export default function ProfileWizard({ onComplete, skipResumeStep = false }: Pr
 
             <div className="bg-gray-50 dark:bg-gray-800/50 p-4 rounded-lg">
               <p className="text-sm text-gray-600 dark:text-gray-400">
-                <strong>Why upload?</strong> Candidates with resumes get 3x more interview requests. 
-                We'll extract your skills and experience automatically.
+                <strong>Why upload?</strong> We rank every live job by how well it fits you, and check the
+                requirements that usually rule people out before you apply. We'll extract your skills and experience automatically.
               </p>
             </div>
           </CardContent>
