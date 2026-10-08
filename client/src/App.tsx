@@ -11,6 +11,7 @@ import ForgotPasswordPage from "@/pages/forgot-password";
 import ResetPasswordPage from "@/pages/reset-password";
 import AuthConfirmPage from "@/pages/auth-confirm";
 import GuidedSetup from "@/pages/guided-setup";
+import { SiteNoticeBanner } from "@/components/site-notice-banner";
 import CandidateDashboard from "@/pages/candidate-dashboard-streamlined";
 import TalentDashboard from "@/pages/talent-dashboard";
 import ExamPage from "@/pages/exam-page";
@@ -54,6 +55,7 @@ function App() {
       <SessionContextProvider supabaseClient={supabase}>
         <PageMeta />
         <AccountEmailSync />
+        <SiteNoticeBanner />
         <Switch>
           <Route path="/" component={Landing} />
           <Route path="/manifesto" component={ManifestoPage} />

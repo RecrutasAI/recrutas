@@ -37,6 +37,20 @@ set -a
 source .env
 set +a
 
+# "Pause background jobs" switch (admin console / Autopilot, runtime_settings
+# pauseNonEssentialCrons). Under load these wait; backups, embeddings, the ATS
+# scrapers and alerts always run. If the setting can't be read, the job runs.
+NONESSENTIAL_JOBS="${NONESSENTIAL_JOBS:-discover-companies scrape-external-jobs auto-hide-ghost-jobs warm-candidate-matches compute-job-requirements}"
+case " $NONESSENTIAL_JOBS " in
+  *" $JOB "*)
+    PAUSED="$(psql "${DATABASE_URL:-}" -tAX -c "SELECT value::text FROM runtime_settings WHERE key = 'pauseNonEssentialCrons'" 2>/dev/null || true)"
+    if [ "$PAUSED" = "true" ]; then
+      echo "$(date -u +%FT%TZ) [$JOB] paused by the 'Pause background jobs' switch, skipping" >>"$LOG"
+      exit 0
+    fi
+    ;;
+esac
+
 # Memory bounding. Postgres shares 1.9GB with these workers, so an unbounded
 # scraper can push the DB into reclaim or get the kernel OOM-killer to pick a
 # victim of its choosing. Running each job in its own cgroup scope means the job

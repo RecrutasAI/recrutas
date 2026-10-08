@@ -14,10 +14,14 @@
  *     time, so hiding, applying and take-downs show up immediately;
  *   - descriptions are not stored (they're the heaviest column); they are read
  *     back for the returned jobs only, as fetchScoredJobs does.
- * FEED_CACHE=off disables it entirely.
+ * The console's switches decide (runtime_settings: feedCache, feedCacheTtlMinutes),
+ * so an admin or Autopilot can change them without a deploy. FEED_CACHE=off is an
+ * emergency hard off that wins over the switch, and FEED_CACHE_TTL_MINUTES, when
+ * set, overrides the switch's lifetime.
  */
 import { db } from '../db';
 import { sql } from 'drizzle-orm/sql';
+import { getSettings } from './runtime-settings.service';
 
 type Conn = { execute: typeof db.execute };
 const rows = (r: any): any[] => (r?.rows ?? r) as any[];
@@ -33,9 +37,18 @@ export function feedCacheEnabled(env: NodeJS.ProcessEnv = process.env): boolean 
   return (env.FEED_CACHE ?? 'on').toLowerCase() !== 'off';
 }
 
-export function feedCacheTtlMs(env: NodeJS.ProcessEnv = process.env): number {
+export function feedCacheTtlMs(env: NodeJS.ProcessEnv = process.env, switchMinutes = 120): number {
   const minutes = Number(env.FEED_CACHE_TTL_MINUTES);
-  return (Number.isFinite(minutes) && minutes > 0 ? minutes : 120) * 60_000;
+  return (Number.isFinite(minutes) && minutes > 0 ? minutes : switchMinutes) * 60_000;
+}
+
+/** Whether to use the cache right now, and for how long an entry stays fresh. */
+export async function feedCacheConfig(env: NodeJS.ProcessEnv = process.env): Promise<{ enabled: boolean; ttlMs: number }> {
+  const settings = await getSettings();
+  return {
+    enabled: feedCacheEnabled(env) && settings.feedCache,
+    ttlMs: feedCacheTtlMs(env, settings.feedCacheTtlMinutes),
+  };
 }
 
 /** Same filters, same key: trimmed, case-folded, empty values dropped, fixed field order. */
@@ -88,6 +101,7 @@ export async function readFeedCache(
   excludeIds: Set<number>,
   conn: Conn = db,
   now: Date = new Date(),
+  ttlMs: number = feedCacheTtlMs(),
 ): Promise<any[] | null> {
   const r = await conn.execute(sql`
     SELECT c.jobs, c.computed_at, GREATEST(p.updated_at, p.embedding_updated_at) AS profile_changed_at
@@ -96,7 +110,7 @@ export async function readFeedCache(
     WHERE c.candidate_id = ${candidateId}::uuid AND c.filter_key = ${feedCacheKey(filters)}`);
   const hit = rows(r)[0];
   if (!hit) {return null;}
-  const fresh = isFeedCacheFresh(new Date(hit.computed_at), hit.profile_changed_at ? new Date(hit.profile_changed_at) : null, now, feedCacheTtlMs());
+  const fresh = isFeedCacheFresh(new Date(hit.computed_at), hit.profile_changed_at ? new Date(hit.profile_changed_at) : null, now, ttlMs);
   if (!fresh) {return null;}
   const cached: any[] = Array.isArray(hit.jobs) ? hit.jobs : [];
   const ids = cached.map(j => j?.id).filter((id): id is number => typeof id === 'number');

@@ -60,7 +60,7 @@ import {
 } from "../shared/schema.js";
 import { isRecentlyVerifiedLive, LIVE_BADGE_MAX_AGE_HOURS } from "../shared/liveness.js";
 import { db } from "./db";
-import { feedCacheEnabled, readFeedCache, writeFeedCache } from './services/feed-cache.service';
+import { feedCacheConfig, readFeedCache, writeFeedCache } from './services/feed-cache.service';
 import { eq, desc, asc, and, or } from "drizzle-orm";
 import { getTableColumns } from "drizzle-orm/utils";
 import { sql, isNotNull, type SQL } from "drizzle-orm/sql";
@@ -2304,11 +2304,12 @@ export class DatabaseStorage implements IStorage {
   ): Promise<{ jobs: any[]; total: number; page: number; hasMore: boolean }> {
     try {
       // Callers with their own retrieval settings (MCP, weekly summary) always score live.
-      const useCache = !retrieval && feedCacheEnabled();
+      const cache = retrieval ? { enabled: false, ttlMs: 0 } : await feedCacheConfig();
+      const useCache = cache.enabled;
       let recommendations: any[] | null = null;
       if (useCache) {
         try {
-          recommendations = await readFeedCache(candidateId, filters, new Set(await this.getExcludedJobIds(candidateId)));
+          recommendations = await readFeedCache(candidateId, filters, new Set(await this.getExcludedJobIds(candidateId)), undefined, undefined, cache.ttlMs);
           if (recommendations) {console.log(`[feed-cache] hit user=${candidateId} jobs=${recommendations.length}`);}
         } catch (err) {
           console.warn(`[feed-cache] read failed, scoring live: ${(err as Error).message}`);
