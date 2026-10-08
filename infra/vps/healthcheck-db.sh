@@ -95,12 +95,23 @@ else
   MSG="$MSG wal=${WAL_MB}MB"
 fi
 
+# 2c. Capacity numbers for the admin console's System & scaling tab
+# (docs/scaling-strategy.md, section 5). Reported, not alerted on here.
+MEM_TOTAL_MB="$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null)"; MEM_TOTAL_MB="${MEM_TOTAL_MB:-0}"
+MEM_AVAIL_MB="$(awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null)"; MEM_AVAIL_MB="${MEM_AVAIL_MB:-0}"
+LOAD1="$(awk '{print $1}' /proc/loadavg 2>/dev/null)"; LOAD1="${LOAD1:-0}"
+CPUS="$(nproc 2>/dev/null || echo 0)"
+CONNS="$("$PSQL" "$URL" -tAc "SELECT count(*) FROM pg_stat_activity" 2>/dev/null | tr -dc '0-9')"; CONNS="${CONNS:-0}"
+MAX_CONNS="$("$PSQL" "$URL" -tAc "SHOW max_connections" 2>/dev/null | tr -dc '0-9')"; MAX_CONNS="${MAX_CONNS:-0}"
+
 # 3. Heartbeat into pipeline_runs (best-effort; never fail the check on a write error)
 "$PSQL" "$URL" -v ON_ERROR_STOP=0 -q >/dev/null 2>&1 <<SQL || true
 INSERT INTO pipeline_runs (pipeline, status, started_at, finished_at, items_processed, message, stats)
 VALUES ('vps-db-health', '${STATUS}', '${STARTED}', now(), 0,
         '$(printf '%s' "$MSG" | sed "s/'/''/g")',
-        jsonb_build_object('dbSize', '${DB_SIZE}', 'diskPct', ${DISK_PCT}));
+        jsonb_build_object('dbSize', '${DB_SIZE}', 'diskPct', ${DISK_PCT},
+          'memTotalMb', ${MEM_TOTAL_MB}, 'memAvailableMb', ${MEM_AVAIL_MB}, 'load1', ${LOAD1}, 'cpus', ${CPUS},
+          'dbConnections', ${CONNS}, 'maxConnections', ${MAX_CONNS}, 'walMb', ${WAL_MB}));
 SQL
 
 echo "[vps-db-health] ${STATUS}: ${MSG}"
