@@ -8,13 +8,21 @@ import { asyncHandler } from '../middleware/error-handler';
 import { adminEmailFromSession, verifyAdminSecret } from '../middleware/security';
 import { getOverview } from '../services/admin-console.service';
 import {
-  SETTING_DEFAULTS, SETTING_LABELS, isSettingKey, listSettings, recentAudit, setSetting,
+  SETTING_DEFAULTS, SETTING_LABELS, getSettings, isSettingKey, listSettings, recentAudit, setSetting,
 } from '../services/runtime-settings.service';
 
 // The secret is for scripts; it has no person behind it, so changes made with it say so.
 const actorOf = (req: Request) => adminEmailFromSession(req) ?? 'admin-secret';
 
 export function registerAdminConsoleRoutes(app: Express): void {
+  // Public: what every visitor's browser needs from the switches (notice banner,
+  // sign-up waitlist). Edge-cached for a minute; getSettings never throws.
+  app.get('/api/site/status', asyncHandler(async (_req, res) => {
+    const s = await getSettings();
+    res.set('Cache-Control', 'public, max-age=30, s-maxage=60');
+    res.json({ notice: s.noticeBanner, signupWaitlist: s.signupWaitlist });
+  }));
+
   app.get('/api/admin/console/overview', asyncHandler(async (req, res) => {
     if (!verifyAdminSecret(req, res)) {return;}
     res.set('Cache-Control', 'no-store');

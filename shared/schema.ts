@@ -1026,6 +1026,18 @@ export const discoveredCompanies = pgTable("discovered_companies", {
  * that produced the match score. When an exam score arrives, it's joined back
  * to the signal, creating a labeled data point for weight tuning.
  */
+// Per-candidate cache of the ranked feed (server/services/feed-cache.service.ts).
+// migrations/add-candidate-feed-cache.sql
+export const candidateFeedCache = pgTable("candidate_feed_cache", {
+  candidateId: uuid("candidate_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  filterKey: text("filter_key").notNull(),
+  jobs: jsonb("jobs").notNull(),
+  computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table: any) => ({
+  pk: primaryKey({ columns: [table.candidateId, table.filterKey] }),
+  idxComputedAt: index("candidate_feed_cache_computed_at_idx").on(table.computedAt),
+}));
+
 export const matchSignals = pgTable("match_signals", {
   id: serial("id").primaryKey(),
   candidateId: varchar("candidate_id", { length: 255 }).notNull(),

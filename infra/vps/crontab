@@ -177,3 +177,6 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 
 # VPS DB health check — every 15 min (liveness + disk; heartbeats to pipeline_runs)
 */15 * * * * $RUN vps-db-health 3 bash infra/vps/healthcheck-db.sh
+# Autopilot: flips the console's protective switches under load and back when
+# recovered (docs/scaling-strategy.md). Never changes infrastructure.
+* * * * * $RUN autopilot 2 npx tsx scripts/autopilot.ts

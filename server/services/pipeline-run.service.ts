@@ -46,6 +46,7 @@ export const PIPELINE_MAX_AGE_MIN: Record<string, number> = {
   'warm-candidate-matches': 24 * 60 + 180,// daily
   'cleanup-errors': 7 * 24 * 60 + 24 * 60,// weekly (+1d slack)
   'vps-db-health': 15 + 30,               // every 15 min — self-hosted DB liveness
+  'autopilot': 15 + 15,                   // every minute; heartbeat row every 15 min
 
   // Backup / safety net. These were reporting to pipeline_runs but were absent
   // from this map, and `stale` is only computed when an expected age exists —
