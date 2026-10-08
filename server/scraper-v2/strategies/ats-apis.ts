@@ -8,7 +8,14 @@
 import { ScrapedJob, CompanyConfig, ATSType, JobLocation, SalaryInfo } from '../types.js';
 import { logger } from '../utils/logger.js';
 
-const MAX_RESPONSE_SIZE = 5 * 1024 * 1024; // 5MB
+// Structured job-board APIs (Greenhouse, Lever, Ashby) return every posting with its full
+// description in one response, so big employers exceed 5 MB: Anduril ~43 MB, Databricks
+// ~10 MB, Cloudflare ~7 MB. Parsing 43 MB costs ~200 MB of heap, well inside the scrape
+// cron's 1.3 GB cap. Scraped HTML keeps its 5 MB cap (ai-extraction.ts).
+const MAX_RESPONSE_SIZE = 64 * 1024 * 1024;
+const WORKDAY_PAGE_SIZE = 20;      // Workday's public API rejects larger pages
+const WORKDAY_MAX_JOBS = 2000;     // 100 pages; Salesforce, the largest we track, lists ~1,500
+const WORKDAY_PAGE_DELAY_MS = 150;
 
 // ATS API Endpoints (only APIs with known working formats)
 const ATS_ENDPOINTS: Record<string, (boardId: string) => string> = {
@@ -117,32 +124,44 @@ async function fetchFromWorkday(company: CompanyConfig, fetchOptions?: RequestIn
 
   logger.info(`Fetching jobs from Workday API for ${company.name}`, { apiUrl });
 
-  // Fetch up to 100 jobs in one request
-  const body = JSON.stringify({ limit: 100, offset: 0, searchText: '', locations: [] });
+  // Workday rejects page sizes above 20 with a 400 (a limit of 100 silently
+  // emptied Salesforce, Adobe and Workday itself), so page through the board.
+  // Only the first page reports the total.
+  const jobs: ScrapedJob[] = [];
+  let total = Infinity;
+  for (let offset = 0; offset < total && offset < WORKDAY_MAX_JOBS; offset += WORKDAY_PAGE_SIZE) {
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (compatible; JobBot/1.0)',
+      },
+      body: JSON.stringify({ limit: WORKDAY_PAGE_SIZE, offset, searchText: '', appliedFacets: {} }),
+      signal: (fetchOptions as any)?.signal,
+    });
 
-  const response = await fetch(apiUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      'User-Agent': 'Mozilla/5.0 (compatible; JobBot/1.0)',
-    },
-    body,
-    signal: (fetchOptions as any)?.signal,
-  });
+    if (!response.ok) {
+      // A later page failing keeps what we already have; the first page failing is an error.
+      if (offset === 0) {throw new Error(`Workday API returned ${response.status} for ${company.name}`);}
+      logger.warn(`Workday page at offset ${offset} returned ${response.status} for ${company.name}; keeping ${jobs.length} jobs`);
+      break;
+    }
 
-  if (!response.ok) {
-    throw new Error(`Workday API returned ${response.status} for ${company.name}`);
+    const text = await response.text();
+    if (text.length > MAX_RESPONSE_SIZE) {
+      throw new Error(`Workday response too large: ${text.length} chars`);
+    }
+
+    const data = JSON.parse(text);
+    if (offset === 0) {total = Number(data.total) || 0;}
+    const page = parseWorkdayResponse(data, company, apiUrl);
+    if (page.length === 0) {break;}
+    jobs.push(...page);
+    await new Promise(r => setTimeout(r, WORKDAY_PAGE_DELAY_MS));
   }
 
-  const text = await response.text();
-  if (text.length > MAX_RESPONSE_SIZE) {
-    throw new Error(`Workday response too large: ${text.length} chars`);
-  }
-
-  const data = JSON.parse(text);
-  const jobs = parseWorkdayResponse(data, company, apiUrl);
-  logger.info(`Successfully fetched ${jobs.length} jobs from Workday for ${company.name}`);
+  logger.info(`Successfully fetched ${jobs.length} of ${total} jobs from Workday for ${company.name}`);
   return jobs;
 }
 
