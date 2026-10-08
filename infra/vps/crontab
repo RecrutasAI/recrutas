@@ -29,7 +29,7 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # measured 2026-07-31T18:00 with both live: 806MB + 395MB and only 280MB free,
 # with the embedding pass visibly slowed by CPU contention on 2 vCPUs.
 # 1/7/13/19 collide with nothing else in this file — keep it that way.
-0 1,7,13,19 * * * CRON_LOCK_GROUP=embed $RUN batch-embeddings 90 env BATCH_LIMIT=20000 npx tsx server/services/batch-embedding.service.ts
+0 1,7,13,19 * * * CRON_LOCK_GROUP=embed CRON_LOCK_WAIT_SEC=300 $RUN batch-embeddings 90 env BATCH_LIMIT=20000 npx tsx server/services/batch-embedding.service.ts
 
 # Candidate Embeddings — EVERY MINUTE. This is an activation-latency path, not a
 # housekeeping one: a candidate who just uploaded a résumé has NO embedding until

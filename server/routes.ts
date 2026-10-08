@@ -1436,13 +1436,21 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     try {
       if (!req.user) {return res.status(401).json({ message: "Unauthorized" });}
       // Fetch user + candidate profile in parallel to eliminate sequential round-trip
-      const [user, candidateProfile] = await Promise.all([
+      // eslint-disable-next-line prefer-const -- reassigned below when the row is created
+      let [user, candidateProfile] = await Promise.all([
         storage.getUser(req.user.id),
         storage.getCandidateUser(req.user.id).catch(() => null),
       ]);
       // A signed-in account gets its app row when it picks a role, so a brand-new
       // signup has none yet. That's an expected state, not a missing resource:
       // the 404 logged a console error on every new user's first page.
+      // An email sign-up arrives with its role in user_metadata and no row
+      // (see syncAppUser); create it now so its first upload works. Accounts
+      // without a role (first Google sign-in) still pick one in onboarding.
+      if (!user && req.user.user_metadata?.role) {
+        const r = await syncAppUser(req).catch((err: Error) => { console.error('[auth/user] could not create app user:', err.message); return null; });
+        if (r?.ok) {user = r.user;}
+      }
       if (!user) {return res.json(null);}
       // Supabase Auth owns the email; the users row is a copy that notification
       // emails are addressed from. A confirmed email change only reached it via
@@ -1515,47 +1523,62 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     return { ok: true, invite: result.invite, code: result.invite.code, source };
   }
 
+  /**
+   * Create the signed-in account's app row (users) if it doesn't exist yet:
+   * invite gate, sign-up source, welcome email and signup_completed, once.
+   *
+   * Email sign-ups confirm by email, so SignUpForm has no session to call
+   * /api/auth/sync with, and their role is already in user_metadata, so
+   * RoleGuard skips role selection (the other place the row was made). They
+   * reached the dashboard with no users row, and the first resume upload hit
+   * candidate_users' FK and failed ("Failed to upload resume") — found by the
+   * 2026-10-08 end-to-end run. So /api/auth/user and the resume upload call
+   * this too.
+   */
+  async function syncAppUser(req: any): Promise<{ ok: true; user: any; isNew: boolean } | { ok: false; status: number; body: any }> {
+    const isNew = !(await storage.getUser(req.user.id));
+    let redeemedCode: string | undefined;
+    let pendingInvite: any = null;
+    let signupSource: string | undefined;
+    if (isNew) {
+      const role = req.user.user_metadata?.role || 'candidate';
+      const invite = await resolveSignupInvite(req, role);
+      if (!invite.ok) {return { ok: false, status: invite.status, body: invite.body };}
+      pendingInvite = invite.invite;
+      redeemedCode = invite.code;
+      signupSource = invite.source;
+    }
+
+    const user = await storage.upsertUser({
+      id: req.user.id,
+      email: req.user.email || '',
+      name: req.user.email || req.user.id,
+      emailVerified: true,
+      // Recorded independently: an untracked code still yields a source.
+      ...(isNew && redeemedCode ? { invite_code_used: redeemedCode } : {}),
+      ...(isNew && signupSource ? { signup_source: signupSource } : {}),
+    });
+    // Safe to consume now that the user row exists.
+    if (pendingInvite) {
+      await storage.redeemInviteCode(pendingInvite, req.user.id);
+    }
+    if (isNew && req.user.email) {
+      serverTrack(req.user.id, 'signup_completed', { role: req.user.user_metadata?.role, source: signupSource });
+      sendWelcomeEmail(req.user.email, req.user.user_metadata?.first_name).catch((err: Error) =>
+        console.error("Failed to send welcome email:", err)
+      );
+    }
+    return { ok: true, user, isNew };
+  }
+
   // Sync Supabase auth user into local DB (called after signup/login)
   // New users may supply an invite code; it is only REQUIRED when the gate is on.
   app.post('/api/auth/sync', isAuthenticated, asyncHandler(async (req: any, res) => {
     try {
       if (!req.user) {return res.status(401).json({ message: "Unauthorized" });}
-      const isNew = !(await storage.getUser(req.user.id));
-
-      let redeemedCode: string | undefined;
-      let pendingInvite: any = null;
-      let signupSource: string | undefined;
-      if (isNew) {
-        const role = req.user.user_metadata?.role || 'candidate';
-        const invite = await resolveSignupInvite(req, role);
-        if (!invite.ok) {
-          return res.status(invite.status).json(invite.body);
-        }
-        pendingInvite = invite.invite;
-        redeemedCode = invite.code;
-        signupSource = invite.source;
-      }
-
-      const user = await storage.upsertUser({
-        id: req.user.id,
-        email: req.user.email || '',
-        name: req.user.email || req.user.id,
-        emailVerified: true,
-        // Recorded independently: an untracked code still yields a source.
-        ...(isNew && redeemedCode ? { invite_code_used: redeemedCode } : {}),
-        ...(isNew && signupSource ? { signup_source: signupSource } : {}),
-      });
-      // Safe to consume now that the user row exists.
-      if (pendingInvite) {
-        await storage.redeemInviteCode(pendingInvite, req.user.id);
-      }
-      if (isNew && req.user.email) {
-        serverTrack(req.user.id, 'signup_completed', { role: req.user.user_metadata?.role, source: signupSource });
-        sendWelcomeEmail(req.user.email, req.user.user_metadata?.first_name).catch((err: Error) =>
-          console.error("Failed to send welcome email:", err)
-        );
-      }
-      res.json({ success: true, user });
+      const r = await syncAppUser(req);
+      if (!r.ok) {return res.status(r.status).json(r.body);}
+      res.json({ success: true, user: r.user });
     } catch (error) {
       console.error("Error syncing user:", error);
       res.status(500).json({ message: "Failed to sync user" });
@@ -1928,6 +1951,11 @@ Analyze the form and return the actions JSON to fill every field you can.`;
         mimetype: req.file.mimetype,
         size: req.file.size,
       });
+      // Backstop for accounts that reach the dashboard without an app row (see syncAppUser).
+      if (!(await storage.getUser(req.user.id))) {
+        const synced = await syncAppUser(req);
+        if (!synced.ok) {return res.status(synced.status).json(synced.body);}
+      }
       const result = await resumeService.uploadAndProcessResume(req.user.id, req.file.buffer, req.file.mimetype);
       await storage.incrementDailyUsage(req.user.id, 'resume_upload');
       serverTrack(req.user.id, 'resume_parsed', { success: true, mimetype: req.file.mimetype });

@@ -24,9 +24,21 @@ LOG="$LOG_DIR/$JOB.log"
 # candidate pass starting inside a 90-minute job pass put two copies in memory
 # at once. The per-job lock never caught that — different job names, different
 # lock files. Skipping is the right outcome: the next tick picks the work up.
+#
+# CRON_LOCK_WAIT_SEC (crontab line) makes a job wait that long for the lock
+# instead of skipping at once. batch-embeddings needs it: it shares the 'embed'
+# lock with embed-candidates, which runs every minute and holds the lock for
+# ~2 s. Both fire at :00, so batch-embeddings lost the race and skipped 8 of 16
+# runs (2026-10-05..07), leaving new jobs unmatched for up to two days.
 LOCK_NAME="${CRON_LOCK_GROUP:-$JOB}"
+LOCK_WAIT="${CRON_LOCK_WAIT_SEC:-0}"
 exec 9>"/tmp/recrutas-cron-$LOCK_NAME.lock"
-if ! flock -n 9; then
+if [ "$LOCK_WAIT" -gt 0 ] 2>/dev/null; then
+  if ! flock -w "$LOCK_WAIT" 9; then
+    echo "$(date -u +%FT%TZ) [$JOB] lock '$LOCK_NAME' still held after ${LOCK_WAIT}s, skipping" >>"$LOG"
+    exit 0
+  fi
+elif ! flock -n 9; then
   echo "$(date -u +%FT%TZ) [$JOB] lock '$LOCK_NAME' held, skipping" >>"$LOG"
   exit 0
 fi
