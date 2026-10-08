@@ -40,7 +40,17 @@ export interface CapacityInput {
   embeddingBacklog: number | null;
   failingPipelines: number | null;
   healthCheckAgeMin: number | null;
+  /** Résumés parsed in the last 7 days, and how many of them are still on the rule engine (no AI answered). */
+  parses7d?: number | null;
+  parsesOnRules7d?: number | null;
+  /** Sign-ups in the last 7 days: with the parse signal, the "pay for AI" trigger. */
+  signups7d?: number | null;
 }
+
+/** Below this many parses a week the share is noise; the signal reads "unknown". */
+export const MIN_PARSES_FOR_SIGNAL = 5;
+/** Sign-ups a week that count as an influx (docs/scaling-strategy.md: pay only on real demand). */
+export const INFLUX_SIGNUPS_7D = 50;
 
 // Below `amber` is green, from `amber` up to `red` is amber, at `red` or above is red.
 function grade(value: number | null, amber: number, red: number, unknown = false): Level {
@@ -116,7 +126,34 @@ export function evaluateSignals(i: CapacityInput): Signal[] {
       healthy: 'within 20 min', actAt: 'over an hour',
       playbook: 'The VPS health cron is not reporting: the server or its cron may be down. Check the watchdog email and SSH in.',
     },
+    aiParseSignal(i),
   ];
+}
+
+/**
+ * Résumé parsing runs on free AI tiers (Groq → Gemini Lite → OpenRouter free →
+ * Cloudflare). When they all run out, a parse falls to the rule engine, which
+ * gets companies and titles wrong; the retry cron upgrades it once capacity is
+ * back. A high share still on rules means the free tiers no longer cover the
+ * demand. Paying is the playbook ONLY when that coincides with a real influx of
+ * sign-ups (the founder's rule, 2026-10-08) and funding is in place.
+ */
+function aiParseSignal(i: CapacityInput): Signal {
+  const total = i.parses7d ?? null;
+  const onRules = i.parsesOnRules7d ?? null;
+  const tooFew = total === null || onRules === null || total < MIN_PARSES_FOR_SIGNAL;
+  const pct = total && onRules !== null ? (100 * onRules) / total : null;
+  const influx = (i.signups7d ?? 0) >= INFLUX_SIGNUPS_7D;
+  return {
+    key: 'aiParse', label: 'Résumés stuck on the rule engine (7 days)', value: pct,
+    display: total === null || onRules === null ? 'not measured'
+      : `${onRules} of ${total}${pct === null ? '' : ` (${Math.round(pct)}%)`}${tooFew ? ' (too few to judge)' : ''}`,
+    level: tooFew ? 'unknown' : grade(pct, 10, 25),
+    healthy: 'under 10%: the free AI tiers cover demand', actAt: '25% or more',
+    playbook: influx
+      ? `The free AI tiers are not keeping up AND sign-ups are an influx (${i.signups7d} in 7 days). This is the "pay" trigger, if funding is in place: add credit to one provider (OpenRouter or Groq pay-as-you-go) and put it first in the rotation.`
+      : 'The free AI tiers ran short, but there is no sign-up influx, so stay free: the retry cron upgrades these every 10 minutes as quotas reset. Check that every rotation key (Groq, Gemini, OpenRouter, Cloudflare) is set.',
+  };
 }
 
 /** The worst level among the signals, ignoring unknowns. */
@@ -145,7 +182,7 @@ export interface Overview {
 
 export async function getOverview(conn: Conn = db): Promise<Overview> {
   const count = (q: any) => one(conn, q, r => num(r.n), null as number | null);
-  const [signups24h, signups7d, users, active7d, resumes, apps7d, feed, conns, health, jobs, backlog, failing, settings] = await Promise.all([
+  const [signups24h, signups7d, users, active7d, resumes, apps7d, feed, conns, health, jobs, backlog, failing, parses, settings] = await Promise.all([
     count(sql`SELECT count(*)::int AS n FROM users WHERE "createdAt" > NOW() - INTERVAL '24 hours'`),
     count(sql`SELECT count(*)::int AS n FROM users WHERE "createdAt" > NOW() - INTERVAL '7 days'`),
     count(sql`SELECT count(*)::int AS n FROM users`),
@@ -176,6 +213,11 @@ export async function getOverview(conn: Conn = db): Promise<Overview> {
         WHERE started_at > NOW() - INTERVAL '3 days' ORDER BY pipeline, started_at DESC
       ) last WHERE status = 'error'`,
       r => num(r.n), null),
+    one(conn, sql`
+      SELECT count(*)::int AS total,
+             count(*) FILTER (WHERE resume_parsing_data->>'extractor' IN ('rules', 'none'))::int AS on_rules
+      FROM candidate_users WHERE parsed_at > NOW() - INTERVAL '7 days'`,
+      r => ({ total: num(r.total), onRules: num(r.on_rules) }), { total: null, onRules: null }),
     getSettings(conn),
   ]);
 
@@ -185,6 +227,7 @@ export async function getOverview(conn: Conn = db): Promise<Overview> {
     dbConnections: conns.used, maxConnections: conns.max,
     memAvailableMb: num(s.memAvailableMb), load1: num(s.load1), cpus: num(s.cpus), diskPct: num(s.diskPct),
     activeJobs: num(jobs?.live), embeddingBacklog: backlog, failingPipelines: failing, healthCheckAgeMin: health.ageMin,
+    parses7d: parses.total, parsesOnRules7d: parses.onRules, signups7d,
   });
 
   return {

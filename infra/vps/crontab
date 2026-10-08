@@ -58,13 +58,14 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # retired; model retirements broke résumé parsing silently three times.
 50 2 * * * $RUN check-ai-models 3 npx tsx scripts/check-ai-models.ts
 
-# Retry Failed Parses — hourly at :20. Also upgrades résumés that fell back to
-# the rule engine because the free Groq/Gemini quota ran out. Groq's daily limit
-# is a rolling window, so hourly means an upgrade within ~an hour of capacity
-# returning instead of the next night; quota-caused misses don't use up the
+# Retry Failed Parses — every 10 min. Also upgrades résumés that fell back to
+# the rule engine because the free-tier quotas ran out (Groq → Gemini Lite →
+# OpenRouter free → Cloudflare). Groq's daily limit is a rolling window, so an
+# upgrade lands within minutes of capacity returning; quota-caused misses don't use up the
 # 3-attempt cap. At most 3 parses (~9K tokens) per run; a run with nothing to
 # retry exits in seconds.
-20 * * * * $RUN retry-failed-parses 10 npx tsx scripts/retry-failed-parses.ts
+# 90 s AI budget per résumé (vs 15 s on a live upload) so every provider gets a turn.
+*/10 * * * * PARSE_AI_TIMEOUT_MS=90000 $RUN retry-failed-parses 9 npx tsx scripts/retry-failed-parses.ts
 
 # Auto-hide Ghost Jobs — daily 04:00
 0 4 * * * $RUN auto-hide-ghost-jobs 5 npx tsx scripts/auto-hide-ghost-jobs.ts --staleDays=30

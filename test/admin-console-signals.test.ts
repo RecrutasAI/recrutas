@@ -57,3 +57,25 @@ describe('evaluateSignals', () => {
     expect(overallLevel(allUnknown)).toBe('unknown');
   });
 });
+
+describe('AI parse health (the "pay for AI" trigger)', () => {
+  const parse = (parses7d: number, parsesOnRules7d: number, signups7d = 3) =>
+    evaluateSignals({ ...prod, parses7d, parsesOnRules7d, signups7d }).find(s => s.key === 'aiParse')!;
+
+  it('grades the share of recent résumés still on the rule engine', () => {
+    expect(parse(12, 1).level).toBe('green');   // prod on 2026-10-08: 11 AI, 1 rules
+    expect(parse(20, 3).level).toBe('amber');
+    expect(parse(20, 6).level).toBe('red');
+  });
+
+  it('does not judge on fewer than 5 parses', () => {
+    expect(parse(3, 3).level).toBe('unknown');
+    expect(parse(3, 3).display).toMatch(/too few/);
+  });
+
+  it('says stay free without an influx, and only says pay with one', () => {
+    expect(parse(20, 10, 3).playbook).toMatch(/stay free/);
+    expect(parse(20, 10, 3).playbook).not.toMatch(/pay trigger/);
+    expect(parse(200, 100, 80).playbook).toMatch(/"pay" trigger/);
+  });
+});

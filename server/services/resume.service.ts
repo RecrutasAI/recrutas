@@ -308,6 +308,8 @@ export class ResumeService {
           degraded: parseResult?.degraded ?? true,
           ...(parseResult?.primaryError ? { primaryError: parseResult.primaryError } : {}),
           parsedWithModel: modelFor(parseResult?.extractor),
+          // Which free-rotation provider answered (groq, gemini-lite, openrouter-free, cloudflare).
+          ...((aiExtracted as any)?.aiProvider ? { aiProvider: (aiExtracted as any).aiProvider } : {}),
           extractedSkillsCount: (aiExtracted.skills?.technical?.length || 0) +
             (aiExtracted.skills?.soft?.length || 0) +
             (aiExtracted.skills?.tools?.length || 0),
@@ -545,6 +547,8 @@ export class ResumeService {
           degraded: parseResult?.degraded ?? true,
           ...(parseResult?.primaryError ? { primaryError: parseResult.primaryError } : {}),
           parsedWithModel: modelFor(parseResult?.extractor),
+          // Which free-rotation provider answered (groq, gemini-lite, openrouter-free, cloudflare).
+          ...((aiExtracted as any)?.aiProvider ? { aiProvider: (aiExtracted as any).aiProvider } : {}),
           parsingError: parsingSuccess ? null : 'AI parsing failed on retry',
           personalInfo: contactInfo(aiExtracted),
           positions: (aiExtracted.experience?.positions || []).slice(0, 6).map((p: any) => ({
