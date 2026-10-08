@@ -201,7 +201,7 @@ function isEmptyExtraction(d: AIExtractedData): boolean {
 function freeRotation(): Array<{ provider: TextProvider; label: string; model?: string; timeoutMs: number }> {
   return [
     { provider: 'gemini', label: 'gemini-lite', model: process.env.PARSE_GEMINI_MODEL || 'gemini-3.5-flash-lite', timeoutMs: 25_000 },
-    { provider: 'openrouter', label: 'openrouter-free', model: process.env.PARSE_OPENROUTER_MODEL || 'openai/gpt-oss-20b:free', timeoutMs: 30_000 },
+    { provider: 'openrouter', label: 'openrouter-free', model: process.env.PARSE_OPENROUTER_MODEL || 'google/gemma-4-31b-it:free', timeoutMs: 30_000 },
     { provider: 'cloudflare', label: 'cloudflare', timeoutMs: 30_000 },
   ];
 }
