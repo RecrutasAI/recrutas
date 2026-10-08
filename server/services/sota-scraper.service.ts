@@ -41,7 +41,8 @@ const LEGACY_COMPANIES = [
   { name: 'Remote.com', careerUrl: 'https://remote.com/careers', greenhouseId: 'remotecom' },
   { name: 'Mercury', careerUrl: 'https://mercury.com/careers', greenhouseId: 'mercury' },
   { name: 'Cockroach Labs', careerUrl: 'https://www.cockroachlabs.com/careers/', greenhouseId: 'cockroachlabs' },
-  { name: 'Amplitude', careerUrl: 'https://amplitude.com/careers', greenhouseId: 'amplitude' },
+  // Amplitude moved from Greenhouse to Ashby (2026-10).
+  { name: 'Amplitude', careerUrl: 'https://amplitude.com/careers', ashbyId: 'amplitude' },
   { name: 'LaunchDarkly', careerUrl: 'https://launchdarkly.com/careers/', greenhouseId: 'launchdarkly' },
   { name: 'Anduril', careerUrl: 'https://www.anduril.com/careers/', greenhouseId: 'andurilindustries' },
   // Migrated from Lever (confirmed on Greenhouse)
@@ -50,12 +51,13 @@ const LEGACY_COMPANIES = [
   { name: 'Flexport', careerUrl: 'https://www.flexport.com/careers/', greenhouseId: 'flexport' },
   { name: 'Airtable', careerUrl: 'https://airtable.com/careers', greenhouseId: 'airtable' },
   { name: 'Webflow', careerUrl: 'https://webflow.com/careers', greenhouseId: 'webflow' },
-  { name: 'Grammarly', careerUrl: 'https://www.grammarly.com/jobs', greenhouseId: 'grammarly' },
+  // Grammarly (now Superhuman) dropped out: its careers page still links to a Greenhouse board that 404s (2026-10).
   { name: 'Asana', careerUrl: 'https://asana.com/jobs', greenhouseId: 'asana' },
   { name: 'Intercom', careerUrl: 'https://www.intercom.com/careers', greenhouseId: 'intercom' },
   { name: 'Calendly', careerUrl: 'https://calendly.com/careers', greenhouseId: 'calendly' },
   { name: 'Gusto', careerUrl: 'https://gusto.com/company/careers', greenhouseId: 'gusto' },
-  { name: 'Postman', careerUrl: 'https://www.postman.com/company/careers/', greenhouseId: 'postman' },
+  // Postman moved from Greenhouse to Workday (2026-10).
+  { name: 'Postman', careerUrl: 'https://www.postman.com/company/careers/', workdayId: 'postman', workdayBoardUrl: 'https://postman.wd108.myworkdayjobs.com/careers' },
   { name: 'Algolia', careerUrl: 'https://www.algolia.com/careers', greenhouseId: 'algolia' },
   { name: 'Contentful', careerUrl: 'https://www.contentful.com/careers/', greenhouseId: 'contentful' },
   { name: 'Pendo', careerUrl: 'https://www.pendo.io/careers/', greenhouseId: 'pendo' },
@@ -73,7 +75,7 @@ const LEGACY_COMPANIES = [
   // ============================================
   { name: 'Linear', careerUrl: 'https://linear.app/careers', ashbyId: 'linear' },
   { name: 'Notion', careerUrl: 'https://www.notion.so/careers', ashbyId: 'notion' },
-  { name: 'Retool', careerUrl: 'https://retool.com/careers', ashbyId: 'retool' },
+  // Retool dropped out: it moved from Ashby to Gem (jobs.gem.com/retool), which no strategy reads yet (2026-10).
   { name: 'Loom', careerUrl: 'https://www.loom.com/careers', ashbyId: 'loom' },
   { name: 'Ramp', careerUrl: 'https://ramp.com/careers', ashbyId: 'ramp' },
   { name: 'Deel', careerUrl: 'https://www.deel.com/careers', ashbyId: 'deel' },
