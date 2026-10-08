@@ -96,13 +96,20 @@ Steady growth hits the same walls in the same order, just later.
 4. New sign-ups go to a numbered waitlist (`SIGNUP_WAITLIST`); existing users are unaffected.
 5. Never: error pages, lost uploads, or a silently worse parse presented as final.
 
-## 7. What we deliberately don't do now
+## 7. Auto-scaling
+
+- **Web/API: already automatic.** Vercel adds function instances with traffic. On its own that makes the database problem worse: more instances means more connections, which is why the pooler (0.2) comes first.
+- **Database: not automatic today.** A single Hetzner VPS has no autoscaling; resizing is manual with a few minutes of downtime. Phase 0 compensates by doing less work per user (cache, queues) and degrading politely (section 6).
+- **Background work:** the queues in 0.3 make workers easy to scale later. Add a second worker box (Phase 1) before considering autoscaled workers.
+- **When to adopt autoscaling for the database:** at Phase 2/3, choose between a bigger self-managed server (cheapest, manual) and a managed Postgres that autoscales compute with pgvector and pooling built in (for example Neon, or AWS Aurora Serverless v2). Decide on cost at that time, the team's appetite for running a database, and whether a few minutes of resize downtime is still acceptable.
+
+## 8. What we deliberately don't do now
 
 - No microservices, Kubernetes or managed queues. Postgres tables plus the existing VPS cron runner are enough well past 10K users.
 - No chasing job volume for its own sake (RAM is the binding constraint, and users want the right 50 jobs, not 3 million).
 - No building Phase 2 before its trigger fires.
 
-## 8. Open questions to check before the PR
+## 9. Open questions to check before the PR
 
 - Current feed p95 at 156K jobs (measure; the 720 ms figure is from July at 72K).
 - Supabase auth email limit and Resend plan (dashboard).
