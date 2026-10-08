@@ -53,7 +53,7 @@ Steady growth hits the same walls in the same order, just later.
 | 0.2 | **Connection pooler.** pgBouncer in transaction mode on the VPS; Vercel connects through it. | Bursts queue instead of exhausting 60 connections | Engineering, production change, needs explicit OK | none |
 | 0.3 | **Async resume parsing.** Upload stores the file and returns; a queue does the AI parse; the dashboard shows "Reading your resume, your feed is ready in a few minutes". When the AI budget is out, the job waits rather than settling for the rules parse. `retry-failed-parses` also retries degraded parses. | Every user gets the good parse, just later; no slow uploads during a spike | Engineering (PR) | none |
 | 0.4 | **Capacity alerts** through the existing alert email: feed p95 > 2 s, DB connections > 40, AI budget > 80% used, degraded-parse rate > 10%, embedding backlog > 500. | We hear about it before users do | Engineering (PR) | none |
-| 0.5 | **Overload switches** (env flags, no deploy needed): `SIGNUP_WAITLIST=on` turns new sign-ups into a numbered waitlist with an email when their spot opens; `CRON_PAUSE_NONESSENTIAL=on` pauses discovery, external scrapes, ghost detection and warming to free CPU for users. | Keeps the site up for people already in, politely | Engineering (PR) | none |
+| 0.5 | **Overload switches in a database settings table** (no deploy needed): sign-up waitlist, pause non-essential crons, feed cache on/off and TTL, site notice banner. Flipped by an admin in the console or by Autopilot (6a). | Keeps the site up for people already in, politely | Engineering (PR) | none |
 | 0.6 | **Raise the sign-up email limit** in Supabase, and move Resend to a paid plan if it's on free. Make Google sign-in the first button. | Sign-ups past 30/hour get their email | Founder | ~$20/mo |
 | 0.7 | **Upgrade the VPS** to 8 GB RAM (more vCPU if the price is close). | Headroom past 250K jobs and for the spike | Founder (Hetzner console) | ~€15/mo |
 | 0.8 | **Fund AI parsing** with a paid tier on the current model (no code change). | Removes the 60/day ceiling | Founder | ~$25–50 per 50K resumes (re-check prices) |
@@ -95,6 +95,26 @@ Steady growth hits the same walls in the same order, just later.
 3. Non-essential crons pause (`CRON_PAUSE_NONESSENTIAL`).
 4. New sign-ups go to a numbered waitlist (`SIGNUP_WAITLIST`); existing users are unaffected.
 5. Never: error pages, lost uploads, or a silently worse parse presented as final.
+
+## 6a. Autopilot: the system protects itself
+
+A guardian job on the VPS checks the signals in section 5 **every minute** and flips the protective switches itself, then turns them back off when things recover. Switches live in a database settings table (read at most once a minute by the site and the crons), so nothing needs a deploy. The admin console's System & scaling tab shows every signal, every switch and every Autopilot action.
+
+| When | Autopilot does | Reverts when |
+|---|---|---|
+| Feed p95 > 2 s, or CPU load > 1.5 × cores | Feed cache on; cache TTL 2 h → 6 h | Feed p95 < 1 s for 15 min |
+| CPU load > 1.5 × cores or RAM available < 200 MB | Pause non-essential crons (discovery, external scrapes, ghost detection, warming) | Healthy for 15 min |
+| DB connections > 40 | Pause non-essential crons; show the "busy" notice banner | < 25 for 15 min |
+| AI budget > 80% used | Resume parsing queue-only (no weak rules parse as a final result) | Budget resets |
+| Two or more of the above at once, or 5xx rate > 5% | Sign-up waitlist on (existing users unaffected) | Healthy for 30 min |
+| Disk > 85% | Alert only | — |
+
+Safety rules:
+- It only flips protective switches. It never deletes data or changes infrastructure.
+- Hysteresis: separate on/off thresholds plus a minimum hold time, so switches don't flap.
+- Every action is emailed and written to the audit log with the signal that caused it.
+- An admin can pin any switch (Autopilot leaves pinned switches alone) or turn Autopilot off entirely.
+- What it can't do: add database capacity. It reports when an upgrade is due (for example, sustained pressure for three days) with the exact steps.
 
 ## 7. Auto-scaling
 
