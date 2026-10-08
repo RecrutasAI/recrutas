@@ -3,8 +3,8 @@ import { extractText, getDocumentProxy, renderPageAsImage } from 'unpdf';
 import Tesseract from 'tesseract.js';
 import Groq from 'groq-sdk';
 import { parseResumeWithIntelligence } from './skill-intelligence';
-import { callAIWithPDF, isAIAvailable, groqModel, groqReasoningParams } from './lib/ai-client';
-import { throttledGroqRequest, type GroqPriority } from './lib/groq-limiter';
+import { callAIWithPDF, isAIAvailable, groqModel, groqReasoningParams, callTextWith, textProviderConfigured, type TextProvider } from './lib/ai-client';
+import { throttledGroqRequest, getLimiterStats, type GroqPriority } from './lib/groq-limiter';
 
 // Lazy-initialize Groq client to ensure env vars are loaded (ESM imports hoist before dotenv.config)
 let _groq: Groq | null = null;
@@ -109,6 +109,102 @@ const RESUME_EXTRACTION_PROMPT = `Extract the following information from this re
   "projects": [{ "name": "", "description": "", "technologies": [] }],
   "languages": []
 }`;
+
+
+// The résumé prompt, shared by every provider in the free rotation so they
+// all answer the same schema.
+const RESUME_SYSTEM_PROMPT = 'You are an expert resume parser. Extract structured data from resumes and return ONLY valid JSON with no other text or markdown formatting.';
+const RESUME_TEXT_LIMIT = 8000;
+function resumeUserPrompt(text: string): string {
+  return `Extract the following information from this resume text and return as JSON:
+
+{
+  "personalInfo": {
+    "name": "extracted name",
+    "email": "extracted email",
+    "phone": "extracted phone",
+    "location": "extracted location",
+    "linkedin": "linkedin url",
+    "github": "github url",
+    "portfolio": "portfolio url"
+  },
+  "summary": "professional summary text",
+  "skills": {
+    "technical": ["list of technical skills"],
+    "soft": ["list of soft skills"],
+    "tools": ["list of tools and technologies"]
+  },
+  "experience": {
+    "totalYears": 0,
+    "level": "entry|mid|senior|executive",
+    "positions": [
+      {
+        "title": "job title",
+        "company": "company name",
+        "duration": "time period",
+        "responsibilities": ["list of responsibilities"]
+      }
+    ]
+  },
+  "education": [
+    {
+      "degree": "degree name",
+      "institution": "school name",
+      "year": "graduation year",
+      "gpa": "gpa if mentioned"
+    }
+  ],
+  "certifications": ["list of certifications"],
+  "projects": [
+    {
+      "name": "project name",
+      "description": "project description",
+      "technologies": ["technologies used"]
+    }
+  ],
+  "languages": ["spoken languages"]
+}
+
+Resume text:
+${text.slice(0, RESUME_TEXT_LIMIT)}`;
+}
+
+/** Fill in every field the rest of the app expects. */
+function normalizeExtraction(x: any): AIExtractedData {
+  return {
+    personalInfo: x.personalInfo || {},
+    summary: x.summary || '',
+    skills: {
+      technical: x.skills?.technical || [],
+      soft: x.skills?.soft || [],
+      tools: x.skills?.tools || [],
+    },
+    experience: {
+      totalYears: x.experience?.totalYears || 0,
+      level: x.experience?.level || 'entry',
+      positions: x.experience?.positions || [],
+    },
+    education: x.education || [],
+    certifications: x.certifications || [],
+    projects: x.projects || [],
+    languages: x.languages || [],
+  };
+}
+
+/** An extraction with no skills and no positions: valid JSON, useless to us. */
+function isEmptyExtraction(d: AIExtractedData): boolean {
+  return (d.skills?.technical?.length || 0) + (d.skills?.tools?.length || 0)
+    + (d.skills?.soft?.length || 0) + (d.experience?.positions?.length || 0) === 0;
+}
+
+/** After Groq: free providers in order. Models overridable by env for when one is retired. */
+function freeRotation(): Array<{ provider: TextProvider; label: string; model?: string; timeoutMs: number }> {
+  return [
+    { provider: 'gemini', label: 'gemini-lite', model: process.env.PARSE_GEMINI_MODEL || 'gemini-3.5-flash-lite', timeoutMs: 25_000 },
+    { provider: 'openrouter', label: 'openrouter-free', model: process.env.PARSE_OPENROUTER_MODEL || 'openai/gpt-oss-20b:free', timeoutMs: 30_000 },
+    { provider: 'cloudflare', label: 'cloudflare', timeoutMs: 30_000 },
+  ];
+}
 
 export class AIResumeParser {
   private skillsDatabase = [
@@ -430,8 +526,11 @@ English (Native), Spanish (Conversational)`;
     // Balanced approach: run rules and AI in parallel, use whichever succeeds
     // AI gets 15s max — if circuit breaker is open or provider is slow, rules win fast
     const rulePromise = this.extractWithFallback(text);
+    // PARSE_AI_TIMEOUT_MS: 15 s for a live upload (rules win fast); the retry
+    // cron sets it much higher so the whole free rotation gets its turn.
+    const aiTimeoutMs = Number(process.env.PARSE_AI_TIMEOUT_MS) || 15_000;
     const aiTimeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('AI enrichment timeout (15s)')), 15000)
+      setTimeout(() => reject(new Error(`AI enrichment timeout (${Math.round(aiTimeoutMs / 1000)}s)`)), aiTimeoutMs)
     );
     const aiPromise = Promise.race([this.runAIEnrichment(text), aiTimeout]);
 
@@ -596,35 +695,70 @@ English (Native), Spanish (Conversational)`;
     return result;
   }
 
+  /**
+   * The free rotation (2026-10-08): every provider here is on a free tier, so
+   * each one runs out at some point in the day. Asked in order; an error OR an
+   * empty answer moves on to the next. Paid capacity is a deliberate later step,
+   * taken only when the admin console's "AI parse health" shows real demand.
+   *   Groq gpt-oss-20b → Gemini Flash-Lite → OpenRouter :free → Cloudflare Workers AI
+   */
   private async runAIEnrichment(text: string): Promise<AIExtractedData> {
-    // Only try AI if we have API keys configured
-    if (!process.env.GEMINI_API_KEY && !getGroqClient()) {
-      throw new Error('No AI API keys configured');
-    }
-
     // Each provider's reason, so the stored primaryError says WHY — a bare
     // "All AI providers failed" is what hid the retired Groq model for weeks.
     const reasons: string[] = [];
+    const why = (e: any) => String(e?.message ?? e).replace(/\s+/g, ' ').slice(0, 160);
 
-    // Try Groq first (free, fast). Asked twice if the first answer is valid
+    // Groq first (fastest). Asked twice if the first answer is valid
     // JSON with nothing in it — gpt-oss does that about 1 call in 25 (seen in a
     // dry run over real résumés); a second call costs ~1.5s and has come back
     // full every time. Also asked twice when the answer isn't valid JSON: on
     // long résumés gpt-oss occasionally closes an object with `}]` (Groq's
     // json_validate_failed) — 1 of 10 in the 2026-10-02 retry run.
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    // A Groq 429 doesn't fail the call: the limiter re-queues it behind a 60 s
+    // pause, which outlasted the 15 s AI race, so the rest of the rotation never
+    // got a turn. Skip Groq while it's paused, and give it a bounded budget.
+    const groqPaused = getLimiterStats().circuitOpen;
+    const groqBudgetMs = Number(process.env.PARSE_GROQ_BUDGET_MS) || 8_000;
+    if (groqPaused) {
+      reasons.push(`groq: rate-limited (paused ${getLimiterStats().circuitPauseSecondsRemaining}s)`);
+    } else if (getGroqClient()) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          console.log(`[AIResumeParser] Trying Groq API (attempt ${attempt})...`);
+          let budget: ReturnType<typeof setTimeout> | undefined;
+          const data = await Promise.race([
+            this.extractWithGroq(text),
+            new Promise<never>((_, reject) => { budget = setTimeout(() => reject(new Error(`no answer in ${groqBudgetMs / 1000}s (rate-limited or slow)`)), groqBudgetMs); }),
+          ]).finally(() => clearTimeout(budget));
+          if (!isEmptyExtraction(data)) {return this.tagProvider(data, 'groq');}
+          console.warn('[AIResumeParser] Groq returned an empty extraction');
+          if (attempt === 2) {reasons.push('groq: empty result');}
+        } catch (aiError: any) {
+          console.warn('[AIResumeParser] Groq failed:', aiError.message);
+          if (attempt === 1 && isMalformedGroqOutput(aiError)) {continue;}
+          reasons.push(`groq: ${why(aiError)}`);
+          break;
+        }
+      }
+    } else {
+      reasons.push('groq: no key');
+    }
+
+    for (const step of freeRotation()) {
+      if (!textProviderConfigured(step.provider)) { reasons.push(`${step.label}: no key`); continue; }
       try {
-        console.log(`[AIResumeParser] Trying Groq API (attempt ${attempt})...`);
-        const data = await this.extractWithGroq(text);
-        const found = (data.skills?.technical?.length || 0) + (data.skills?.tools?.length || 0)
-          + (data.skills?.soft?.length || 0) + (data.experience?.positions?.length || 0);
-        if (found > 0 || attempt === 2) {return data;}
-        console.warn('[AIResumeParser] Groq returned an empty extraction — asking again');
-      } catch (aiError: any) {
-        console.warn('[AIResumeParser] Groq failed:', aiError.message);
-        if (attempt === 1 && isMalformedGroqOutput(aiError)) {continue;}
-        reasons.push(`groq: ${String(aiError.message).replace(/\s+/g, ' ').slice(0, 160)}`);
-        break;
+        console.log(`[AIResumeParser] Trying ${step.label}...`);
+        const raw = await callTextWith(step.provider, RESUME_SYSTEM_PROMPT, resumeUserPrompt(text), {
+          model: step.model, maxOutputTokens: 4000, temperature: 0.1, timeoutMs: step.timeoutMs,
+        });
+        let parsed: any;
+        try { parsed = JSON.parse(raw); } catch { throw new Error('not valid JSON'); }
+        const data = normalizeExtraction(parsed);
+        if (isEmptyExtraction(data)) { reasons.push(`${step.label}: empty result`); continue; }
+        return this.tagProvider(data, step.label);
+      } catch (err: any) {
+        console.warn(`[AIResumeParser] ${step.label} failed:`, err?.message);
+        reasons.push(`${step.label}: ${why(err)}`);
       }
     }
 
@@ -641,91 +775,13 @@ English (Native), Spanish (Conversational)`;
       }
     }
 
-    // Try Hugging Face
-    const hfApiKey = process.env.HF_API_KEY;
-    if (hfApiKey && hfApiKey !== '%HF_API_KEY%') {
-      try {
-        console.log('[AIResumeParser] Trying Hugging Face API...');
-        return await this.extractWithHF(text, hfApiKey);
-      } catch (hfError: any) {
-        console.warn('[AIResumeParser] Hugging Face failed:', hfError.message);
-        reasons.push(`hf: ${String(hfError.message).slice(0, 120)}`);
-      }
-    }
-
     throw new Error(`All AI providers failed — ${reasons.join(' | ') || 'none configured'}`);
   }
 
-  private async extractWithHF(text: string, apiKey: string): Promise<AIExtractedData> {
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('HF API timeout (10s)')), 10000)
-    );
-
-    const response = await Promise.race([
-      fetch('https://router.huggingface.co/hf-inference/models/mistralai/Mistral-7B-Instruct-v0.1/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'mistralai/Mistral-7B-Instruct-v0.1',
-          messages: [
-            { role: 'system', content: 'You are an expert resume parser. Extract structured data from resumes and return ONLY valid JSON with no other text.' },
-            { role: 'user', content: `Extract the following information from this resume text and return as JSON:
-
-{
-  "personalInfo": { "name": "extracted name", "email": "extracted email", "phone": "extracted phone", "location": "extracted location", "linkedin": "linkedin url", "github": "github url", "portfolio": "portfolio url" },
-  "summary": "professional summary text",
-  "skills": { "technical": ["list of technical skills"], "soft": ["list of soft skills"], "tools": ["list of tools"] },
-  "experience": { "totalYears": 0, "level": "entry|mid|senior|executive", "positions": [{ "title": "job title", "company": "company name", "duration": "time period", "responsibilities": ["responsibility1"] }] },
-  "education": [{ "degree": "degree name", "institution": "school name", "year": "year" }],
-  "certifications": ["cert1"],
-  "projects": [{ "name": "project name", "description": "description", "technologies": ["tech1"] }],
-  "languages": ["English"]
-}
-
-Resume text:
-${text.slice(0, 8000)}` }
-          ],
-          max_tokens: 2000,
-          temperature: 0.7,
-        })
-      }),
-      timeoutPromise
-    ]) as Response;
-
-    if (!response.ok) {
-      throw new Error(`HF API returned ${response.status}: ${response.statusText}`);
-    }
-
-    const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-    const content = data.choices?.[0]?.message?.content || '{}';
-    let extractedData: any;
-    try {
-      extractedData = JSON.parse(content);
-    } catch {
-      throw new Error(`HF returned non-JSON response: ${content.slice(0, 200)}`);
-    }
-
-    return {
-      personalInfo: extractedData.personalInfo || {},
-      summary: extractedData.summary || '',
-      skills: {
-        technical: extractedData.skills?.technical || [],
-        soft: extractedData.skills?.soft || [],
-        tools: extractedData.skills?.tools || []
-      },
-      experience: {
-        totalYears: extractedData.experience?.totalYears || 0,
-        level: extractedData.experience?.level || 'entry',
-        positions: extractedData.experience?.positions || []
-      },
-      education: extractedData.education || [],
-      certifications: extractedData.certifications || [],
-      projects: extractedData.projects || [],
-      languages: extractedData.languages || []
-    };
+  /** Which provider answered, kept with the parse so the admin console can count it. */
+  private tagProvider(data: AIExtractedData, provider: string): AIExtractedData {
+    (data as any).aiProvider = provider;
+    return data;
   }
 
   private async extractWithOllama(
@@ -844,58 +900,8 @@ Return JSON with this exact structure:
     const groqClient = getGroqClient();
     if (!groqClient) throw new Error('GROQ_API_KEY not set');
 
-    const systemPrompt = 'You are an expert resume parser. Extract structured data from resumes and return ONLY valid JSON with no other text or markdown formatting.';
-    const userPrompt = `Extract the following information from this resume text and return as JSON:
-
-{
-  "personalInfo": {
-    "name": "extracted name",
-    "email": "extracted email",
-    "phone": "extracted phone",
-    "location": "extracted location",
-    "linkedin": "linkedin url",
-    "github": "github url",
-    "portfolio": "portfolio url"
-  },
-  "summary": "professional summary text",
-  "skills": {
-    "technical": ["list of technical skills"],
-    "soft": ["list of soft skills"],
-    "tools": ["list of tools and technologies"]
-  },
-  "experience": {
-    "totalYears": 0,
-    "level": "entry|mid|senior|executive",
-    "positions": [
-      {
-        "title": "job title",
-        "company": "company name",
-        "duration": "time period",
-        "responsibilities": ["list of responsibilities"]
-      }
-    ]
-  },
-  "education": [
-    {
-      "degree": "degree name",
-      "institution": "school name",
-      "year": "graduation year",
-      "gpa": "gpa if mentioned"
-    }
-  ],
-  "certifications": ["list of certifications"],
-  "projects": [
-    {
-      "name": "project name",
-      "description": "project description",
-      "technologies": ["technologies used"]
-    }
-  ],
-  "languages": ["spoken languages"]
-}
-
-Resume text:
-${truncatedText}`;
+    const systemPrompt = RESUME_SYSTEM_PROMPT;
+    const userPrompt = resumeUserPrompt(truncatedText);
 
     const model = groqModel();
     const completion = await throttledGroqRequest(
@@ -937,25 +943,7 @@ ${truncatedText}`;
 
     console.log('[AIResumeParser] Successfully extracted data via AI');
 
-    // Ensure all required fields are present with defaults
-    return {
-      personalInfo: extractedData.personalInfo || {},
-      summary: extractedData.summary || '',
-      skills: {
-        technical: extractedData.skills?.technical || [],
-        soft: extractedData.skills?.soft || [],
-        tools: extractedData.skills?.tools || []
-      },
-      experience: {
-        totalYears: extractedData.experience?.totalYears || 0,
-        level: extractedData.experience?.level || 'entry',
-        positions: extractedData.experience?.positions || []
-      },
-      education: extractedData.education || [],
-      certifications: extractedData.certifications || [],
-      projects: extractedData.projects || [],
-      languages: extractedData.languages || []
-    };
+    return normalizeExtraction(extractedData);
   }
 
   /**

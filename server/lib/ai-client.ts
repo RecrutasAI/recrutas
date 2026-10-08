@@ -4,6 +4,10 @@ import { throttledGroqRequest, type GroqPriority } from './groq-limiter';
 export type { GroqPriority };
 
 export interface CallAIOptions {
+  /** Use this model instead of the provider's default (e.g. a free or Lite variant). */
+  model?: string;
+  /** Per-request timeout for single-provider calls (callTextWith). */
+  timeoutMs?: number;
   priority?: GroqPriority;
   estimatedTokens?: number;
   temperature?: number;
@@ -197,8 +201,8 @@ async function withFallback(
 // operational lever: swapping the model would have needed a redeploy, which is
 // precisely the slow path you do NOT want when Google retires a model under you.
 export const geminiModel = (): string => process.env.GEMINI_MODEL || 'gemini-3.5-flash';
-const geminiUrl = () =>
-  `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel()}:generateContent`;
+const geminiUrl = (model: string = geminiModel()) =>
+  `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
 async function geminiRequest(parts: unknown[], systemPrompt: string, opts: CallAIOptions, timeoutMs: number): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -212,7 +216,7 @@ async function geminiRequest(parts: unknown[], systemPrompt: string, opts: CallA
       ...(opts.maxOutputTokens ? { maxOutputTokens: opts.maxOutputTokens } : {}),
     },
   };
-  const res = await fetch(`${geminiUrl()}?key=${apiKey}`, {
+  const res = await fetch(`${geminiUrl(opts.model)}?key=${apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -347,6 +351,59 @@ const callOpenRouterPDF = (system: string, user: string, pdfBuffer: Buffer, opts
 // ── Public API (provider-aware, with failover) ─────────────────────────────────
 
 /** Text → JSON string. Tries the configured provider, falls back to the others. */
+// ── Cloudflare Workers AI (OpenAI-compatible; free daily allowance) ─────────────
+// 10,000 "neurons" a day free (2026-10); gpt-oss-20b is ~68 neurons per résumé.
+// Needs CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_AI_TOKEN (a token with Workers AI read).
+export const cloudflareModel = (): string => process.env.CLOUDFLARE_AI_MODEL || '@cf/openai/gpt-oss-20b';
+
+async function callCloudflareText(systemPrompt: string, userPrompt: string, opts: CallAIOptions): Promise<string> {
+  const account = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const token = process.env.CLOUDFLARE_AI_TOKEN;
+  if (!account || !token) throw new Error('CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_AI_TOKEN not set');
+  const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/ai/v1/chat/completions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: opts.model ?? cloudflareModel(),
+      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+      temperature: opts.temperature ?? 0.1,
+      ...(opts.maxOutputTokens ? { max_tokens: opts.maxOutputTokens } : {}),
+    }),
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw apiError(`Cloudflare AI error ${res.status}: ${errText.slice(0, 200)}`, res.status);
+  }
+  const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+  const text = data.choices?.[0]?.message?.content;
+  if (!text) throw new Error('Cloudflare AI returned no content');
+  return stripJsonFence(text);
+}
+
+export type TextProvider = 'gemini' | 'openrouter' | 'cloudflare';
+
+/** True when the provider has the keys it needs. */
+export function textProviderConfigured(p: TextProvider): boolean {
+  if (p === 'cloudflare') {return !!(process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_AI_TOKEN);}
+  return providerHasKey(p);
+}
+
+/**
+ * One provider, no failover: for callers that rotate providers themselves
+ * (the résumé parser's free-tier rotation) and need to know which one answered.
+ */
+export async function callTextWith(provider: TextProvider, systemPrompt: string, userPrompt: string, opts: CallAIOptions = {}): Promise<string> {
+  switch (provider) {
+    case 'gemini': return geminiRequest([{ text: userPrompt }], systemPrompt, opts, opts.timeoutMs ?? 20_000);
+    case 'openrouter': return openRouterRequest(opts.model ?? OPENROUTER_TEXT_MODEL(), [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ], opts, opts.timeoutMs ?? 30_000);
+    case 'cloudflare': return callCloudflareText(systemPrompt, userPrompt, opts);
+  }
+}
+
 export async function callAI(systemPrompt: string, userPrompt: string, opts: CallAIOptions = {}): Promise<string> {
   return withFallback('text', (p) => {
     switch (p) {

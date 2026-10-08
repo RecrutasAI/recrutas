@@ -13,7 +13,7 @@ import { runAsPipeline, type PipelineSummary } from '../server/services/pipeline
 async function main(): Promise<PipelineSummary> {
   console.log('[RetryParse] Looking for failed parses to retry...');
 
-  // 3 per run (the cron runs hourly); RETRY_PARSE_LIMIT raises it for a one-off backfill.
+  // 3 per run (the cron runs every 10 minutes); RETRY_PARSE_LIMIT raises it for a one-off backfill.
   const limit = Math.max(1, Number(process.env.RETRY_PARSE_LIMIT) || 3);
   const candidates = await storage.getCandidatesForParseRetry(limit);
   if (candidates.length === 0) {
