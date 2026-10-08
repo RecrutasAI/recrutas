@@ -15,8 +15,8 @@ import path from 'path';
 import { spawnSync } from 'child_process';
 import { sql } from 'drizzle-orm/sql';
 import { db } from '../server/db';
-import { listSettings, setSetting, SETTING_DEFAULTS, type Settings } from '../server/services/runtime-settings.service';
-import { decideAutopilot, type AutopilotInput, type AutopilotState, type SetBy } from '../server/services/autopilot.service';
+import { listSettings, setSetting, writeAudit, SETTING_DEFAULTS, type Settings } from '../server/services/runtime-settings.service';
+import { decideAutopilot, isMissingTable, shouldReap, REAP_SQL, CONNECTIONS_SQL, type AutopilotInput, type AutopilotState, type SetBy } from '../server/services/autopilot.service';
 import { recordPipelineRun } from '../server/services/pipeline-run.service';
 
 const rows = (r: any): any[] => (r?.rows ?? r) as any[];
@@ -46,13 +46,47 @@ function alert(key: string, subject: string, body: string): void {
   spawnSync('bash', [script, key, subject, '-'], { input: body, stdio: ['pipe', 'inherit', 'inherit'] });
 }
 
+/**
+ * Run SQL as the postgres superuser (peer auth on the box). Its reserved
+ * connection slots still work when the app user is locked out. Returns the
+ * trimmed output, or null when unavailable (e.g. not on the VPS).
+ */
+function superuser(query: string): string | null {
+  const cmd = (process.env.AUTOPILOT_SUPERUSER_PSQL || 'sudo -u postgres psql -X -A -t').split(' ');
+  const r = spawnSync(cmd[0], [...cmd.slice(1), '-c', query], { encoding: 'utf8', timeout: 15_000 });
+  return r.status === 0 ? r.stdout.trim() : null;
+}
+
+/** Close idle outside connections if connections are high or the app user can't connect. */
+function reapIfNeeded(connections: number | null, appDbReachable: boolean): { closed: number } | null {
+  if (!shouldReap(connections, appDbReachable) || DRY) {return null;}
+  const out = superuser(REAP_SQL);
+  return out === null ? null : { closed: Number(out) || 0 };
+}
+
 async function main(): Promise<void> {
   const startedAt = new Date();
+  // Count connections as the superuser first: it works even when the app user is locked out.
+  const suCount = superuser(CONNECTIONS_SQL);
+  const suConnections = suCount === null ? null : Number(suCount);
   let current;
   try {
     current = await listSettings();
   } catch (err) {
-    console.log(`[autopilot] switches table not available yet, nothing to do: ${(err as Error).message}`);
+    if (isMissingTable(err)) {
+      console.log(`[autopilot] switches table not migrated yet, nothing to do`);
+      return;
+    }
+    // The app user can't read the database: most likely connections are exhausted.
+    const reaped = reapIfNeeded(suConnections, false);
+    const msg = (err as Error).message.slice(0, 300);
+    alert('autopilot-db-unreachable', `[recrutas] Autopilot can't reach the database (${suConnections ?? '?'} connections)`,
+      `Autopilot could not read its switches as the app user: ${msg}\n\n`
+      + `Connections in use (superuser count): ${suConnections ?? 'unknown'}.\n`
+      + (reaped ? `Closed ${reaped.closed} idle outside connection(s) idle > 2 min.\n` : 'No connections closed.\n')
+      + 'If this repeats, check pgBouncer (systemctl status pgbouncer) and pg_stat_activity.');
+    console.error(`[autopilot] database unreachable as app user (${suConnections ?? '?'} connections)${reaped ? `, closed ${reaped.closed} idle` : ''}: ${msg}`);
+    process.exitCode = 1;
     return;
   }
   const settings = { ...SETTING_DEFAULTS } as Settings;
@@ -72,10 +106,17 @@ async function main(): Promise<void> {
     load1: os.loadavg()[0],
     cpus: os.cpus().length,
     memAvailableMb: memAvailableMb(),
-    dbConnections: Number(conns?.n) || 0,
+    dbConnections: suConnections ?? (Number(conns?.n) || 0),
     diskPct: diskPct(),
     embeddingBacklog: backlog ? Number(backlog.n) : null,
   };
+
+  const reaped = reapIfNeeded(input.dbConnections, true);
+  if (reaped) {
+    alert('autopilot-db-reap', `[recrutas] Autopilot closed ${reaped.closed} idle DB connection(s) (${input.dbConnections} in use)`,
+      `Connections were over the limit (${input.dbConnections}). Autopilot closed ${reaped.closed} idle connection(s) from outside the server, idle > 2 min. Local clients (pgBouncer, crons) were not touched.`);
+    await writeAudit('autopilot', 'db.reap_idle', 'pg_stat_activity', { connections: input.dbConnections, closed: reaped.closed }, 'connections over the limit').catch(() => {});
+  }
 
   const decision = decideAutopilot(input, settings, setBy, readState(), startedAt);
   const applied: string[] = [];
