@@ -60,6 +60,7 @@ import {
 } from "../shared/schema.js";
 import { isRecentlyVerifiedLive, LIVE_BADGE_MAX_AGE_HOURS } from "../shared/liveness.js";
 import { db } from "./db";
+import { feedCacheEnabled, readFeedCache, writeFeedCache } from './services/feed-cache.service';
 import { eq, desc, asc, and, or } from "drizzle-orm";
 import { getTableColumns } from "drizzle-orm/utils";
 import { sql, isNotNull, type SQL } from "drizzle-orm/sql";
@@ -1779,10 +1780,8 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
-  private async fetchScoredJobs(candidateId: string, filters?: FeedFilters, retrieval?: FeedRetrievalOptions): Promise<any[] | null> {
-    const candidate = await this.getCandidateUser(candidateId);
-
-    // Fetch hidden + applied job IDs to exclude from all recommendation paths
+  /** Hidden + applied job ids: never shown in any recommendation path, cached or live. */
+  private async getExcludedJobIds(candidateId: string): Promise<number[]> {
     const [hiddenIds, appliedIds] = await Promise.all([
       this.getHiddenJobIds(candidateId),
       db.select({ jobId: jobApplications.jobId })
@@ -1790,7 +1789,13 @@ export class DatabaseStorage implements IStorage {
         .where(eq(jobApplications.candidateId, candidateId))
         .then(rows => rows.map(r => r.jobId)),
     ]);
-    const excludeIds = [...new Set([...hiddenIds, ...appliedIds])];
+    return [...new Set([...hiddenIds, ...appliedIds])];
+  }
+
+  private async fetchScoredJobs(candidateId: string, filters?: FeedFilters, retrieval?: FeedRetrievalOptions): Promise<any[] | null> {
+    const candidate = await this.getCandidateUser(candidateId);
+
+    const excludeIds = await this.getExcludedJobIds(candidateId);
 
     if (!candidate || !candidate.skills || candidate.skills.length === 0) {
       console.log(`Candidate ${candidateId} has no skills - returning discovery feed`);
@@ -2298,7 +2303,25 @@ export class DatabaseStorage implements IStorage {
     retrieval?: FeedRetrievalOptions,
   ): Promise<{ jobs: any[]; total: number; page: number; hasMore: boolean }> {
     try {
-      const recommendations = await this.fetchScoredJobs(candidateId, filters, retrieval);
+      // Callers with their own retrieval settings (MCP, weekly summary) always score live.
+      const useCache = !retrieval && feedCacheEnabled();
+      let recommendations: any[] | null = null;
+      if (useCache) {
+        try {
+          recommendations = await readFeedCache(candidateId, filters, new Set(await this.getExcludedJobIds(candidateId)));
+          if (recommendations) {console.log(`[feed-cache] hit user=${candidateId} jobs=${recommendations.length}`);}
+        } catch (err) {
+          console.warn(`[feed-cache] read failed, scoring live: ${(err as Error).message}`);
+          recommendations = null;
+        }
+      }
+      if (!recommendations) {
+        recommendations = await this.fetchScoredJobs(candidateId, filters, retrieval);
+        if (useCache && recommendations) {
+          await writeFeedCache(candidateId, filters, recommendations)
+            .catch(err => console.warn(`[feed-cache] write failed: ${(err as Error).message}`));
+        }
+      }
       if (!recommendations || recommendations.length === 0) {
         return { jobs: [], total: 0, page: 1, hasMore: false };
       }
