@@ -250,9 +250,12 @@ function segmentIntoSections(lines: string[]): TextSegment[] {
     // SQL) — treating those as section boundaries truncates the experience
     // segment and breaks position parsing. Require 6+ chars *and* either a
     // space (multi-word header) or a known boundary keyword.
+    // An ALL-CAPS job title ("OPERATIONS COORDINATOR") is not a heading:
+    // treating it as one ended the experience section after the first job.
     const looksLikeUnknownHeader =
       /^[A-Z][A-Z\s&/]{5,30}$/.test(line) &&
       line.length < 35 &&
+      !ROLE_WORDS_RE.test(line) &&
       (/\s/.test(line) || /^(AWARDS|PUBLICATIONS|ACHIEVEMENTS|HONORS|VOLUNTEER|LANGUAGES|INTERESTS|REFERENCES|ACTIVITIES|HOBBIES|TRAINING|COURSES|COURSEWORK|LEADERSHIP)$/.test(line));
     if (!matched && looksLikeUnknownHeader) {
       if (current.lines.length > 0) {segments.push(current);}
@@ -440,15 +443,50 @@ function extractExperience(text: string, segments: TextSegment[]): ExperienceRes
     totalYears = y;
   }
 
-  // 4. Parse job positions from experience section, or full text as fallback
-  const expSegment = segments.find(s => s.section === 'experience');
-  let positions = expSegment ? parsePositions(expSegment.lines.join('\n')) : [];
+  // 4. Parse job positions from the experience section, or full text as fallback
+  const expText = experienceText(text, segments);
+  let positions = expText ? parsePositions(expText) : [];
   // If no positions found from segmented experience, try the full text
   if (positions.length === 0) {
     positions = parsePositions(text);
   }
 
   return { level, totalYears, positions };
+}
+
+// Headings that end the work-experience section. Matched in CAPS only, and only
+// at the start or end of a line: flattened PDFs leave them glued to a bullet
+// ("…bagging, and customer service LEADERSHIP & VOLUNTEER EXPERIENCE"), and the
+// volunteer roles after it were being listed as jobs. "DEPARTMENT OF EDUCATION"
+// is an employer, not a heading, hence the OF/FOR/AND guard.
+const EXPERIENCE_END_RE = new RegExp(
+  '(?:^|(?<!\\b(?:OF|FOR|AND|&)) )(?:(?:LEADERSHIP|COMMUNITY)\\s*(?:&|AND)\\s*)?VOLUNTEER(?:ING)?(?:\\s+(?:EXPERIENCE|WORK|ACTIVITIES))?\\s*$'
+  + '|^\\s*(?:EDUCATION|PUBLICATIONS?|PUBLISHED\\s+PAPERS?|REFERENCES|CERTIFICATIONS?|AWARDS|PROJECTS|VOLUNTEER(?:ING)?(?:\\s+EXPERIENCE)?)\\b'
+  + '|(?<!\\b(?:OF|FOR|AND|&)) (?:EDUCATION|PUBLICATIONS?|REFERENCES|CERTIFICATIONS?|AWARDS|PROJECTS)\\s*$',
+  'm',
+);
+// An experience heading in CAPS that shares its line with the first job:
+// "PROFESSIONAL EXPERIENCE Star Protection Agency — Account Manager".
+const INLINE_EXPERIENCE_RE = /(?:^|\s)(?:PROFESSIONAL\s+|WORK\s+|RELEVANT\s+)?EXPERIENCE\b(?!\s*:?\s*$)/m;
+
+/**
+ * The work-experience part of the résumé, or null when there's no heading to
+ * find it by (the caller then parses the whole text). Lines after the section
+ * (volunteering, education, publications) are not jobs.
+ */
+function experienceText(text: string, segments: TextSegment[]): string | null {
+  const seg = segments.find(s => s.section === 'experience');
+  let body: string;
+  if (seg) {
+    body = seg.lines.join('\n');
+  } else {
+    const m = INLINE_EXPERIENCE_RE.exec(text);
+    if (!m) {return null;}
+    body = text.slice(m.index + m[0].length);
+  }
+  const end = EXPERIENCE_END_RE.exec(body);
+  if (end && end.index > 0) {body = body.slice(0, end.index);}
+  return body.trim() ? body : null;
 }
 
 function estimateYearsFromDates(text: string): number {
@@ -572,7 +610,7 @@ function splitAllCapsCompany(s: string): { company: string; rest: string } | nul
 
 // Words that strongly suggest a string is a job title (vs a bullet, skill,
 // or company name). Used to disambiguate when scanning for title candidates.
-const ROLE_WORDS_RE = /\b(engineer|developer|manager|analyst|designer|consultant|director|architect|intern|associate|lead|senior|junior|staff|specialist|coordinator|administrator|admin|technician|support|representative|officer|advisor|scientist|researcher|programmer|tester|product\s+(owner|manager)|principal|head|vp|vice\s+president|chief|cto|ceo|coo|cfo|cmo|cpo|founder|co[\s-]?founder|president|sde|sre|attorney|accountant|nurse|teacher|instructor|writer|editor|recruiter|operator|assistant|clerk|cashier|driver|chef|cook|agent|auditor|trainer|counsell?or|electrician|inspector|professor|lecturer|supervisor|receptionist|mechanic|therapist|pharmacist|paralegal|coach)\b/i;
+const ROLE_WORDS_RE = /\b(engineer|developer|manager|analyst|designer|consultant|director|architect|intern|associate|lead|senior|junior|staff|specialist|coordinator|administrator|admin|technician|support|representative|officer|advisor|scientist|researcher|programmer|tester|product\s+(owner|manager)|principal|head|vp|vice\s+president|chief|cto|ceo|coo|cfo|cmo|cpo|founder|co[\s-]?founder|president|sde|sre|attorney|accountant|nurse|teacher|instructor|writer|editor|recruiter|operator|assistant|clerk|cashier|driver|chef|cook|agent|auditor|trainer|counsell?or|electrician|inspector|professor|lecturer|faculty|supervisor|receptionist|mechanic|therapist|pharmacist|paralegal|coach)\b/i;
 
 // True when a line carries only a location — "Everett, WA", "San Francisco, CA",
 // "Remote", "London, United Kingdom". Résumés routinely put one of these between
@@ -603,6 +641,12 @@ function isLocationLine(s: string): boolean {
 
 // A title that is really just a date fragment ("Present", "Feb 2022", "2019").
 const DATE_FRAGMENT_RE = /^(present|currently|current|now|\d{4}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?(?:\s+\d{4})?)[,.\s]*$/i;
+
+/** A sentence describing the work, not a heading line: 7+ words ending in a period, or 13+ words. */
+function isDescriptionLine(s: string): boolean {
+  const words = s.trim().split(/\s+/).length;
+  return (/[.;]\s*$/.test(s) && words > 6) || words > 12;
+}
 
 function looksLikeTitle(s: string): boolean {
   if (!s || s.length < 3 || s.length > 100) return false;
@@ -759,6 +803,9 @@ function parsePositions(text: string): ExperienceResult['positions'] {
       dateRe.lastIndex = 0;
       if (/^[•●■▪\-*]/.test(cand)) break;
       if (cand.length > 100 && !looksLikeTitle(cand)) break;
+      // A description sentence ends this job's block; a title past it belongs
+      // to the NEXT job (which then lost its own dates to this one).
+      if (isDescriptionLine(cand)) break;
       if (looksLikeTitle(cand)) { titleBelow = cand; break; }
     }
 
@@ -800,7 +847,21 @@ function parsePositions(text: string): ExperienceResult['positions'] {
     let company = '';
     let title = 'Unknown Role';
 
-    if (beforeOnLine && companyBelow && looksLikeTitle(beforeOnLine)) {
+    // "Title / Date / Company, City / description": the employer sits BELOW the
+    // date. Looking up for it found the previous job's employer instead, and
+    // every role after the first was shifted by one.
+    const above = i > 0 ? lines[i - 1] : '';
+    const below = lines[i + 1] || '';
+    const belowIsDate = dateRe.test(below); dateRe.lastIndex = 0;
+    const titleAboveCompanyBelow = !beforeOnLine && looksLikeTitle(above)
+      && !!below && !belowIsDate && !/^[•●■▪\-*]/.test(below)
+      && below.split(/\s+/).length <= 12 && !/[.;:]$/.test(below)
+      && !ROLE_WORDS_RE.test(below) && !ACTION_VERB_START_RE.test(below) && !isLocationLine(below);
+
+    if (titleAboveCompanyBelow) {
+      title = above;
+      company = stripLocation(below);
+    } else if (beforeOnLine && companyBelow && looksLikeTitle(beforeOnLine)) {
       // Title + Date inline, Company on next line.
       title = beforeOnLine;
       company = companyBelow;
@@ -895,7 +956,7 @@ function parsePositions(text: string): ExperienceResult['positions'] {
       // Center — Courtesy Clerk". The employer is the capitalized run that
       // ends at the dash.
       if (/^[•●■▪\uf0b7]/.test(left) || left.split(/\s+/).length > 6) {
-        const tail = left.match(/((?:[A-Z][\w&.'()-]*\s+){0,5}[A-Z][\w&.'()-]*)$/);
+        const tail = left.match(/((?:[A-Z][\w&.'’()-]*\s+){0,5}[A-Z][\w&.'’()-]*)$/);
         if (!tail) continue;
         left = tail[1];
       }
@@ -1013,6 +1074,8 @@ const LANGUAGE_WORD_RE = /^(english|spanish|french|german|italian|portuguese|man
 function isPlausibleTitle(t: string): boolean {
   if (!t || t.length < 3 || t.length > 70) return false;
   if (LANGUAGE_WORD_RE.test(t)) return false;
+  // "(part Time)" is a qualifier left behind, not a title.
+  if (/^\(.*\)$/.test(t.trim())) return false;
   // A school is not a job ("Universidade Católica de Petrópolis"), unless a
   // role is named too ("Teaching Assistant, UC Berkeley").
   if (/\b(university|universidade|universidad|université|college|school|institute|instituto|faculdade|academy)\b/i.test(t) && !ROLE_WORDS_RE.test(t)) return false;
@@ -1055,7 +1118,12 @@ function repairTitle(raw: string): string {
   return t;
 }
 
+// An email or phone number in the employer field means the parser reached the
+// résumé's own header ("Jane Doe Clinical Analyst | Seattle | 555…").
+const PERSONAL_CONTACT_RE = /[\w.+-]+@[\w-]+\.[\w.]+|\+\d{1,3}(?:[\s.-]?\d{2,5}){2,4}|(?:\+?\d{1,2}[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/;
+
 function repairCompany(raw: string): string {
+  if (PERSONAL_CONTACT_RE.test(raw)) return '';
   let c = stripHeadings(raw.replace(CONTACT_RE, ' '));
   const tail = c.search(RESPONSIBILITY_TAIL_RE);
   if (tail > 0) c = c.slice(0, tail);
@@ -1069,6 +1137,14 @@ export function repairPositions(positions: ExperienceResult['positions']): Exper
   for (const p of positions) {
     let title = p.title || '';
     let company = p.company || '';
+    // "College of the Redwoods - ASSOCIATE PROFESSOR": the line names both. The
+    // company field then held whatever came next (often the city).
+    const dash = title.match(/^(.+?)\s+[–—-]\s+(.+)$/);
+    if (dash && ROLE_WORDS_RE.test(dash[2]) && !ROLE_WORDS_RE.test(dash[1])
+      && dash[1].split(/\s+/).length <= 6 && isPlausibleCompany(dash[1].trim())) {
+      company = dash[1].trim();
+      title = dash[2].trim();
+    }
     // A title split at "&" lands its second half in the company field:
     // "LIVELIHOOD OFFICER" + "& BUSINESS TRAINER (REINTEGRATION)".
     if (/^\s*(?:&|and\s)/i.test(company) && company.length <= 60) {
