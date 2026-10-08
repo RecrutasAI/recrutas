@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { decideAutopilot, BUSY_NOTICE, type AutopilotInput } from '../server/services/autopilot.service';
+import { decideAutopilot, BUSY_NOTICE, isMissingTable, shouldReap, REAP_SQL, type AutopilotInput } from '../server/services/autopilot.service';
 import { SETTING_DEFAULTS, type Settings } from '../server/services/runtime-settings.service';
 
 const calm: AutopilotInput = { feedP95Ms: 400, feedSamples: 40, load1: 0.6, cpus: 2, memAvailableMb: 900, dbConnections: 7, diskPct: 53 };
@@ -90,5 +90,37 @@ describe('decideAutopilot', () => {
     expect(d.changes).toEqual([]);
     expect(d.alerts.map(a => a.key)).toEqual(['autopilot-embedding-backlog']);
     expect(decideAutopilot({ ...calm, embeddingBacklog: 40 }, S(), {}, { healthySince: {} }, t0).alerts).toEqual([]);
+  });
+});
+
+describe('database connection pressure', () => {
+  it('reaps above 40 connections, or whenever the app user cannot connect', () => {
+    expect(shouldReap(39, true)).toBe(false);
+    expect(shouldReap(40, true)).toBe(false);
+    expect(shouldReap(41, true)).toBe(true);
+    expect(shouldReap(7, false)).toBe(true);
+    expect(shouldReap(null, false)).toBe(true);
+  });
+
+  it('only closes idle, outside-the-box app connections idle for over 2 minutes', () => {
+    expect(REAP_SQL).toMatch(/usename = 'recrutas_app'/);
+    expect(REAP_SQL).toMatch(/state = 'idle'/);
+    expect(REAP_SQL).toMatch(/NOT IN \('127\.0\.0\.1', '::1'\)/);
+    expect(REAP_SQL).toMatch(/client_addr IS NOT NULL/);
+    expect(REAP_SQL).toMatch(/interval '120 seconds'/);
+  });
+
+  it('treats only a missing table as "not migrated yet"', () => {
+    // What Drizzle threw on 2026-10-08 when connections were exhausted: a wrapper whose cause is 53300.
+    const exhausted = Object.assign(new Error('Failed query: SELECT key, value FROM runtime_settings\nparams: '), {
+      cause: Object.assign(new Error('remaining connection slots are reserved for roles with the SUPERUSER attribute'), { code: '53300' }),
+    });
+    expect(isMissingTable(exhausted)).toBe(false);
+    const missing = Object.assign(new Error('Failed query: SELECT key FROM runtime_settings'), {
+      cause: Object.assign(new Error('relation "runtime_settings" does not exist'), { code: '42P01' }),
+    });
+    expect(isMissingTable(missing)).toBe(true);
+    expect(isMissingTable(new Error('relation "runtime_settings" does not exist'))).toBe(true);
+    expect(isMissingTable(new Error('connect ECONNREFUSED 127.0.0.1:5432'))).toBe(false);
   });
 });

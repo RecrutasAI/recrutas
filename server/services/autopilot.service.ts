@@ -122,3 +122,39 @@ export function decideAutopilot(i: AutopilotInput, settings: Settings, setBy: Se
   }
   return { changes, alerts, state: { healthySince } };
 }
+
+/**
+ * Database connection pressure (added 2026-10-08, after a real exhaustion).
+ * Frozen Vercel instances held idle connections until max_connections (60)
+ * ran out; Autopilot itself then couldn't connect and logged "switches table
+ * not available yet", doing nothing. Now:
+ *   - only a genuinely missing table means "not migrated yet"; any other read
+ *     failure emails an alert;
+ *   - above REAP_AT_CONNECTIONS, or when the app user can't connect at all,
+ *     idle connections from OUTSIDE the box that have been idle > 2 minutes are
+ *     closed through the postgres superuser (whose reserved slots still work).
+ *     Local clients (pgBouncer, VPS crons) are never touched, and nothing
+ *     mid-query or mid-transaction is closed.
+ */
+export const REAP_AT_CONNECTIONS = 40;
+export const REAP_IDLE_SECONDS = 120;
+
+export function shouldReap(connections: number | null, appDbReachable: boolean): boolean {
+  return !appDbReachable || (connections ?? 0) > REAP_AT_CONNECTIONS;
+}
+
+/** Closes idle app connections from outside the box; returns how many it closed. */
+export const REAP_SQL = `SELECT count(*) FILTER (WHERE pg_terminate_backend(pid)) FROM pg_stat_activity
+WHERE usename = 'recrutas_app' AND state = 'idle'
+  AND client_addr IS NOT NULL AND host(client_addr) NOT IN ('127.0.0.1', '::1')
+  AND now() - state_change > interval '${REAP_IDLE_SECONDS} seconds'`;
+
+export const CONNECTIONS_SQL = `SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend'`;
+
+/** True only when the error is "this table doesn't exist yet" (Postgres 42P01). */
+export function isMissingTable(err: unknown): boolean {
+  const e = err as any;
+  const code = e?.code ?? e?.cause?.code;
+  const msg = String(e?.message ?? '') + ' ' + String(e?.cause?.message ?? '');
+  return code === '42P01' || /relation "?[\w.]+"? does not exist/i.test(msg);
+}
