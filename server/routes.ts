@@ -57,7 +57,7 @@ import { sendEmail as sendTransactionalEmail, employerWelcomeEmail, employerNewA
 import { track as serverTrack } from './lib/analytics';
 // greenhouse-submit.service.ts kept for future use (verification code flow, etc.)
 import { asyncHandler } from './middleware/error-handler';
-import { verifyAdminSecret, verifyCronSecret } from './middleware/security';
+import { adminEmails, adminEmailFromSession, verifyAdminSecret, verifyCronSecret } from './middleware/security';
 import rateLimit from 'express-rate-limit';
 import { captureException } from './error-monitoring';
 import { recordMatchSignal, joinExamScore, type SignalAction } from './services/match-signals.service';
@@ -82,9 +82,7 @@ function recordSignal(candidateId: string, jobId: number, action: SignalAction, 
 
 // Admin/owner accounts bypass daily usage limits
 // Set via ADMIN_EMAILS env var (comma-separated): "alice@example.com,bob@example.com"
-const ADMIN_EMAILS = new Set(
-  (process.env.ADMIN_EMAILS || '').replace(/\\n/g, '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
-);
+const ADMIN_EMAILS = adminEmails();
 function isAdminUser(req: any): boolean {
   return ADMIN_EMAILS.has(req.user?.email?.toLowerCase());
 }
@@ -301,6 +299,7 @@ Requirements: ${(requirements || []).join('; ') || 'Not specified'}`;
 }
 
 import { registerMetricsRoutes } from './routes/metrics-api.js';
+import { registerAdminConsoleRoutes } from './routes/admin-console.js';
 import { isResumeFileField } from './extension-fill-helpers.js';
 
 interface LiveStatsRow { active_jobs: number; companies: number; recently_checked: number }
@@ -309,6 +308,7 @@ interface LiveStatsRow { active_jobs: number; companies: number; recently_checke
 export async function registerRoutes(app: Express): Promise<Express> {
   console.log('registerRoutes called!');
   registerMetricsRoutes(app);
+  registerAdminConsoleRoutes(app);
 
   // Dev-only route for seeding the database - DISABLED in production
   app.post('/api/dev/seed', asyncHandler(async (req, res) => {
@@ -3700,6 +3700,13 @@ Analyze the form and return the actions JSON to fill every field you can.`;
   }));
 
   // Pipeline (cron) health: last run status/age per scheduled ingestion + embedding job.
+  // Who is using the admin console. 200 with the admin's email, or 401.
+  app.get('/api/admin/whoami', asyncHandler(async (req: any, res) => {
+    if (!verifyAdminSecret(req, res)) return;
+    const email = adminEmailFromSession(req);
+    res.json({ email, via: email ? 'session' : 'secret' });
+  }));
+
   app.get('/api/admin/pipeline-health', asyncHandler(async (req, res) => {
     if (!verifyAdminSecret(req, res)) return;
     const { getPipelineHealth } = await import('./services/pipeline-run.service');

@@ -9,8 +9,11 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const MetricsContent = lazy(() => import("@/pages/metrics-dashboard").then(m => ({ default: m.MetricsContent })));
+import { ConsoleToday } from "@/components/admin/console-today";
+import { ConsoleSystem } from "@/components/admin/console-system";
+import { adminHeaders as buildAdminHeaders } from "@/lib/admin-fetch";
 
-type AdminTab = 'overview' | 'metrics' | 'errors' | 'invites';
+type AdminTab = 'today' | 'system' | 'overview' | 'metrics' | 'errors' | 'invites';
 
 interface PlatformStats {
   totalJobs: number;
@@ -64,8 +67,12 @@ function formatAge(min: number | null): string {
 export default function AdminDashboard() {
   const { toast } = useToast();
   const [secret, setSecret] = useState(() => sessionStorage.getItem('admin_secret') || '');
-  const [authenticated, setAuthenticated] = useState(!!sessionStorage.getItem('admin_secret'));
-  const [activeTab, setActiveTab] = useState<AdminTab>('overview');
+  // Admins sign in with their Recrutas account (ADMIN_EMAILS); the secret is a fallback for scripts.
+  const [authenticated, setAuthenticated] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
+  const [adminEmail, setAdminEmail] = useState<string | null>(null);
+  const [authHeaders, setAuthHeaders] = useState<Record<string, string>>({});
+  const [activeTab, setActiveTab] = useState<AdminTab>('today');
 
   const [platformStats, setPlatformStats] = useState<PlatformStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
@@ -101,21 +108,35 @@ export default function AdminDashboard() {
 
   const adminHeaders = {
     'Content-Type': 'application/json',
-    'x-admin-secret': secret,
+    ...authHeaders,
   };
+
+  // Who am I? 200 when signed in with an ADMIN_EMAILS account (or a saved secret).
+  async function checkAccess(): Promise<boolean> {
+    const headers = await buildAdminHeaders();
+    try {
+      const res = await fetch('/api/admin/whoami', { headers });
+      if (!res.ok) return false;
+      const me = await res.json();
+      setAuthHeaders(headers);
+      setAdminEmail(me.email ?? null);
+      setAuthenticated(true);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  useEffect(() => {
+    checkAccess().finally(() => setCheckingSession(false));
+  }, []);
 
   async function handleAuth() {
     if (!secret.trim()) return;
-    try {
-      const res = await fetch('/api/admin/ghost-job-stats', { headers: adminHeaders });
-      if (res.status === 401) {
-        toast({ title: 'Invalid admin secret', variant: 'destructive' });
-        return;
-      }
-      sessionStorage.setItem('admin_secret', secret);
-      setAuthenticated(true);
-    } catch {
-      toast({ title: 'Connection error', variant: 'destructive' });
+    try { sessionStorage.setItem('admin_secret', secret); } catch { /* storage blocked */ }
+    if (!(await checkAccess())) {
+      try { sessionStorage.removeItem('admin_secret'); } catch { /* storage blocked */ }
+      toast({ title: 'Invalid admin secret', variant: 'destructive' });
     }
   }
 
@@ -298,9 +319,11 @@ export default function AdminDashboard() {
   }
 
   function handleSignOut() {
-    sessionStorage.removeItem('admin_secret');
+    try { sessionStorage.removeItem('admin_secret'); } catch { /* storage blocked */ }
     setAuthenticated(false);
+    setAuthHeaders({});
     setSecret('');
+    window.location.href = '/';
   }
 
   if (!authenticated) {
@@ -310,20 +333,35 @@ export default function AdminDashboard() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <ShieldCheck className="h-5 w-5 text-blue-600" />
-              Admin Access
+              Admin console
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Input
-              type="password"
-              placeholder="Admin secret"
-              value={secret}
-              onChange={(e) => setSecret(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleAuth()}
-            />
-            <Button className="w-full" onClick={handleAuth} disabled={!secret.trim()}>
-              Authenticate
-            </Button>
+            {checkingSession ? (
+              <div className="flex items-center gap-2 text-sm text-gray-500"><Loader2 className="h-4 w-4 animate-spin" /> Checking your account…</div>
+            ) : (
+              <>
+                <p className="text-sm text-gray-600 dark:text-gray-300">
+                  Sign in to Recrutas with an admin email (listed in ADMIN_EMAILS), then come back to this page.
+                </p>
+                <Button className="w-full" onClick={() => { window.location.href = '/auth'; }}>Sign in</Button>
+                <details className="text-sm">
+                  <summary className="cursor-pointer text-gray-500">Use the admin secret instead</summary>
+                  <div className="mt-3 space-y-2">
+                    <Input
+                      type="password"
+                      placeholder="Admin secret"
+                      value={secret}
+                      onChange={(e) => setSecret(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleAuth()}
+                    />
+                    <Button variant="outline" className="w-full" onClick={handleAuth} disabled={!secret.trim()}>
+                      Continue
+                    </Button>
+                  </div>
+                </details>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -331,7 +369,9 @@ export default function AdminDashboard() {
   }
 
   const tabs: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
-    { id: 'overview', label: 'Overview', icon: <Settings className="h-4 w-4" /> },
+    { id: 'today', label: 'Today', icon: <Clock className="h-4 w-4" /> },
+    { id: 'system', label: 'System & scaling', icon: <AlertTriangle className="h-4 w-4" /> },
+    { id: 'overview', label: 'Platform', icon: <Settings className="h-4 w-4" /> },
     { id: 'metrics', label: 'Metrics', icon: <BarChart3 className="h-4 w-4" /> },
     { id: 'errors', label: 'Errors', icon: <Bug className="h-4 w-4" /> },
     { id: 'invites', label: 'Invites', icon: <KeyRound className="h-4 w-4" /> },
@@ -346,6 +386,7 @@ export default function AdminDashboard() {
             <div className="flex items-center gap-3">
               <ShieldCheck className="h-5 w-5 text-blue-600" />
               <h1 className="text-lg font-bold text-gray-900 dark:text-white">Admin</h1>
+              {adminEmail && <span className="hidden sm:inline text-xs text-gray-500">{adminEmail}</span>}
             </div>
             <Button variant="ghost" size="sm" onClick={handleSignOut} className="text-gray-500 hover:text-red-600">
               Sign Out
@@ -356,7 +397,7 @@ export default function AdminDashboard() {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium whitespace-nowrap shrink-0 border-b-2 transition-colors ${
                   activeTab === tab.id
                     ? 'border-blue-600 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
@@ -372,6 +413,9 @@ export default function AdminDashboard() {
 
       {/* Tab content */}
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+        {activeTab === 'today' && <ConsoleToday />}
+        {activeTab === 'system' && <ConsoleSystem />}
+
         {activeTab === 'overview' && (
           <div className="space-y-6">
             {/* Pipeline (cron) Health */}
@@ -570,7 +614,7 @@ export default function AdminDashboard() {
               <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
             </div>
           }>
-            <MetricsContent secret={secret} />
+            <MetricsContent authHeaders={authHeaders} />
           </Suspense>
         )}
 

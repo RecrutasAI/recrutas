@@ -107,7 +107,7 @@ function statusBadge(enabled: boolean, label: string) {
 
 // ── Embeddable metrics content (used by admin-dashboard tabs) ──────────────────
 
-export function MetricsContent({ secret: externalSecret }: { secret?: string }) {
+export function MetricsContent({ secret: externalSecret, authHeaders }: { secret?: string; authHeaders?: Record<string, string> }) {
   const resolvedSecret = externalSecret || sessionStorage.getItem('admin_secret') || '';
   const [timeRange, setTimeRange] = useState('24');
   const [loading, setLoading] = useState(false);
@@ -122,7 +122,8 @@ export function MetricsContent({ secret: externalSecret }: { secret?: string }) 
   const [jobFeed, setJobFeed] = useState<{ breakdown: JobFeedRow[]; tableSize: string }>({ breakdown: [], tableSize: '' });
   const [system, setSystem] = useState<SystemHealth | null>(null);
 
-  const headers = { 'x-admin-secret': resolvedSecret };
+  // The admin console passes its own headers (admin session or secret); the standalone page uses the secret.
+  const headers = authHeaders ?? { 'x-admin-secret': resolvedSecret };
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -155,7 +156,7 @@ export function MetricsContent({ secret: externalSecret }: { secret?: string }) 
     } finally {
       setLoading(false);
     }
-  }, [timeRange, resolvedSecret]);
+  }, [timeRange, resolvedSecret, authHeaders]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
