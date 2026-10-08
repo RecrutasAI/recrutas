@@ -14,7 +14,7 @@ Facts marked *from notes* come from earlier sessions and should be re-checked be
 | Database | Postgres + pgvector on that VPS, 4.1 GB; `max_connections = 60` (7 in use); no connection pooler | verified |
 | Active jobs | 155,880 (72K in July; box upgrade planned at ~250K) | verified |
 | Web/API | Vercel serverless functions; each instance opens its own DB connection | verified |
-| Feed | `getJobRecommendations` → `fetchScoredJobs` re-scores the **whole** feed on every request (every page, filter, refresh), then slices one page. ~720 ms warm at 72K jobs (July); likely higher now | verified (code) / from notes (timing) |
+| Feed | `getJobRecommendations` → `fetchScoredJobs` re-scores the **whole** feed (up to 100 results) on every visit, refresh, background refetch and filter change; the client then pages through those results locally. ~720 ms warm at 72K jobs (July); likely higher now | verified (code) / from notes (timing) |
 | Match warming | `warm-candidate-matches` (daily 04:30) recomputes every candidate's feed but stores nothing, so the work is thrown away | verified |
 | Resume parsing | Synchronous inside the upload request; AI first (Groq gpt-oss-20b, Gemini fallback), then a rules parser that does badly on LinkedIn PDF exports. Degraded parses are tracked (`resume_parsed.degraded`). `retry-failed-parses` runs hourly | verified |
 | AI budget | Free tiers: ~200K Groq tokens/day ≈ 60 resumes/day | from notes (2026-10-02) |
@@ -37,7 +37,7 @@ Steady growth hits the same walls in the same order, just later.
 
 ## 3. Principles
 
-- **Do work once.** Compute a person's ranked feed once and reuse it; never re-score to show page 2.
+- **Do work once.** Compute a person's ranked feed once and reuse it across visits and refreshes, and re-score only when their profile or the job pool actually changes.
 - **Move slow work out of the request.** Uploads and sign-ups return fast; parsing and embedding happen in queues, and the UI says what's happening.
 - **Degrade in a fixed order, never fail closed.** See the ladder in section 6.
 - **Scale on signals, not guesses.** Each step below has a trigger metric; we act when it fires.
@@ -49,7 +49,7 @@ Steady growth hits the same walls in the same order, just later.
 
 | # | Change | Why | Owner | Cost |
 |---|---|---|---|---|
-| 0.1 | **Feed cache.** Store each candidate's ranked list (job ids + scores) in a Postgres table keyed by candidate + filter hash. Invalidate when their resume/preferences change; refresh after ingestion. Pages and filters read the cache. Make `warm-candidate-matches` fill it. | Removes the per-request re-score: the biggest CPU win, roughly 5–10× more users on the same box | Engineering (PR) | none |
+| 0.1 | **Feed cache.** Store each candidate's ranked list (job ids + scores) in a Postgres table keyed by candidate + filter hash. Invalidate when their resume/preferences change; refresh after ingestion. Visits, refreshes and repeat filters read the cache; hides, applications and closed jobs are filtered out at read time so the cache never shows them. Make `warm-candidate-matches` fill it. | Removes the per-request re-score: the biggest CPU win, roughly 5–10× more users on the same box | Engineering (PR) | none |
 | 0.2 | **Connection pooler.** pgBouncer in transaction mode on the VPS; Vercel connects through it. | Bursts queue instead of exhausting 60 connections | Engineering, production change, needs explicit OK | none |
 | 0.3 | **Async resume parsing.** Upload stores the file and returns; a queue does the AI parse; the dashboard shows "Reading your resume, your feed is ready in a few minutes". When the AI budget is out, the job waits rather than settling for the rules parse. `retry-failed-parses` also retries degraded parses. | Every user gets the good parse, just later; no slow uploads during a spike | Engineering (PR) | none |
 | 0.4 | **Capacity alerts** through the existing alert email: feed p95 > 2 s, DB connections > 40, AI budget > 80% used, degraded-parse rate > 10%, embedding backlog > 500. | We hear about it before users do | Engineering (PR) | none |
