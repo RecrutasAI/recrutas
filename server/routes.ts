@@ -299,6 +299,7 @@ Requirements: ${(requirements || []).join('; ') || 'Not specified'}`;
 }
 
 import { registerMetricsRoutes } from './routes/metrics-api.js';
+import { registerAdminConsoleRoutes } from './routes/admin-console.js';
 import { isResumeFileField } from './extension-fill-helpers.js';
 
 interface LiveStatsRow { active_jobs: number; companies: number; recently_checked: number }
@@ -307,6 +308,7 @@ interface LiveStatsRow { active_jobs: number; companies: number; recently_checke
 export async function registerRoutes(app: Express): Promise<Express> {
   console.log('registerRoutes called!');
   registerMetricsRoutes(app);
+  registerAdminConsoleRoutes(app);
 
   // Dev-only route for seeding the database - DISABLED in production
   app.post('/api/dev/seed', asyncHandler(async (req, res) => {
