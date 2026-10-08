@@ -168,13 +168,18 @@ function HowItWorks() {
 
 // -- Why Recrutas ------------------------------------------------------------------------
 
-const REASONS: { title: string; body: string; tags: string[] }[] = [
+const EXTENSION_LINKS = [
+  { label: "Add to Chrome", href: "https://chromewebstore.google.com/detail/recrutas-auto-fill/elkkoaiedhfaefokoilmffmooiengdij" },
+  { label: "Add to Firefox", href: "https://addons.mozilla.org/en-US/firefox/addon/recrutas-auto-fill/" },
+];
+
+const REASONS: { title: string; body: string; tags: string[]; links?: { label: string; href: string }[] }[] = [
   { title: "Matched on what you've done.", body: "Your titles, skills and seniority, not keyword overlap. A senior backend engineer sees senior backend roles.", tags: ["titles", "skills", "seniority"] },
   { title: "Direct from the company.", body: "Pulled from each employer's own hiring system. No reposters, no aggregator spam.", tags: ["greenhouse", "lever", "ashby"] },
   { title: "Live, and checked.", body: "Every board is re-read every few hours. A job gets the live badge only if we saw it in the last 36 hours.", tags: ["● live · checked"] },
   { title: "An honest verdict on every match.", body: "Apply, Stretch or Skip, with the reason: \"requires an active clearance\", \"asks for 7 years, you have 4\". Stop applying to jobs you can't get.", tags: ["apply", "stretch", "skip"] },
   { title: "You'll know what happened.", body: "We watch every job you apply to. Taken down, reposted or still open, you hear about it, with a weekly summary and why you might not be hearing back.", tags: ["taken down", "reposted", "weekly"] },
-  { title: "Apply without retyping.", body: "Our browser extension fills application forms from your profile, screening answers included. You review and submit. Firefox today.", tags: ["greenhouse", "lever", "ashby"] },
+  { title: "Apply without retyping.", body: "Our browser extension fills application forms from your profile, screening answers included. You review and submit. Chrome and Firefox.", tags: ["greenhouse", "lever", "ashby"], links: EXTENSION_LINKS },
   { title: "Your job-search log, done.", body: "On unemployment? Your weekly job-search log fills itself from your applications, in the format Washington's ESD asks for.", tags: ["3 a week", "csv", "print"] },
   { title: "In your AI tools.", body: "Ask Claude Code or Cursor which of your matches to apply to and what happened to your applications. Connect it in Settings.", tags: ["mcp", "claude", "cursor"] },
   { title: "Free for candidates.", body: "No subscription, no premium tier for job seekers. Companies will pay; people looking for work don't.", tags: ["$0"] },
@@ -193,6 +198,15 @@ function WhyRecrutas() {
             <div className="font-geist-mono text-[11px] text-neutral-400 mb-4">{String(i + 1).padStart(2, "0")}</div>
             <h3 className="font-semibold tracking-tight mb-2">{r.title}</h3>
             <p className="text-sm leading-relaxed text-neutral-600 dark:text-neutral-400 mb-5">{r.body}</p>
+            {r.links && (
+              <div className="flex flex-wrap gap-x-4 gap-y-1 mb-5 text-sm font-medium">
+                {r.links.map((l) => (
+                  <a key={l.href} href={l.href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-4 hover:no-underline">
+                    {l.label} ↗
+                  </a>
+                ))}
+              </div>
+            )}
             <div className="flex flex-wrap gap-1.5">
               {r.tags.map((t) => <Tag key={t} tone={t.startsWith("●") ? "live" : "neutral"}>{t}</Tag>)}
             </div>
