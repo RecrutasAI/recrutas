@@ -72,7 +72,8 @@ export default function SignUpForm({ role }: SignUpFormProps) {
             last_name: lastName,
             full_name: `${firstName} ${lastName}`.trim(),
           },
-          emailRedirectTo: `${window.location.origin}/`,
+          // The confirmation link signs them in; land on their dashboard, not the homepage.
+          emailRedirectTo: `${window.location.origin}${role === 'candidate' ? '/candidate-dashboard' : '/talent-dashboard'}`,
           ...(captchaToken ? { captchaToken } : {}),
         },
       });

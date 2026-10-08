@@ -540,7 +540,7 @@ export default function CandidateStreamlinedDashboard() {
                   {[
                     { icon: FileText, label: 'Skills & experience extracted automatically', color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50 dark:bg-emerald-900/40' },
                     { icon: Target,   label: 'Jobs ranked by your actual fit, not keywords',  color: 'text-blue-600 dark:text-blue-400',    bg: 'bg-blue-50 dark:bg-blue-900/40' },
-                    { icon: Zap,      label: 'Apply to internal roles with guaranteed feedback', color: 'text-violet-600 dark:text-violet-400', bg: 'bg-violet-50 dark:bg-violet-900/40' },
+                    { icon: Zap,      label: 'An honest verdict on each job: apply, stretch or skip', color: 'text-violet-600 dark:text-violet-400', bg: 'bg-violet-50 dark:bg-violet-900/40' },
                   ].map(({ icon: Icon, label, color, bg }) => (
                     <div key={label} className="flex items-center gap-3">
                       <div className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 ${bg}`}>
