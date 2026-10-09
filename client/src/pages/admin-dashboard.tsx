@@ -1,68 +1,23 @@
-import { useState, useEffect, lazy, Suspense } from "react";
+import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Loader2, ShieldCheck, AlertTriangle, Building2, Users, Briefcase, Target, BarChart3, Settings, Bug, KeyRound, Copy, Plus, Clock } from "lucide-react";
+import { Loader2, ShieldCheck, Briefcase, Bug, KeyRound, Copy, Plus, Clock, TrendingUp, Sparkles, Server } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-const MetricsContent = lazy(() => import("@/pages/metrics-dashboard").then(m => ({ default: m.MetricsContent })));
 import { ConsoleToday } from "@/components/admin/console-today";
 import { ConsoleSystem } from "@/components/admin/console-system";
+import { ConsoleGrowth } from "@/components/admin/console-growth";
+import { ConsoleJobs } from "@/components/admin/console-jobs";
+import { ConsoleAi } from "@/components/admin/console-ai";
 import { adminHeaders as buildAdminHeaders } from "@/lib/admin-fetch";
 
-type AdminTab = 'today' | 'system' | 'overview' | 'metrics' | 'errors' | 'invites';
+type AdminTab = 'today' | 'growth' | 'jobs' | 'ai' | 'system' | 'errors' | 'invites';
 
-interface PlatformStats {
-  totalJobs: number;
-  totalUsers: number;
-  totalMatches: number;
-}
 
-interface GhostJobStats {
-  totalChecked: number;
-  ghostsFound: number;
-  deactivated: number;
-  lastRun?: string;
-}
-
-interface CompanyVerificationStats {
-  totalCompanies: number;
-  verified: number;
-  unverified: number;
-  lastRun?: string;
-}
-
-interface PipelineHealth {
-  pipeline: string;
-  status: 'ok' | 'warning' | 'failed' | 'stale' | 'never';
-  lastRunStatus: string | null;
-  lastRunAt: string | null;
-  ageMinutes: number | null;
-  stale: boolean;
-  expectedMaxAgeMinutes: number | null;
-  itemsProcessed: number | null;
-  itemsFailed: number | null;
-  durationMs: number | null;
-  message: string | null;
-}
-
-const PIPELINE_STATUS_STYLE: Record<PipelineHealth['status'], { dot: string; label: string; text: string }> = {
-  ok:      { dot: 'bg-green-500',  label: 'OK',       text: 'text-green-700 dark:text-green-400' },
-  warning: { dot: 'bg-yellow-500', label: 'Throttled', text: 'text-yellow-700 dark:text-yellow-400' },
-  failed:  { dot: 'bg-red-500',    label: 'Failed',   text: 'text-red-700 dark:text-red-400' },
-  stale:   { dot: 'bg-red-500',    label: 'Stale',    text: 'text-red-700 dark:text-red-400' },
-  never:   { dot: 'bg-gray-400',   label: 'No runs',  text: 'text-gray-500' },
-};
-
-function formatAge(min: number | null): string {
-  if (min == null) return '—';
-  if (min < 60) return `${min}m ago`;
-  if (min < 60 * 24) return `${Math.round(min / 60)}h ago`;
-  return `${Math.round(min / (60 * 24))}d ago`;
-}
 
 export default function AdminDashboard() {
   const { toast } = useToast();
@@ -74,19 +29,6 @@ export default function AdminDashboard() {
   const [authHeaders, setAuthHeaders] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState<AdminTab>('today');
 
-  const [platformStats, setPlatformStats] = useState<PlatformStats | null>(null);
-  const [statsLoading, setStatsLoading] = useState(false);
-
-  const [ghostStats, setGhostStats] = useState<GhostJobStats | null>(null);
-  const [ghostRunning, setGhostRunning] = useState(false);
-  const [ghostFetching, setGhostFetching] = useState(false);
-
-  const [verifyStats, setVerifyStats] = useState<CompanyVerificationStats | null>(null);
-  const [verifyRunning, setVerifyRunning] = useState(false);
-  const [verifyFetching, setVerifyFetching] = useState(false);
-
-  const [pipelineHealth, setPipelineHealth] = useState<PipelineHealth[] | null>(null);
-  const [pipelineFetching, setPipelineFetching] = useState(false);
 
   // Error monitoring state
   const [errors, setErrors] = useState<any[] | null>(null);
@@ -143,116 +85,12 @@ export default function AdminDashboard() {
   // Auto-load data when authenticated and switching tabs
   useEffect(() => {
     if (!authenticated) return;
-    if (activeTab === 'overview') {
-      loadPlatformStats();
-      loadGhostStats();
-      loadVerifyStats();
-      loadPipelineHealth();
-    } else if (activeTab === 'errors') {
+    if (activeTab === 'errors') {
       loadErrors();
     } else if (activeTab === 'invites') {
       loadInviteCodes();
     }
   }, [authenticated, activeTab]);
-
-  async function loadPlatformStats() {
-    setStatsLoading(true);
-    try {
-      const res = await fetch('/api/platform/stats');
-      if (res.ok) {
-        const data = await res.json();
-        setPlatformStats({
-          totalJobs: data.totalJobs ?? data.jobs ?? 0,
-          totalUsers: data.totalUsers ?? data.users ?? 0,
-          totalMatches: data.totalMatches ?? data.matches ?? 0,
-        });
-      }
-    } catch {
-      // ignore
-    } finally {
-      setStatsLoading(false);
-    }
-  }
-
-  async function loadGhostStats() {
-    setGhostFetching(true);
-    try {
-      const res = await fetch('/api/admin/ghost-job-stats', { headers: adminHeaders });
-      if (res.ok) setGhostStats(await res.json());
-    } catch {
-      // ignore
-    } finally {
-      setGhostFetching(false);
-    }
-  }
-
-  async function runGhostDetection() {
-    setGhostRunning(true);
-    try {
-      const res = await fetch('/api/admin/run-ghost-job-detection', {
-        method: 'POST',
-        headers: adminHeaders,
-      });
-      if (res.status === 401) {
-        toast({ title: 'Unauthorized. Re-enter admin secret.', variant: 'destructive' });
-        setAuthenticated(false);
-        return;
-      }
-      const data = await res.json();
-      toast({ title: 'Ghost job detection complete', description: data.message || 'Done' });
-      loadGhostStats();
-    } catch {
-      toast({ title: 'Detection failed', variant: 'destructive' });
-    } finally {
-      setGhostRunning(false);
-    }
-  }
-
-  async function loadVerifyStats() {
-    setVerifyFetching(true);
-    try {
-      const res = await fetch('/api/admin/company-verification-stats', { headers: adminHeaders });
-      if (res.ok) setVerifyStats(await res.json());
-    } catch {
-      // ignore
-    } finally {
-      setVerifyFetching(false);
-    }
-  }
-
-  async function loadPipelineHealth() {
-    setPipelineFetching(true);
-    try {
-      const res = await fetch('/api/admin/pipeline-health', { headers: adminHeaders });
-      if (res.ok) setPipelineHealth(await res.json());
-    } catch {
-      // ignore
-    } finally {
-      setPipelineFetching(false);
-    }
-  }
-
-  async function runCompanyVerification() {
-    setVerifyRunning(true);
-    try {
-      const res = await fetch('/api/admin/run-company-verification', {
-        method: 'POST',
-        headers: adminHeaders,
-      });
-      if (res.status === 401) {
-        toast({ title: 'Unauthorized. Re-enter admin secret.', variant: 'destructive' });
-        setAuthenticated(false);
-        return;
-      }
-      const data = await res.json();
-      toast({ title: 'Company verification complete', description: data.message || 'Done' });
-      loadVerifyStats();
-    } catch {
-      toast({ title: 'Verification failed', variant: 'destructive' });
-    } finally {
-      setVerifyRunning(false);
-    }
-  }
 
   async function loadErrors(level?: string) {
     setErrorsLoading(true);
@@ -370,9 +208,10 @@ export default function AdminDashboard() {
 
   const tabs: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
     { id: 'today', label: 'Today', icon: <Clock className="h-4 w-4" /> },
-    { id: 'system', label: 'System & scaling', icon: <AlertTriangle className="h-4 w-4" /> },
-    { id: 'overview', label: 'Platform', icon: <Settings className="h-4 w-4" /> },
-    { id: 'metrics', label: 'Metrics', icon: <BarChart3 className="h-4 w-4" /> },
+    { id: 'growth', label: 'Growth', icon: <TrendingUp className="h-4 w-4" /> },
+    { id: 'jobs', label: 'Jobs', icon: <Briefcase className="h-4 w-4" /> },
+    { id: 'ai', label: 'AI & matching', icon: <Sparkles className="h-4 w-4" /> },
+    { id: 'system', label: 'System', icon: <Server className="h-4 w-4" /> },
     { id: 'errors', label: 'Errors', icon: <Bug className="h-4 w-4" /> },
     { id: 'invites', label: 'Invites', icon: <KeyRound className="h-4 w-4" /> },
   ];
@@ -416,207 +255,9 @@ export default function AdminDashboard() {
         {activeTab === 'today' && <ConsoleToday />}
         {activeTab === 'system' && <ConsoleSystem />}
 
-        {activeTab === 'overview' && (
-          <div className="space-y-6">
-            {/* Pipeline (cron) Health */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center justify-between">
-                  <span className="flex items-center gap-2">
-                    <Clock className="h-5 w-5 text-blue-600" />
-                    Pipeline Health
-                  </span>
-                  <Button variant="outline" size="sm" onClick={loadPipelineHealth} disabled={pipelineFetching}>
-                    {pipelineFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Refresh'}
-                  </Button>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {pipelineHealth ? (
-                  <div className="space-y-2">
-                    {pipelineHealth.map((p) => {
-                      const style = PIPELINE_STATUS_STYLE[p.status] ?? PIPELINE_STATUS_STYLE.never;
-                      return (
-                        <div key={p.pipeline} className="flex items-center gap-3 py-2 border-b border-gray-100 dark:border-gray-800 last:border-0">
-                          <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${style.dot}`} title={style.label} />
-                          <div className="w-44 shrink-0">
-                            <div className="font-mono text-sm font-medium">{p.pipeline}</div>
-                            <div className={`text-xs ${style.text}`}>{style.label}</div>
-                          </div>
-                          <div className="w-24 shrink-0 text-sm text-gray-500" title={p.lastRunAt ?? ''}>
-                            {formatAge(p.ageMinutes)}
-                          </div>
-                          <div className="flex-1 min-w-0 text-xs text-gray-600 dark:text-gray-400 truncate" title={p.message ?? ''}>
-                            {p.message ?? 'no runs recorded yet'}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-center h-24">
-                    {pipelineFetching ? (
-                      <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
-                    ) : (
-                      <Button onClick={loadPipelineHealth}>Load Pipeline Health</Button>
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Platform Stats */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center justify-between">
-                  <span>Platform Stats</span>
-                  <Button variant="outline" size="sm" onClick={loadPlatformStats} disabled={statsLoading}>
-                    {statsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Refresh'}
-                  </Button>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {platformStats ? (
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="text-center p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                      <Briefcase className="h-6 w-6 text-blue-600 mx-auto mb-2" />
-                      <div className="text-2xl font-bold">{platformStats.totalJobs.toLocaleString()}</div>
-                      <div className="text-sm text-gray-500">Total Jobs</div>
-                    </div>
-                    <div className="text-center p-4 bg-green-50 dark:bg-green-900/20 rounded-lg">
-                      <Users className="h-6 w-6 text-green-600 mx-auto mb-2" />
-                      <div className="text-2xl font-bold">{platformStats.totalUsers.toLocaleString()}</div>
-                      <div className="text-sm text-gray-500">Total Users</div>
-                    </div>
-                    <div className="text-center p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg">
-                      <Target className="h-6 w-6 text-purple-600 mx-auto mb-2" />
-                      <div className="text-2xl font-bold">{platformStats.totalMatches.toLocaleString()}</div>
-                      <div className="text-sm text-gray-500">Total Matches</div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-center h-24">
-                    {statsLoading ? (
-                      <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
-                    ) : (
-                      <Button onClick={loadPlatformStats}>Load Stats</Button>
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Ghost Job Detection */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <AlertTriangle className="h-5 w-5 text-orange-500" />
-                  Ghost Job Detection
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex gap-2">
-                  <Button onClick={runGhostDetection} disabled={ghostRunning} className="bg-orange-600 hover:bg-orange-700">
-                    {ghostRunning ? (
-                      <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Running...</>
-                    ) : (
-                      'Run Detection'
-                    )}
-                  </Button>
-                  <Button variant="outline" onClick={loadGhostStats} disabled={ghostFetching}>
-                    {ghostFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Refresh Stats'}
-                  </Button>
-                </div>
-
-                {ghostFetching && !ghostStats && (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    {[1, 2, 3, 4].map(i => (
-                      <div key={i} className="bg-gray-100 dark:bg-gray-800 rounded-lg p-3 text-center animate-pulse">
-                        <div className="h-6 w-10 bg-gray-300 dark:bg-gray-600 rounded mx-auto mb-1" />
-                        <div className="h-3 w-16 bg-gray-300 dark:bg-gray-600 rounded mx-auto" />
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {ghostStats && (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    {[
-                      { label: 'Checked', value: ghostStats.totalChecked ?? '—', color: 'bg-gray-100 dark:bg-gray-800' },
-                      { label: 'Ghosts Found', value: ghostStats.ghostsFound ?? '—', color: 'bg-orange-50 dark:bg-orange-900/20' },
-                      { label: 'Deactivated', value: ghostStats.deactivated ?? '—', color: 'bg-red-50 dark:bg-red-900/20' },
-                      { label: 'Last Run', value: ghostStats.lastRun ? new Date(ghostStats.lastRun).toLocaleDateString() : 'Never', color: 'bg-blue-50 dark:bg-blue-900/20' },
-                    ].map(({ label, value, color }) => (
-                      <div key={label} className={`${color} rounded-lg p-3 text-center`}>
-                        <div className="text-lg font-bold">{value}</div>
-                        <div className="text-xs text-gray-500">{label}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Company Verification */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Building2 className="h-5 w-5 text-green-600" />
-                  Company Verification
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex gap-2">
-                  <Button onClick={runCompanyVerification} disabled={verifyRunning} className="bg-green-600 hover:bg-green-700">
-                    {verifyRunning ? (
-                      <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Running...</>
-                    ) : (
-                      'Run Verification'
-                    )}
-                  </Button>
-                  <Button variant="outline" onClick={loadVerifyStats} disabled={verifyFetching}>
-                    {verifyFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Refresh Stats'}
-                  </Button>
-                </div>
-
-                {verifyFetching && !verifyStats && (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    {[1, 2, 3, 4].map(i => (
-                      <div key={i} className="bg-gray-100 dark:bg-gray-800 rounded-lg p-3 text-center animate-pulse">
-                        <div className="h-6 w-10 bg-gray-300 dark:bg-gray-600 rounded mx-auto mb-1" />
-                        <div className="h-3 w-16 bg-gray-300 dark:bg-gray-600 rounded mx-auto" />
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {verifyStats && (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    {[
-                      { label: 'Total Companies', value: verifyStats.totalCompanies ?? '—', color: 'bg-gray-100 dark:bg-gray-800' },
-                      { label: 'Verified', value: verifyStats.verified ?? '—', color: 'bg-green-50 dark:bg-green-900/20' },
-                      { label: 'Unverified', value: verifyStats.unverified ?? '—', color: 'bg-yellow-50 dark:bg-yellow-900/20' },
-                      { label: 'Last Run', value: verifyStats.lastRun ? new Date(verifyStats.lastRun).toLocaleDateString() : 'Never', color: 'bg-blue-50 dark:bg-blue-900/20' },
-                    ].map(({ label, value, color }) => (
-                      <div key={label} className={`${color} rounded-lg p-3 text-center`}>
-                        <div className="text-lg font-bold">{value}</div>
-                        <div className="text-xs text-gray-500">{label}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {activeTab === 'metrics' && (
-          <Suspense fallback={
-            <div className="flex items-center justify-center py-20">
-              <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
-            </div>
-          }>
-            <MetricsContent authHeaders={authHeaders} />
-          </Suspense>
-        )}
+        {activeTab === 'growth' && <ConsoleGrowth />}
+        {activeTab === 'jobs' && <ConsoleJobs />}
+        {activeTab === 'ai' && <ConsoleAi />}
 
         {activeTab === 'errors' && (
           <div className="space-y-6">

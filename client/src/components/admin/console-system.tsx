@@ -6,10 +6,12 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Loader2, Pin, Play } from 'lucide-react';
+import { Loader2, Pin } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { adminFetch } from '@/lib/admin-fetch';
-import { RequestStatus, SignalRow, useConsoleActions, useOverview } from './console-today';
+import { JobRow, SignalRow, useConsoleActions, useOverview } from './console-today';
+import { ErrorsCard, PipelinesCard, SpeedCard } from './console-performance';
+import { VIZ_TOKENS } from './charts';
 
 interface SettingRow {
   key: string; value: any; pinned: boolean; updatedBy: string | null; updatedAt: string | null; reason: string | null;
@@ -103,12 +105,6 @@ function ChangeDialog({ setting, onClose, onSaved }: { setting: SettingRow; onCl
   );
 }
 
-const RUN_STATUS: Record<string, { dot: string; word: string }> = {
-  ok: { dot: 'bg-emerald-500', word: 'ok' },
-  warning: { dot: 'bg-amber-500', word: 'warning' },
-  error: { dot: 'bg-red-500', word: 'failed' },
-};
-
 export function ConsoleSystem() {
   const { data, load: loadOverview } = useOverview();
   const [settings, setSettings] = useState<SettingRow[] | null>(null);
@@ -128,7 +124,7 @@ export function ConsoleSystem() {
   const actions = useConsoleActions(() => { loadOverview(); load(); });
 
   return (
-    <div className="space-y-6">
+    <div className={`space-y-6 ${VIZ_TOKENS}`}>
       <Card>
         <CardHeader><CardTitle className="text-base">Capacity signals</CardTitle></CardHeader>
         <CardContent>
@@ -143,31 +139,16 @@ export function ConsoleSystem() {
           <p className="text-xs text-gray-500">Run any of these now. It starts on the server within a minute, with the same limits as its scheduled run. Backups, purges and emails to users run on their schedule only.</p>
         </CardHeader>
         <CardContent>
-          {!data ? <Loader2 className="h-4 w-4 animate-spin text-gray-400" /> : data.jobs.map(j => {
-            const last = j.lastRun ? RUN_STATUS[j.lastRun.status] ?? { dot: 'bg-gray-400', word: j.lastRun.status } : null;
-            const busy = !!j.request && (j.request.status === 'queued' || j.request.status === 'running');
-            return (
-              <div key={j.key} className="flex flex-col gap-2 py-3 border-b last:border-b-0 border-gray-100 dark:border-gray-800 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0 space-y-1">
-                  <p className="text-sm font-medium text-gray-900 dark:text-white">{j.title}</p>
-                  <p className="text-xs text-gray-500">{j.description}</p>
-                  {j.lastRun && last && (
-                    <p className="text-xs text-gray-600 dark:text-gray-300 flex items-center gap-1.5">
-                      <span className={`h-2 w-2 rounded-full shrink-0 ${last.dot}`} aria-hidden />
-                      <span className="min-w-0 break-words">Last run {new Date(j.lastRun.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · {last.word}{j.lastRun.message ? ` · ${j.lastRun.message}` : ''}</span>
-                    </p>
-                  )}
-                  {j.request && <RequestStatus request={j.request} />}
-                </div>
-                <Button size="sm" variant="outline" className="shrink-0" disabled={busy}
-                  onClick={() => actions.runJob(j.key, j.title, j.description, `Run "${j.title}" from Scheduled jobs`)}>
-                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Play className="h-3.5 w-3.5 mr-1.5" />}Run now
-                </Button>
-              </div>
-            );
-          })}
+          {!data ? <Loader2 className="h-4 w-4 animate-spin text-gray-400" /> : data.jobs.map(j => <JobRow key={j.key} job={j} actions={actions} />)}
         </CardContent>
       </Card>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <SpeedCard />
+        <ErrorsCard />
+      </div>
+
+      <PipelinesCard />
 
       <Card>
         <CardHeader><CardTitle className="text-base">Switches</CardTitle></CardHeader>

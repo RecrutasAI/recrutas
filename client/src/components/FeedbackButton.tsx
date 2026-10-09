@@ -156,7 +156,8 @@ export function FeedbackDialog({ open, onOpenChange }: { open: boolean; onOpenCh
 export function FeedbackButton() {
   const [location] = useLocation();
   const [open, setOpen] = useState(false);
-  if (PUBLIC_SITE_ROUTES.includes(location)) {return null;}
+  // Not on the public site, and not on the admin console (the founder doesn't send feedback to themselves).
+  if (PUBLIC_SITE_ROUTES.includes(location) || location.startsWith('/admin')) {return null;}
 
   return (
     <>
