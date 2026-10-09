@@ -216,7 +216,7 @@ export function SignalRow({ s, data, actions }: { s: Signal; data: Overview; act
                     const job = jobs.get(a.job);
                     const busy = isOpen(job?.request);
                     return (
-                      <Button key={a.label} size="sm" disabled={busy}
+                      <Button key={a.label} size="sm" disabled={busy} className="h-auto min-h-9 max-w-full whitespace-normal text-left py-1.5"
                         onClick={() => actions.runJob(a.job, job?.title ?? a.label, job?.description ?? '', `${a.label} (${context})`)}>
                         {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Play className="h-3.5 w-3.5 mr-1.5" />}{a.label}
                       </Button>
@@ -224,7 +224,7 @@ export function SignalRow({ s, data, actions }: { s: Signal; data: Overview; act
                   }
                   if (a.kind === 'setting') {
                     return (
-                      <Button key={a.label} size="sm" variant="outline" onClick={() => actions.setSetting(a.key, a.value, a.label, `${a.label} (${context})`)}>
+                      <Button key={a.label} size="sm" variant="outline" className="h-auto min-h-9 max-w-full whitespace-normal text-left py-1.5" onClick={() => actions.setSetting(a.key, a.value, a.label, `${a.label} (${context})`)}>
                         <ToggleRight className="h-3.5 w-3.5 mr-1.5" />{a.label}
                       </Button>
                     );

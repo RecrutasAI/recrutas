@@ -196,7 +196,7 @@ function aiParseSignal(i: CapacityInput): Signal {
   const pct = total && onRules !== null ? (100 * onRules) / total : null;
   const influx = (i.signups7d ?? 0) >= INFLUX_SIGNUPS_7D;
   return {
-    key: 'aiParse', label: 'Résumés stuck on the rule engine (7 days)', value: pct,
+    key: 'aiParse', label: 'Resumes stuck on the rule engine (7 days)', value: pct,
     display: total === null || onRules === null ? 'not measured'
       : `${onRules} of ${total}${pct === null ? '' : ` (${Math.round(pct)}%)`}${tooFew ? ' (too few to judge)' : ''}`,
     level: tooFew ? 'unknown' : grade(pct, 10, 25),
