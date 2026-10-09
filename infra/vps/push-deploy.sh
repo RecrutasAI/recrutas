@@ -57,6 +57,12 @@ say "Applying on VPS"
 scp -o ConnectTimeout=10 -i "$KEY" "$BUNDLE" "root@$HOST:/tmp/deploy.bundle" >/dev/null
 "${SSH[@]}" bash -s <<EOF
 set -e
+# Scheduled jobs skip while this marker exists (run-cron.sh): a job starting
+# mid-"npm ci" finds node_modules half-replaced, fails with "tsx: not found"
+# and emails an alert (2026-10-09). Removed on exit, even on failure; run-cron
+# ignores a marker older than 15 minutes in case this shell is killed.
+touch /opt/recrutas/.deploying
+trap 'rm -f /opt/recrutas/.deploying' EXIT
 cd "$APP"
 # Discard any hand-edits on the box; main is the source of truth. (.env and the
 # .env.*.bak rollback copies are untracked and are left alone.)
