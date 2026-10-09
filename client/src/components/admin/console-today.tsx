@@ -180,6 +180,38 @@ export function RequestStatus({ request }: { request: JobRequest }) {
   );
 }
 
+// ── Job row (a scheduled job with Run now) ──────────────────────────────────
+
+const RUN_STATUS: Record<string, { dot: string; word: string }> = {
+  ok: { dot: 'bg-emerald-500', word: 'ok' },
+  warning: { dot: 'bg-amber-500', word: 'warning' },
+  error: { dot: 'bg-red-500', word: 'failed' },
+};
+
+export function JobRow({ job: j, actions }: { job: ConsoleJob; actions: ReturnType<typeof useConsoleActions> }) {
+  const last = j.lastRun ? RUN_STATUS[j.lastRun.status] ?? { dot: 'bg-gray-400', word: j.lastRun.status } : null;
+  const busy = isOpen(j.request);
+  return (
+    <div className="flex flex-col gap-2 py-3 border-b last:border-b-0 border-gray-100 dark:border-gray-800 sm:flex-row sm:items-start sm:justify-between">
+      <div className="min-w-0 space-y-1">
+        <p className="text-sm font-medium text-gray-900 dark:text-white">{j.title}</p>
+        <p className="text-xs text-gray-500">{j.description}</p>
+        {j.lastRun && last && (
+          <p className="text-xs text-gray-600 dark:text-gray-300 flex items-center gap-1.5">
+            <span className={`h-2 w-2 rounded-full shrink-0 ${last.dot}`} aria-hidden />
+            <span className="min-w-0 break-words">Last run {when(j.lastRun.at)} · {last.word}{j.lastRun.message ? ` · ${j.lastRun.message}` : ''}</span>
+          </p>
+        )}
+        {j.request && <RequestStatus request={j.request} />}
+      </div>
+      <Button size="sm" variant="outline" className="shrink-0" disabled={busy}
+        onClick={() => actions.runJob(j.key, j.title, j.description, `Run "${j.title}" from the console`)}>
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Play className="h-3.5 w-3.5 mr-1.5" />}Run now
+      </Button>
+    </div>
+  );
+}
+
 // ── Signal row ───────────────────────────────────────────────────────────────
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);

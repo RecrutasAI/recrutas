@@ -8,6 +8,7 @@ import { asyncHandler } from '../middleware/error-handler';
 import { adminEmailFromSession, verifyAdminSecret } from '../middleware/security';
 import { getOverview } from '../services/admin-console.service';
 import { requestJob, snoozeSignal, clearSnooze, isRunnableJob } from '../services/admin-actions.service';
+import { getGrowth, getGrowthAnalytics, getJobsInsights, getAiInsights } from '../services/admin-insights.service';
 import {
   SETTING_DEFAULTS, SETTING_LABELS, getSettings, isSettingKey, listSettings, recentAudit, setSetting,
 } from '../services/runtime-settings.service';
@@ -59,6 +60,28 @@ export function registerAdminConsoleRoutes(app: Express): void {
     const result = await setSetting(key, value, actorOf(req), reason.trim().slice(0, 500), { pinned });
     if (!result.ok) {return res.status(400).json({ message: result.error });}
     res.json({ ok: true });
+  }));
+
+  // Growth, Jobs and AI & matching tabs.
+  app.get('/api/admin/console/growth', asyncHandler(async (req, res) => {
+    if (!verifyAdminSecret(req, res)) {return;}
+    res.set('Cache-Control', 'no-store');
+    res.json(await getGrowth());
+  }));
+  app.get('/api/admin/console/growth/analytics', asyncHandler(async (req, res) => {
+    if (!verifyAdminSecret(req, res)) {return;}
+    res.set('Cache-Control', 'no-store');
+    res.json(await getGrowthAnalytics());
+  }));
+  app.get('/api/admin/console/jobs', asyncHandler(async (req, res) => {
+    if (!verifyAdminSecret(req, res)) {return;}
+    res.set('Cache-Control', 'no-store');
+    res.json(await getJobsInsights());
+  }));
+  app.get('/api/admin/console/ai', asyncHandler(async (req, res) => {
+    if (!verifyAdminSecret(req, res)) {return;}
+    res.set('Cache-Control', 'no-store');
+    res.json(await getAiInsights());
   }));
 
   // "Run now": queues a whitelisted job; the VPS starts it within a minute.
