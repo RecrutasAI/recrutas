@@ -6,18 +6,22 @@
  * via infra/vps/alert.sh, and records a heartbeat in pipeline_runs every 15
  * minutes or whenever it acted.
  *
+ * It also starts jobs queued from the console's "Run now" buttons (independent
+ * of the Autopilot switch), each detached through infra/vps/run-requested-job.sh.
+ *
  *   npx tsx scripts/autopilot.ts            # decide and apply
  *   npx tsx scripts/autopilot.ts --dry-run  # decide and print, change nothing
  */
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
-import { spawnSync } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { sql } from 'drizzle-orm/sql';
 import { db } from '../server/db';
 import { listSettings, setSetting, writeAudit, SETTING_DEFAULTS, type Settings } from '../server/services/runtime-settings.service';
 import { decideAutopilot, isMissingTable, shouldReap, REAP_SQL, CONNECTIONS_SQL, type AutopilotInput, type AutopilotState, type SetBy } from '../server/services/autopilot.service';
 import { recordPipelineRun } from '../server/services/pipeline-run.service';
+import { claimQueuedRequests, RUNNABLE_JOBS, type RunnableJobKey } from '../server/services/admin-actions.service';
 
 const rows = (r: any): any[] => (r?.rows ?? r) as any[];
 const DRY = process.argv.includes('--dry-run');
@@ -64,6 +68,35 @@ function reapIfNeeded(connections: number | null, appDbReachable: boolean): { cl
   return out === null ? null : { closed: Number(out) || 0 };
 }
 
+/**
+ * Start "Run now" requests from the console. The command comes from
+ * RUNNABLE_JOBS by key, never from the request row. Each job runs detached in
+ * its own session so it outlives this one-minute process.
+ */
+async function startConsoleRequests(): Promise<void> {
+  if (DRY) {return;}
+  let claimed;
+  try {
+    claimed = await claimQueuedRequests();
+  } catch (err) {
+    if (!isMissingTable(err)) {console.warn(`[autopilot] could not read console requests: ${(err as Error).message}`);}
+    return;
+  }
+  const runner = path.resolve(process.cwd(), 'infra/vps/run-requested-job.sh');
+  for (const req of claimed) {
+    const job = RUNNABLE_JOBS[req.job as RunnableJobKey];
+    try {
+      const child = spawn('setsid', ['bash', runner, String(req.id), req.job, job.pipeline, String(job.timeoutMin), ...job.command], {
+        detached: true, stdio: 'ignore', env: { ...process.env, ...('env' in job ? job.env : {}) },
+      });
+      child.unref();
+      console.log(`[autopilot] started console request #${req.id}: ${req.job} (by ${req.requestedBy})`);
+    } catch (err) {
+      await db.execute(sql`UPDATE admin_job_requests SET status = 'failed', finished_at = NOW(), result = ${`Could not start: ${(err as Error).message}`.slice(0, 300)} WHERE id = ${req.id}`).catch(() => {});
+    }
+  }
+}
+
 async function main(): Promise<void> {
   const startedAt = new Date();
   // Count connections as the superuser first: it works even when the app user is locked out.
@@ -89,6 +122,7 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+  await startConsoleRequests();
   const settings = { ...SETTING_DEFAULTS } as Settings;
   const setBy: SetBy = {};
   for (const s of current) { (settings as any)[s.key] = s.value; setBy[s.key] = s.updatedBy; }
@@ -98,7 +132,7 @@ async function main(): Promise<void> {
       SELECT count(*)::int AS n, percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95
       FROM request_metrics WHERE endpoint = '/api/ai-matches' AND created_at > NOW() - INTERVAL '15 minutes'`).then(r => rows(r)[0]),
     db.execute(sql`SELECT count(*)::int AS n FROM pg_stat_activity`).then(r => rows(r)[0]),
-    db.execute(sql`SELECT count(*)::int AS n FROM job_postings WHERE status = 'active' AND vector_embedding IS NULL`).then(r => rows(r)[0]).catch(() => null),
+    db.execute(sql`SELECT count(*)::int AS n, EXTRACT(EPOCH FROM (NOW() - min(created_at))) / 60 AS oldest_min FROM job_postings WHERE status = 'active' AND vector_embedding IS NULL`).then(r => rows(r)[0]).catch(() => null),
   ]);
   const input: AutopilotInput = {
     feedP95Ms: feed?.p95 === null || feed?.p95 === undefined ? null : Number(feed.p95),
@@ -109,6 +143,7 @@ async function main(): Promise<void> {
     dbConnections: suConnections ?? (Number(conns?.n) || 0),
     diskPct: diskPct(),
     embeddingBacklog: backlog ? Number(backlog.n) : null,
+    embeddingOldestMin: backlog?.oldest_min === null || backlog?.oldest_min === undefined ? null : Number(backlog.oldest_min),
   };
 
   const reaped = reapIfNeeded(input.dbConnections, true);

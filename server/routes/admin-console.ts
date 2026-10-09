@@ -1,5 +1,5 @@
 /**
- * Admin console API: the Today overview, live switches and the audit log.
+ * Admin console API: the Today overview, live switches, run-now jobs, snoozes and the audit log.
  * Every route needs an admin (ADMIN_EMAILS session, or the admin secret for scripts).
  * Switch changes require a reason and are written to admin_audit_log with the admin's email.
  */
@@ -7,6 +7,7 @@ import type { Express, Request } from 'express';
 import { asyncHandler } from '../middleware/error-handler';
 import { adminEmailFromSession, verifyAdminSecret } from '../middleware/security';
 import { getOverview } from '../services/admin-console.service';
+import { requestJob, snoozeSignal, clearSnooze, isRunnableJob } from '../services/admin-actions.service';
 import {
   SETTING_DEFAULTS, SETTING_LABELS, getSettings, isSettingKey, listSettings, recentAudit, setSetting,
 } from '../services/runtime-settings.service';
@@ -57,6 +58,37 @@ export function registerAdminConsoleRoutes(app: Express): void {
     }
     const result = await setSetting(key, value, actorOf(req), reason.trim().slice(0, 500), { pinned });
     if (!result.ok) {return res.status(400).json({ message: result.error });}
+    res.json({ ok: true });
+  }));
+
+  // "Run now": queues a whitelisted job; the VPS starts it within a minute.
+  app.post('/api/admin/jobs/:job/run', asyncHandler(async (req, res) => {
+    if (!verifyAdminSecret(req, res)) {return;}
+    const { job } = req.params;
+    if (!isRunnableJob(job)) {return res.status(404).json({ message: `Unknown job: ${job}` });}
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason : '';
+    let result;
+    try {
+      result = await requestJob(job, actorOf(req), reason);
+    } catch {
+      return res.status(503).json({ message: 'Run-now is not available until the admin_job_requests migration runs.' });
+    }
+    if (!result.ok) {return res.status(409).json({ message: result.error });}
+    res.json({ ok: true, request: result.request });
+  }));
+
+  app.post('/api/admin/signals/:key/snooze', asyncHandler(async (req, res) => {
+    if (!verifyAdminSecret(req, res)) {return;}
+    const hours = Number(req.body?.hours);
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason : '';
+    const result = await snoozeSignal(req.params.key, hours, actorOf(req), reason);
+    if (!result.ok) {return res.status(400).json({ message: result.error });}
+    res.json({ ok: true });
+  }));
+
+  app.delete('/api/admin/signals/:key/snooze', asyncHandler(async (req, res) => {
+    if (!verifyAdminSecret(req, res)) {return;}
+    await clearSnooze(req.params.key, actorOf(req));
     res.json({ ok: true });
   }));
 

@@ -6,10 +6,10 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Loader2, Pin } from 'lucide-react';
+import { Loader2, Pin, Play } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { adminFetch } from '@/lib/admin-fetch';
-import { SignalRow, useOverview } from './console-today';
+import { RequestStatus, SignalRow, useConsoleActions, useOverview } from './console-today';
 
 interface SettingRow {
   key: string; value: any; pinned: boolean; updatedBy: string | null; updatedAt: string | null; reason: string | null;
@@ -103,8 +103,14 @@ function ChangeDialog({ setting, onClose, onSaved }: { setting: SettingRow; onCl
   );
 }
 
+const RUN_STATUS: Record<string, { dot: string; word: string }> = {
+  ok: { dot: 'bg-emerald-500', word: 'ok' },
+  warning: { dot: 'bg-amber-500', word: 'warning' },
+  error: { dot: 'bg-red-500', word: 'failed' },
+};
+
 export function ConsoleSystem() {
-  const { data } = useOverview();
+  const { data, load: loadOverview } = useOverview();
   const [settings, setSettings] = useState<SettingRow[] | null>(null);
   const [available, setAvailable] = useState(true);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
@@ -119,14 +125,47 @@ export function ConsoleSystem() {
     if (a) {setAudit(a.entries);}
   }, []);
   useEffect(() => { load(); }, [load]);
+  const actions = useConsoleActions(() => { loadOverview(); load(); });
 
   return (
     <div className="space-y-6">
       <Card>
         <CardHeader><CardTitle className="text-base">Capacity signals</CardTitle></CardHeader>
         <CardContent>
-          {data ? data.signals.map(s => <SignalRow key={s.key} s={s} />) : <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
+          {data ? data.signals.map(s => <SignalRow key={s.key} s={s} data={data} actions={actions} />) : <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
           <p className="mt-3 text-xs text-gray-500">Thresholds come from docs/scaling-strategy.md, section 5.</p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Scheduled jobs</CardTitle>
+          <p className="text-xs text-gray-500">Run any of these now. It starts on the server within a minute, with the same limits as its scheduled run. Backups, purges and emails to users run on their schedule only.</p>
+        </CardHeader>
+        <CardContent>
+          {!data ? <Loader2 className="h-4 w-4 animate-spin text-gray-400" /> : data.jobs.map(j => {
+            const last = j.lastRun ? RUN_STATUS[j.lastRun.status] ?? { dot: 'bg-gray-400', word: j.lastRun.status } : null;
+            const busy = !!j.request && (j.request.status === 'queued' || j.request.status === 'running');
+            return (
+              <div key={j.key} className="flex flex-col gap-2 py-3 border-b last:border-b-0 border-gray-100 dark:border-gray-800 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0 space-y-1">
+                  <p className="text-sm font-medium text-gray-900 dark:text-white">{j.title}</p>
+                  <p className="text-xs text-gray-500">{j.description}</p>
+                  {j.lastRun && last && (
+                    <p className="text-xs text-gray-600 dark:text-gray-300 flex items-center gap-1.5">
+                      <span className={`h-2 w-2 rounded-full shrink-0 ${last.dot}`} aria-hidden />
+                      <span className="min-w-0 break-words">Last run {new Date(j.lastRun.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · {last.word}{j.lastRun.message ? ` · ${j.lastRun.message}` : ''}</span>
+                    </p>
+                  )}
+                  {j.request && <RequestStatus request={j.request} />}
+                </div>
+                <Button size="sm" variant="outline" className="shrink-0" disabled={busy}
+                  onClick={() => actions.runJob(j.key, j.title, j.description, `Run "${j.title}" from Scheduled jobs`)}>
+                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Play className="h-3.5 w-3.5 mr-1.5" />}Run now
+                </Button>
+              </div>
+            );
+          })}
         </CardContent>
       </Card>
 
@@ -172,6 +211,10 @@ export function ConsoleSystem() {
                   <span className="font-medium text-gray-900 dark:text-white">{e.actor}</span>{' '}
                   {e.action === 'setting.change' && e.target
                     ? <>set <b>{settings?.find(x => x.key === e.target)?.title ?? e.target}</b> from {describe(e.target, e.detail?.from)} to {describe(e.target, e.detail?.to)}</>
+                    : e.action === 'job.run' && e.target
+                    ? <>ran <b>{data?.jobs.find(j => j.key === e.target)?.title ?? e.target}</b></>
+                    : e.action === 'signal.snooze' && e.target
+                    ? <>snoozed <b>{data?.signals.find(x => x.key === e.target)?.label ?? e.target}</b> for {e.detail?.hours} h</>
                     : <>{e.action}{e.target ? ` ${e.target}` : ''}</>}
                   {e.reason && <span className="text-gray-500"> · "{e.reason}"</span>}
                 </li>
@@ -181,6 +224,7 @@ export function ConsoleSystem() {
         </CardContent>
       </Card>
 
+      {actions.dialog}
       {editing && <ChangeDialog setting={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
     </div>
   );

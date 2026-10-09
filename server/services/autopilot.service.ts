@@ -8,7 +8,7 @@
  *   feed p95 > 2 s (≥5 requests) or load > 1.5×cores → feed cache on, lifetime → 6 h     feed p95 < 1 s and load < 1.0×cores
  *   load > 1.5×cores or RAM free < 200 MB      → pause background jobs                  load < 1.0×cores and RAM > 400 MB
  *   DB connections > 40                        → pause background jobs + busy banner    connections < 25
- *   disk > 85%, embedding backlog > 500        → alert only
+ *   disk > 85%, a new job unmatched > 14 h     → alert only
  *
  * decideAutopilot() is pure (unit-tested); scripts/autopilot.ts gathers the
  * numbers on the VPS every minute and applies the result.
@@ -25,6 +25,8 @@ export interface AutopilotInput {
   diskPct: number;
   /** Live jobs with no embedding yet: they can't be matched until it catches up. */
   embeddingBacklog?: number | null;
+  /** Minutes the oldest of them has waited. Batches run every 6 h, so only age means trouble. */
+  embeddingOldestMin?: number | null;
 }
 
 /** Who last set each switch (from runtime_settings.updated_by), so Autopilot only undoes its own changes. */
@@ -43,6 +45,8 @@ export interface Decision { changes: Change[]; alerts: { key: string; subject: s
 export const HOLD_MS = 15 * 60_000;
 export const BUSY_NOTICE = { text: "We're busier than usual right now. Pages may take a little longer to load.", level: 'warning' as const };
 const NORMAL_TTL_MINUTES = 120;
+/** Alert when the oldest unmatched job is older than this (two missed 6-hourly batches). */
+export const EMBED_ALERT_MIN = 14 * 60;
 const PRESSURE_TTL_MINUTES = 360;
 
 export function decideAutopilot(i: AutopilotInput, settings: Settings, setBy: SetBy, prev: AutopilotState, now: Date): Decision {
@@ -108,8 +112,10 @@ export function decideAutopilot(i: AutopilotInput, settings: Settings, setBy: Se
   if (i.diskPct > 85) {
     alerts.push({ key: 'autopilot-disk', subject: `[recrutas] disk ${i.diskPct}% full`, body: `The VPS disk is ${i.diskPct}% full. Check WAL and backup retention first (the usual cause), then add a volume. Autopilot does not act on disk.` });
   }
-  if ((i.embeddingBacklog ?? 0) > 500) {
-    alerts.push({ key: 'autopilot-embedding-backlog', subject: `[recrutas] ${i.embeddingBacklog} live jobs waiting for embeddings`, body: `${i.embeddingBacklog} live jobs have no embedding yet, so they can't be matched to anyone. Check the batch-embeddings cron (last run and errors) in the admin console's Pipelines view. If the box is busy, pausing background jobs lets embedding catch up.` });
+  // Thousands waiting between the 6-hourly batches is normal; an old one means a batch was missed.
+  if ((i.embeddingBacklog ?? 0) > 0 && (i.embeddingOldestMin ?? 0) > EMBED_ALERT_MIN) {
+    const h = ((i.embeddingOldestMin ?? 0) / 60).toFixed(1);
+    alerts.push({ key: 'autopilot-embedding-backlog', subject: `[recrutas] new jobs unmatched for ${h} h (${i.embeddingBacklog} waiting)`, body: `${i.embeddingBacklog} live jobs have no matching data yet and the oldest has waited ${h} hours: at least two 6-hourly batches were missed, so these jobs are not reaching candidates. Admin console → Today → "Match new jobs now" runs a batch; its result shows there.` });
   }
   if (changes.length) {
     alerts.push({

@@ -85,11 +85,12 @@ describe('decideAutopilot', () => {
     expect(d.alerts[0].body).toMatch(/45 DB connections/);
   });
 
-  it('alerts (without changing anything) when embeddings fall behind', () => {
-    const d = decideAutopilot({ ...calm, embeddingBacklog: 657 }, S(), {}, { healthySince: {} }, t0);
+  it('alerts (without changing anything) only when a new job has waited past two missed batches', () => {
+    const d = decideAutopilot({ ...calm, embeddingBacklog: 657, embeddingOldestMin: 15 * 60 }, S(), {}, { healthySince: {} }, t0);
     expect(d.changes).toEqual([]);
     expect(d.alerts.map(a => a.key)).toEqual(['autopilot-embedding-backlog']);
-    expect(decideAutopilot({ ...calm, embeddingBacklog: 40 }, S(), {}, { healthySince: {} }, t0).alerts).toEqual([]);
+    // 2,000 waiting 5 hours into a 6-hour cycle is normal.
+    expect(decideAutopilot({ ...calm, embeddingBacklog: 2000, embeddingOldestMin: 5 * 60 }, S(), {}, { healthySince: {} }, t0).alerts).toEqual([]);
   });
 });
 
