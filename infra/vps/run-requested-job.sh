@@ -31,7 +31,7 @@ TAIL="$(tail -c +"$((BEFORE + 1))" "$LOG" 2>/dev/null | tail -40)"
 
 STATUS=done
 NOTE=""
-SKIP="$(printf '%s\n' "$TAIL" | grep -E "\] (lock .* held|lock .* still held|paused by)" | tail -1 | sed -E 's/^[^]]*\] //')"
+SKIP="$(printf '%s\n' "$TAIL" | grep -E "\] (lock .* held|lock .* still held|paused by|deploy in progress)" | tail -1 | sed -E 's/^[^]]*\] //')"
 if [ -n "$SKIP" ]; then
   STATUS=skipped; NOTE="$SKIP"
 elif [ "$RC" -eq 124 ]; then

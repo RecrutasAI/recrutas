@@ -43,6 +43,15 @@ elif ! flock -n 9; then
   exit 0
 fi
 
+# A deploy is reinstalling packages (infra/vps/push-deploy.sh): skip this run
+# instead of failing on a half-replaced node_modules. The next tick runs it. A
+# marker older than 15 minutes is a leftover from a killed deploy and is ignored.
+DEPLOY_MARKER="${RECRUTAS_DEPLOY_MARKER:-/opt/recrutas/.deploying}"
+if [ -e "$DEPLOY_MARKER" ] && [ -n "$(find "$DEPLOY_MARKER" -mmin -15 2>/dev/null)" ]; then
+  echo "$(date -u +%FT%TZ) [$JOB] deploy in progress, skipping" >>"$LOG"
+  exit 0
+fi
+
 cd "$APP_DIR"
 set -a
 # shellcheck disable=SC1091
