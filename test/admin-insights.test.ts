@@ -3,6 +3,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { lastDays, fillDays, weekOverWeek, vendorName, groupSources, engineOf, isAiEngine, isRulesEngine, BEFORE_TRACKING } from '../server/services/admin-insights.service';
+import { isTestEmail } from '../server/lib/real-users';
 
 const now = new Date('2026-10-09T15:00:00Z');
 
@@ -64,5 +65,16 @@ describe('who read a resume', () => {
     expect(isAiEngine(BEFORE_TRACKING)).toBe(false);
     expect(isRulesEngine(BEFORE_TRACKING)).toBe(false);
     expect(isRulesEngine('Rule engine (no AI)')).toBe(true);
+  });
+});
+
+describe('isTestEmail', () => {
+  it('flags automated and alias test accounts, not real people', () => {
+    for (const e of ['ext-e2e-1@example.com', 'a@Example.org', 'you+e2e1008@gmail.com', 'me+test@outlook.com']) {
+      expect(isTestEmail(e)).toBe(true);
+    }
+    for (const e of ['founder@gmail.com', 'jane@example.company.com', 'bob+jobs@gmail.com', 'tester@acme.com', null]) {
+      expect(isTestEmail(e)).toBe(false);
+    }
   });
 });

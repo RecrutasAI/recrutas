@@ -12,6 +12,7 @@
  */
 import { db } from '../db';
 import { sql } from 'drizzle-orm/sql';
+import { realUserIds } from '../lib/real-users';
 
 type Conn = { execute: typeof db.execute };
 const rows = (r: any): any[] => (r?.rows ?? r) as any[];
@@ -135,15 +136,15 @@ export async function getGrowth(conn: Conn = db) {
   const one = (q: any) => safe(async () => Number(rows(await conn.execute(q))[0]?.n ?? 0), null as number | null);
   const [signups, resumes, applications, f] = await Promise.all([
     daily(sql`SELECT date_trunc('day', "createdAt") AS day, count(*)::int AS n FROM users
-      WHERE "createdAt" > NOW() - INTERVAL '28 days' AND role IS DISTINCT FROM 'system' GROUP BY 1`),
+      WHERE "createdAt" > NOW() - INTERVAL '28 days' AND role IS DISTINCT FROM 'system' AND id IN ${realUserIds} GROUP BY 1`),
     daily(sql`SELECT date_trunc('day', created_at) AS day, count(DISTINCT user_id)::int AS n FROM activity_logs
-      WHERE type = 'resume_parsing_complete' AND created_at > NOW() - INTERVAL '28 days' GROUP BY 1`),
+      WHERE type = 'resume_parsing_complete' AND created_at > NOW() - INTERVAL '28 days' AND user_id IN ${realUserIds} GROUP BY 1`),
     daily(sql`SELECT date_trunc('day', applied_at) AS day, count(*)::int AS n FROM job_applications
-      WHERE applied_at > NOW() - INTERVAL '28 days' GROUP BY 1`),
+      WHERE applied_at > NOW() - INTERVAL '28 days' AND candidate_id IN ${realUserIds} GROUP BY 1`),
     Promise.all([
-      one(sql`SELECT count(*)::int AS n FROM users WHERE "createdAt" > NOW() - INTERVAL '30 days' AND role IS DISTINCT FROM 'system'`),
-      one(sql`SELECT count(DISTINCT user_id)::int AS n FROM activity_logs WHERE type = 'resume_parsing_complete' AND created_at > NOW() - INTERVAL '30 days'`),
-      one(sql`SELECT count(DISTINCT candidate_id)::int AS n FROM job_applications WHERE applied_at > NOW() - INTERVAL '30 days'`),
+      one(sql`SELECT count(*)::int AS n FROM users WHERE "createdAt" > NOW() - INTERVAL '30 days' AND role IS DISTINCT FROM 'system' AND id IN ${realUserIds}`),
+      one(sql`SELECT count(DISTINCT user_id)::int AS n FROM activity_logs WHERE type = 'resume_parsing_complete' AND created_at > NOW() - INTERVAL '30 days' AND user_id IN ${realUserIds}`),
+      one(sql`SELECT count(DISTINCT candidate_id)::int AS n FROM job_applications WHERE applied_at > NOW() - INTERVAL '30 days' AND candidate_id IN ${realUserIds}`),
     ]),
   ]);
   const [signedUp, uploaded, applied] = f;
@@ -212,7 +213,7 @@ export async function getAiInsights(conn: Conn = db) {
         (c.resume_parsing_data->>'extractedSkillsCount')::int AS skills,
         coalesce(jsonb_array_length(CASE WHEN jsonb_typeof(c.resume_parsing_data->'positions') = 'array' THEN c.resume_parsing_data->'positions' END), 0) AS roles
       FROM candidate_users c LEFT JOIN users u ON u.id = c.user_id
-      WHERE c.resume_url IS NOT NULL ORDER BY c.parsed_at DESC NULLS LAST`)), [] as any[]),
+      WHERE c.resume_url IS NOT NULL AND c.user_id IN ${realUserIds} ORDER BY c.parsed_at DESC NULLS LAST`)), [] as any[]),
     safe(async () => rows(await conn.execute(sql`
       SELECT count(*)::int AS live, count(*) FILTER (WHERE vector_embedding IS NOT NULL)::int AS matched
       FROM job_postings WHERE status = 'active'`))[0] ?? {}, {} as any),
