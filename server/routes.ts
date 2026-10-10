@@ -8,6 +8,7 @@ import path from "path";
 import fs from "fs";
 import { z } from "zod";
 import { phoneFromText } from "./lib/phone";
+import { enforceTruth } from "./lib/autofill-truth";
 import { recordReportedApplication, applicationForUrl } from "./services/application-tracking.service";
 import { diagnoseCandidate } from "./services/application-diagnosis.service";
 import { buildWeeklySummary } from "./services/weekly-summary.service";
@@ -1109,6 +1110,7 @@ export async function registerRoutes(app: Express): Promise<Express> {
         stated.securityClearance && `Active security clearance: ${CLEARANCE[stated.securityClearance] || stated.securityClearance}`,
         stated.willingToRelocate && `Willing to relocate: ${yn(stated.willingToRelocate)}`,
         stated.noticePeriod && `Notice period / earliest start: ${stated.noticePeriod}`,
+        stated.desiredSalary && `Desired salary: ${stated.desiredSalary}`,
       ].filter(Boolean) as string[];
 
       const resumeContext = profile.resumeText
@@ -1167,14 +1169,11 @@ Rules:
 - For standard text fields (name, email, phone, linkedin, github, portfolio): use the candidate's actual data. ALWAYS fill phone when a phone field exists and a phone number is available.
 - Location-derived fields: derive Country / State / City / Address from the candidate's LOCATION. If a Country field exists and the location implies one, fill it.
 - Education fields (school, university, degree, field of study, graduation/end year): fill from the candidate's education data.
-- Compensation ("desired salary", "salary expectation", "expected compensation"): if the candidate has no explicit number, answer "Negotiable".
+- FACTS ARE NEVER GUESSED. Work authorization, sponsorship, citizenship, age, security clearance, relocation, start date and salary are answered ONLY from the CANDIDATE'S OWN ANSWERS; years of experience ONLY from EXPERIENCE. When the answer isn't there, return action "skip" with reason "needs candidate". Never infer them from location, name, school or anything else.
 - "How did you hear about us" / referral source: answer "Company website" unless a better source is evident.
 - For screening questions: write a professional, specific answer using the candidate's real experience. Keep under 200 words.
 - VOLUNTARY self-identification / EEO / demographic fields (Gender, Race, Ethnicity, Hispanic/Latino, Veteran Status, Disability Status): these are almost always dropdowns with a decline choice. Return action "click_then_type" with value "Decline to self-identify" EVEN IF no options are listed (the options are often hidden until the dropdown opens). If options ARE listed with a different decline phrasing ("I don't wish to answer", "Prefer not to answer", "I do not wish to disclose"), use that exact option text instead. Do NOT skip EEO fields.
-- CANDIDATE'S OWN ANSWERS come first: when a question asks about anything listed there (work authorization, sponsorship, citizenship, age 18+, security clearance, relocation, notice period / start date), answer from it exactly, picking the option text that means the same thing. Only fall back to the inference rules below for questions those answers don't cover.
-- Work AUTHORIZATION ("Are you legally authorized / eligible / do you have the right to work in [country]?", "Can you work in X without restriction?"): if the candidate's LOCATION is in that same country — or the question says "the country where this job is based" and the candidate's location matches the job's country (infer the job country from JOB CONTEXT / the form's Country field) — answer the AFFIRMATIVE option ("Yes"). People apply to jobs in countries where they can work, so a location match is strong evidence; do not leave these (usually REQUIRED) fields blank on a clear match. Answer "No" or skip only if there is explicit evidence the candidate is NOT authorized.
-- Visa / SPONSORSHIP ("do you now or will you in the future require sponsorship?", "do you need a visa?"): this is genuinely ambiguous from location alone — answer only if the candidate data clearly supports it, otherwise skip rather than guess wrong.
-- Other eligibility yes/no (citizenship, security clearance, willing to relocate): answer ONLY when the candidate data clearly supports it; if you cannot infer, skip rather than guess wrong (a wrong eligibility answer is worse than a blank one).
+- CANDIDATE'S OWN ANSWERS: when a question asks about anything listed there (work authorization, sponsorship, citizenship, age 18+, security clearance, relocation, notice period / start date, salary), answer from it exactly, picking the option text that means the same thing.
 - MULTI-SELECT fields (marked "MULTI-SELECT" — the candidate may pick several options, e.g. "In what cities are you available to work?"): return a SINGLE action whose value is a PIPE-delimited list of every applicable option, e.g. value: "New York | Remote". Derive choices from the candidate's location and the job's location(s); include "Remote" when offered and appropriate. Use " | " ONLY to separate distinct options — never inside one option's text (e.g. keep "New York, NY" intact).
 - For select/dropdown with native <select> type: use action "select" with value matching EXACTLY one of the provided options. Always pick the best-matching option rather than leaving it blank.
 - For custom dropdowns (React Select, Combobox, etc. — type is usually "text"/"custom_select" but behaves like a dropdown; options may be provided): use "click_then_type" with the best-matching option text.
@@ -1263,6 +1262,11 @@ Analyze the form and return the actions JSON to fill every field you can.`;
         a.action !== 'upload_resume' || isResumeFileField(fieldsById.get(a.fieldId))
       );
 
+      // Facts are never guessed: drop any fact without a saved answer (or resume evidence for
+      // years of experience), tag every value with its source, and list what needs the candidate.
+      const truth = enforceTruth(actions, fields, stated, { totalYears: parsed.experience?.totalYears });
+      actions = truth.actions;
+
       // Include resume URL for upload_resume actions (best-effort: a signed-URL
       // failure must not discard the form-fill actions we already computed)
       let resumeUrl: string | null = null;
@@ -1297,7 +1301,9 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       // The profile points at a resume file that's no longer in storage: say so,
       // so the candidate re-uploads instead of the field silently staying empty.
       const resumeMissing = !!profile.resumeUrl && !resumeUrl;
-      res.json({ actions, resumeUrl, resumeMissing });
+      // Where the candidate saves these answers once (the dashboard opens Settings from it).
+      const answersUrl = `https://${req.get('host')}/candidate-dashboard?settings=answers`;
+      res.json({ actions, resumeUrl, resumeMissing, needsYou: truth.needsYou, answersUrl });
     } catch (error) {
       console.error('Extension fill-form error:', error);
       res.status(500).json({ message: 'Failed to generate form values' });
@@ -1401,15 +1407,14 @@ Analyze the form and return the actions JSON to fill every field you can.`;
           : /(at least|over|older than) (18|eighteen)|18 years of age/i.test(labelText) ? yesNo(profileData.stated_over18)
           : /relocat/i.test(labelText) ? yesNo(profileData.stated_willingToRelocate)
           : /notice period|earliest (start|available)|when can you start/i.test(labelText) && field.type !== 'select' ? (profileData.stated_noticePeriod || '')
+          : /salary|compensation|expected pay|desired pay/i.test(labelText) && field.type !== 'select' ? (profileData.stated_desiredSalary || '')
           : '';
         if (statedAnswer) {
           actions.push({ fieldId: field.id, action: field.type === 'select' ? 'select' : (opts.length || field.type === 'custom_select' ? customAction : 'type'), value: statedAnswer });
           continue;
         }
 
-        if (/salary|compensation|expected pay|desired pay/i.test(searchText)) {
-          actions.push({ fieldId: field.id, action: field.type === 'select' ? 'select' : 'type', value: 'Negotiable' });
-        } else if (/gender|race|ethnic|hispanic|latino|veteran|disability/i.test(searchText)) {
+        if (/gender|race|ethnic|hispanic|latino|veteran|disability/i.test(searchText)) {
           // Voluntary EEO / self-identification: decline. Use a listed decline
           // option if present, else the standard phrasing (the option list is
           // usually hidden until the dropdown is opened).
@@ -1812,6 +1817,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     securityClearance: z.enum(['none', 'public_trust', 'secret', 'top_secret', 'ts_sci']).optional(),
     willingToRelocate: yesNo,
     noticePeriod: z.string().trim().max(60).optional(),
+    desiredSalary: z.string().trim().max(60).optional(),
   }).strict();
 
   app.get('/api/candidate/application-answers', isAuthenticated, asyncHandler(async (req: any, res) => {

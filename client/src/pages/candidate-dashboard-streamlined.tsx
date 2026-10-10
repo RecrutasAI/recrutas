@@ -119,6 +119,11 @@ export default function CandidateStreamlinedDashboard() {
     }
   }, [isAuthenticated, isLoading, setLocation]);
 
+  // The extension links here (?settings=answers) when a form asks facts we never guess.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('settings') === 'answers') {setSettingsModalOpen(true);}
+  }, []);
+
   // Track job feed views (once per tab switch)
   const jobFeedTracked = useRef(false);
   useEffect(() => {
