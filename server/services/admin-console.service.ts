@@ -8,6 +8,7 @@
  * table or slow query shows that signal as "unknown" instead of failing the page.
  */
 import { db } from '../db';
+import { realUserIds } from '../lib/real-users';
 import { sql } from 'drizzle-orm/sql';
 import { getSettings, type Settings } from './runtime-settings.service';
 import { BUSY_NOTICE } from './autopilot.service';
@@ -206,7 +207,7 @@ function aiParseSignal(i: CapacityInput): Signal {
       : 'The free AI providers ran short, so these resumes show rule-engine guesses (blank where it can\'t tell). The retry job re-reads them every 10 minutes as quotas reset; there is no sign-up influx, so stay free.',
     actions: [
       run('retry-failed-parses', 'Retry these parses now'),
-      ...(influx ? [{ kind: 'decision' as const, label: 'Pay for AI (the "pay" trigger)', detail: 'Influx detected. If funding is in place: put about $10 of credit on one provider (OpenRouter or Groq pay-as-you-go) and move it first in the rotation.' }] : []),
+      ...(influx ? [{ kind: 'decision' as const, label: 'Pay for AI (the "pay" trigger)', detail: 'Influx detected. If funding is in place: turn on billing in the Groq console (console.groq.com → Settings → Billing). Groq is already first in the rotation and keeps the same key, so nothing is redeployed. gpt-oss-20b costs $0.075 / $0.30 per million tokens in / out (Groq, 2026-10-10), about $0.001 per resume: $10 covers ~10,000 resumes.' }] : []),
     ],
   };
 }
@@ -247,12 +248,12 @@ export async function getOverview(conn: Conn = db): Promise<Overview> {
   const count = (q: any) => one(conn, q, r => num(r.n), null as number | null);
   const pipelines = Object.values(RUNNABLE_JOBS).map(j => j.pipeline);
   const [signups24h, signups7d, users, active7d, resumes, apps7d, feed, conns, health, jobs, backlog, failing, parses, settings, lastRuns, requests, snoozes] = await Promise.all([
-    count(sql`SELECT count(*)::int AS n FROM users WHERE "createdAt" > NOW() - INTERVAL '24 hours'`),
-    count(sql`SELECT count(*)::int AS n FROM users WHERE "createdAt" > NOW() - INTERVAL '7 days'`),
-    count(sql`SELECT count(*)::int AS n FROM users`),
-    count(sql`SELECT count(DISTINCT user_id)::int AS n FROM activity_logs WHERE created_at > NOW() - INTERVAL '7 days'`),
-    count(sql`SELECT count(*)::int AS n FROM candidate_users WHERE resume_url IS NOT NULL`),
-    count(sql`SELECT count(*)::int AS n FROM job_applications WHERE applied_at > NOW() - INTERVAL '7 days'`),
+    count(sql`SELECT count(*)::int AS n FROM users WHERE "createdAt" > NOW() - INTERVAL '24 hours' AND id IN ${realUserIds}`),
+    count(sql`SELECT count(*)::int AS n FROM users WHERE "createdAt" > NOW() - INTERVAL '7 days' AND id IN ${realUserIds}`),
+    count(sql`SELECT count(*)::int AS n FROM users WHERE id IN ${realUserIds}`),
+    count(sql`SELECT count(DISTINCT user_id)::int AS n FROM activity_logs WHERE created_at > NOW() - INTERVAL '7 days' AND user_id IN ${realUserIds}`),
+    count(sql`SELECT count(*)::int AS n FROM candidate_users WHERE resume_url IS NOT NULL AND user_id IN ${realUserIds}`),
+    count(sql`SELECT count(*)::int AS n FROM job_applications WHERE applied_at > NOW() - INTERVAL '7 days' AND candidate_id IN ${realUserIds}`),
     one(conn, sql`
       SELECT count(*)::int AS n, percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95
       FROM request_metrics WHERE endpoint = '/api/ai-matches' AND created_at > NOW() - INTERVAL '24 hours'`,
@@ -283,7 +284,7 @@ export async function getOverview(conn: Conn = db): Promise<Overview> {
     one(conn, sql`
       SELECT count(*)::int AS total,
              count(*) FILTER (WHERE resume_parsing_data->>'extractor' IN ('rules', 'none'))::int AS on_rules
-      FROM candidate_users WHERE parsed_at > NOW() - INTERVAL '7 days'`,
+      FROM candidate_users WHERE parsed_at > NOW() - INTERVAL '7 days' AND user_id IN ${realUserIds}`,
       r => ({ total: num(r.total), onRules: num(r.on_rules) }), { total: null, onRules: null }),
     getSettings(conn),
     conn.execute(sql`
