@@ -843,6 +843,72 @@
     setTimeout(() => banner.remove(), type === 'success' ? 6000 : 15000);
   }
 
+  // ── Where each answer came from ────────────────────────────────────────────
+
+  const SOURCE_LABEL = { profile: 'Profile', resume: 'Resume', answer: 'Your answer', default: 'Default' };
+
+  // A small tag after each filled field saying where its value came from, so the
+  // candidate can check it before submitting. Evidence (e.g. "About 6 years of
+  // experience on your resume") shows on hover.
+  function tagSources(actions, failed) {
+    const failedSet = new Set(failed);
+    document.querySelectorAll('.recrutas-src').forEach(t => t.remove());
+    for (const a of actions) {
+      if (!a.source || a.action === 'skip' || failedSet.has(a.fieldId)) continue;
+      const el = findElement(a.fieldId);
+      if (!el || el.type === 'hidden') continue;
+      const anchor = el.closest('.select__container, .select-shell, [class*="select__control"]') || el;
+      const tag = document.createElement('span');
+      tag.className = `recrutas-src recrutas-src--${String(a.source).replace(/[^a-z]/g, '')}`;
+      tag.textContent = SOURCE_LABEL[a.source] || String(a.source);
+      if (a.evidence) tag.title = String(a.evidence);
+      anchor.insertAdjacentElement('afterend', tag);
+    }
+  }
+
+  // Facts we never guess (work authorization, sponsorship, salary…): list them,
+  // outline the fields, and offer to save the answers once in Recrutas.
+  function showNeedsYou(needsYou, answersUrl) {
+    document.getElementById('recrutas-needs')?.remove();
+    document.querySelectorAll('.recrutas-needs-field').forEach(e => e.classList.remove('recrutas-needs-field'));
+    if (!needsYou.length) return;
+
+    const panel = document.createElement('div');
+    panel.id = 'recrutas-needs';
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'recrutas-needs-close';
+    close.setAttribute('aria-label', 'Close');
+    close.textContent = '×';
+    close.addEventListener('click', () => panel.remove());
+    const title = document.createElement('strong');
+    title.textContent = `${needsYou.length} question${needsYou.length === 1 ? ' needs' : 's need'} you`;
+    const intro = document.createElement('p');
+    intro.textContent = "We don't guess facts like these. Answer them on this form.";
+    const list = document.createElement('ul');
+    for (const n of needsYou) {
+      const el = findElement(n.fieldId);
+      if (el) (el.closest('.select__container, .select-shell') || el).classList.add('recrutas-needs-field');
+      const li = document.createElement('li');
+      li.textContent = String(n.label || n.fieldId).replace(/\s*\*\s*$/, '');
+      if (el) {
+        li.tabIndex = 0;
+        li.addEventListener('click', () => { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.focus?.(); });
+      }
+      list.appendChild(li);
+    }
+    panel.append(close, title, intro, list);
+    if (typeof answersUrl === 'string' && /^https:\/\//.test(answersUrl)) {
+      const link = document.createElement('a');
+      link.href = answersUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = 'Save these once in Recrutas, and we\'ll fill them on every form';
+      panel.appendChild(link);
+    }
+    document.body.appendChild(panel);
+  }
+
   // ── Main fill trigger ──────────────────────────────────────────────────────
 
   // Re-entry guard: the button is wired via BOTH a direct listener and a
@@ -879,6 +945,8 @@
       const actions = [];
       let resumeUrl;
       let resumeMissing = false;
+      const needsYou = [];
+      let answersUrl;
       for (let start = 0; start < fields.length; start += BATCH) {
         if (btn && fields.length > BATCH) {
           btn.textContent = `AI filling… (${Math.min(start + BATCH, fields.length)}/${fields.length} fields)`;
@@ -910,9 +978,12 @@
         actions.push(...(response.actions || []));
         resumeUrl = resumeUrl || response.resumeUrl;
         resumeMissing = resumeMissing || !!response.resumeMissing;
+        needsYou.push(...(response.needsYou || []));
+        answersUrl = answersUrl || response.answersUrl;
       }
 
       if (!actions || actions.length === 0) {
+        showNeedsYou(needsYou, answersUrl);
         showBanner('AI could not determine how to fill this form', 'warning');
         return;
       }
@@ -921,6 +992,8 @@
 
       const { filled, failed } = await executeActions(actions, resumeUrl);
       if (filled > 0) markApplyContextFilled();
+      tagSources(actions, failed);
+      showNeedsYou(needsYou, answersUrl);
 
       // Report stats + telemetry to background
       sendMessage({

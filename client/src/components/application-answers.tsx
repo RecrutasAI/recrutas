@@ -18,6 +18,7 @@ export interface ApplicationAnswersData {
   securityClearance?: "none" | "public_trust" | "secret" | "top_secret" | "ts_sci";
   willingToRelocate?: YesNo;
   noticePeriod?: string;
+  desiredSalary?: string;
 }
 
 const YES_NO_QUESTIONS: { key: keyof ApplicationAnswersData; label: string }[] = [
@@ -112,6 +113,11 @@ export function ApplicationAnswers() {
           <Label htmlFor="aa-notice" className="text-sm">Notice period or earliest start</Label>
           <Input id="aa-notice" placeholder="2 weeks" maxLength={60}
             value={answers.noticePeriod ?? ""} onChange={(e) => set("noticePeriod", e.target.value)} />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="aa-salary" className="text-sm">Desired salary</Label>
+          <Input id="aa-salary" placeholder="$120,000 a year" maxLength={60}
+            value={answers.desiredSalary ?? ""} onChange={(e) => set("desiredSalary", e.target.value)} />
         </div>
       </div>
 

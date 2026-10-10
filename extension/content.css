@@ -85,3 +85,46 @@
     transform: translateY(0);
   }
 }
+
+/* Where each filled value came from */
+.recrutas-src {
+  display: inline-block;
+  margin: 4px 0 0 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font: 600 11px/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  vertical-align: middle;
+  border: 1px solid #a7f3d0;
+  background: #ecfdf5;
+  color: #065f46;
+  cursor: default;
+}
+.recrutas-src--answer { border-color: #93c5fd; background: #eff6ff; color: #1e3a8a; }
+.recrutas-src--default { border-color: #d1d5db; background: #f9fafb; color: #374151; }
+
+/* Questions only the candidate can answer */
+.recrutas-needs-field { outline: 2px solid #f59e0b !important; outline-offset: 2px; }
+#recrutas-needs {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 2147483647;
+  width: 320px;
+  max-height: 50vh;
+  overflow: auto;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: #fffbeb;
+  color: #78350f;
+  border: 1px solid #fcd34d;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+#recrutas-needs p { margin: 6px 0; }
+#recrutas-needs ul { margin: 6px 0 10px; padding-left: 18px; }
+#recrutas-needs li { margin: 4px 0; cursor: pointer; text-decoration: underline dotted; }
+#recrutas-needs a { color: #92400e; font-weight: 600; }
+#recrutas-needs .recrutas-needs-close {
+  position: absolute; top: 6px; right: 8px;
+  border: 0; background: transparent; color: #78350f; font-size: 18px; cursor: pointer;
+}
