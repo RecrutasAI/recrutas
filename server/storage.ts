@@ -67,6 +67,7 @@ import { sql, isNotNull, type SQL } from "drizzle-orm/sql";
 import { inArray } from "drizzle-orm/sql/expressions";
 import { resolveCandidateName, type PersonName } from "./lib/candidate-name";
 import { jobPostUrlSqlCondition } from "./lib/job-post-url";
+import { parseLocationFilter, locationPatterns } from "../shared/location-filter";
 import { AGGREGATOR_SOURCES, THIRD_PARTY_COMPANIES, thirdPartyKind } from './lib/third-party';
 import { supabaseAdmin } from "./lib/supabase-admin";
 import { extractHardRequirements, verdictFor, yearsFromPositions, type CandidateFacts, type HardRequirements } from './lib/hard-requirements';
@@ -290,15 +291,36 @@ function escapeLike(s: string): string {
 // discovery fallbacks so a filtered feed never shows rows outside the filter.
 // Applied before the 100-job cut: filtering the unfiltered top 100 only ever
 // found jobs that were already in it.
+/**
+ * The location filter as SQL over `column`: the same rule the dashboard applies in memory
+ * (shared/location-filter.ts). A city matches as a whole word however the post writes it
+ * ("Onsite - Seattle", "Seattle, WA"); a chosen state drops jobs naming a different state.
+ */
+export function locationSql(column: SQL, raw: string | null | undefined): SQL | undefined {
+  const f = parseLocationFilter(raw);
+  if (!f) {return undefined;}
+  const p = locationPatterns(f);
+  const loc = sql`coalesce(${column}, '')`;
+  const lower = sql`lower(${loc})`;
+  const conds: SQL[] = [];
+  if (p.city) {conds.push(sql`${lower} ~ ${p.city}`);}
+  if (p.stateCode) {conds.push(sql`(${loc} ~ ${p.stateCode} OR ${lower} ~ ${p.stateName})`);}
+  if (p.otherCodes) {conds.push(sql`NOT (${loc} ~ ${p.otherCodes})`);}
+  if (p.otherNames) {
+    const stripped = p.strip ? sql`regexp_replace(${lower}, ${p.strip}, ' ', 'g')` : lower;
+    conds.push(sql`NOT (${stripped} ~ ${p.otherNames})`);
+  }
+  return conds.length ? and(...conds) : undefined;
+}
+
 function feedFilterConditions(filters?: FeedFilters): SQL[] {
   const conditions: SQL[] = [];
   if (filters?.jobTitle) {
     conditions.push(sql`LOWER(${jobPostings.title}) LIKE ${'%' + filters.jobTitle.toLowerCase() + '%'}`);
   }
   if (filters?.location?.trim()) {
-    // Same semantics as the feed's city search: case-insensitive substring,
-    // so "new york" matches "New York, NY".
-    conditions.push(sql`${jobPostings.location} ILIKE ${'%' + escapeLike(filters.location.trim()) + '%'}`);
+    const loc = locationSql(sql`${jobPostings.location}`, filters.location);
+    if (loc) {conditions.push(loc);}
   }
   if (filters?.workType) {
     // work_type is stored lowercase (classifyWorkType at ingest). Comparing the
@@ -308,7 +330,8 @@ function feedFilterConditions(filters?: FeedFilters): SQL[] {
   }
   if (filters?.postedWithinDays) {
     const postedCutoff = new Date(Date.now() - filters.postedWithinDays * 24 * 60 * 60 * 1000).toISOString();
-    conditions.push(sql`${jobPostings.createdAt} > ${postedCutoff}`);
+    // The employer's posting date when known, else when we first saw it.
+    conditions.push(sql`coalesce(${jobPostings.postedAt}, ${jobPostings.createdAt}) > ${postedCutoff}`);
   }
   return conditions;
 }
@@ -1045,7 +1068,8 @@ export class DatabaseStorage implements IStorage {
       const conds = [sql`source LIKE 'ATS:%'`, ...words.map(w => w.length >= 3
         ? sql`title ILIKE ${'%' + likeEsc(w) + '%'}`
         : sql`title ~* ${'\\m' + w.replace(/[^a-z0-9]/gi, '') + '\\M'}`)];
-      if (opts.location) {conds.push(sql`location ILIKE ${'%' + likeEsc(opts.location) + '%'}`);}
+      const loc = opts.location ? locationSql(sql`location`, opts.location) : undefined;
+      if (loc) {conds.push(loc);}
       if (opts.remoteOnly) {conds.push(sql`work_type = 'remote'`);}
       return sql.join(conds, sql` AND `);
     };
@@ -1173,7 +1197,8 @@ export class DatabaseStorage implements IStorage {
     const conds = [sql`job_postings.status = 'active'`, sql`job_postings.source LIKE 'ATS:%'`, ...words.map(w => w.length >= 3
       ? sql`job_postings.title ILIKE ${'%' + likeEsc(w) + '%'}`
       : sql`job_postings.title ~* ${'\\m' + w.replace(/[^a-z0-9]/gi, '') + '\\M'}`)];
-    if (opts.location) {conds.push(sql`job_postings.location ILIKE ${'%' + likeEsc(opts.location) + '%'}`);}
+    const loc = opts.location ? locationSql(sql`job_postings.location`, opts.location) : undefined;
+    if (loc) {conds.push(loc);}
     if (opts.remoteOnly) {conds.push(sql`job_postings.work_type = 'remote'`);}
     const notCitizen = facts.usCitizen === 'no';
     const needsVisa = facts.needsSponsorship === 'yes';
@@ -1230,7 +1255,8 @@ export class DatabaseStorage implements IStorage {
       // Short words ("ml", "qa", "ui") would match inside other words.
       : sql`title ~* ${'\\m' + w.replace(/[^a-z0-9]/gi, '') + '\\M'}`);
     const conds = [sql`status = 'active'`, ...titleConds];
-    if (opts.location) {conds.push(sql`location ILIKE ${'%' + likeEsc(opts.location) + '%'}`);}
+    const loc = opts.location ? locationSql(sql`location`, opts.location) : undefined;
+    if (loc) {conds.push(loc);}
     if (opts.remoteOnly) {conds.push(sql`work_type = 'remote'`);}
 
     const rows = await db.execute(sql`
@@ -1405,11 +1431,11 @@ export class DatabaseStorage implements IStorage {
       // Location SQL filter: when user specifies a city/region, fetch jobs in that location
       // OR remote jobs (remote is always relevant regardless of location).
       // This ensures the 200-row pool isn't exclusively remote jobs when a city is searched.
-      if (filters.location?.trim()) {
-        const locPattern = '%' + filters.location.trim() + '%';
+      const locMatch = locationSql(sql`${jobPostings.location}`, filters.location);
+      if (locMatch) {
         conditions.push(
           or(
-            sql`LOWER(${jobPostings.location}) LIKE LOWER(${locPattern})`,
+            locMatch,
             sql`LOWER(${jobPostings.location}) LIKE '%remote%'`,
             sql`${jobPostings.location} IS NULL`,
             sql`${jobPostings.location} = ''`
@@ -1563,14 +1589,9 @@ export class DatabaseStorage implements IStorage {
       // locations like "Seattle, WA, USA" or "Seattle Metro Area" still match.
       // Falls back to remote roles regardless.
       const locationCondition = (() => {
-        const raw = filters.location?.trim();
-        if (!raw) return null;
-        const city = raw.split(',')[0].trim();
-        const pattern = '%' + (city || raw) + '%';
-        return or(
-          sql`LOWER(${jobPostings.location}) LIKE LOWER(${pattern})`,
-          sql`LOWER(${jobPostings.location}) LIKE '%remote%'`,
-        );
+        const match = locationSql(sql`${jobPostings.location}`, filters.location);
+        if (!match) return null;
+        return or(match, sql`LOWER(${jobPostings.location}) LIKE '%remote%'`);
       })();
 
       const skillCondition = skills.length > 0
@@ -1816,7 +1837,7 @@ export class DatabaseStorage implements IStorage {
     }
 
     return discoveryJobs.map((job: any) => {
-      const { freshness, daysOld } = getFreshnessLabel(job.createdAt);
+      const { freshness, daysOld } = getFreshnessLabel(job.postedAt ?? job.createdAt);
       return {
         ...job,
         requirements: Array.isArray(job.requirements) ? job.requirements : [],
@@ -2029,7 +2050,7 @@ export class DatabaseStorage implements IStorage {
           location: candidate.location,
           workType: candidate.workType,
         }, vectorDistMap.get(job.id));
-        const { freshness, daysOld } = getFreshnessLabel(job.createdAt);
+        const { freshness, daysOld } = getFreshnessLabel(job.postedAt ?? job.createdAt);
 
         return {
           ...job,
@@ -2131,7 +2152,7 @@ export class DatabaseStorage implements IStorage {
           const goodFit = job.matchScore >= TRUST_FIT_GATE;
           const fit = job.matchScore / 100;
           const trust = (job.trustScore || 0) / 100;
-          const recency = computeRecencyScore(job.createdAt);
+          const recency = computeRecencyScore(job.postedAt ?? job.createdAt);
           const compositeScore =
             (goodFit ? 0.70 : 0.85) * fit +
             (goodFit ? 0.15 * trust : 0) +

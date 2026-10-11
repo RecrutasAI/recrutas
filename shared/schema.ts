@@ -162,6 +162,9 @@ export const jobPostings = pgTable("job_postings", {
   // Native pgvector column for ANN retrieval (populated alongside TEXT column)
   embedding: vector("embedding"),
   embeddingUpdatedAt: timestamp("embedding_updated_at"),
+  // When the employer posted it, as their hiring system reports it. Null when unknown: the UI then
+  // says "First seen" (created_at), never "Posted".
+  postedAt: timestamp("posted_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table: any) => ({

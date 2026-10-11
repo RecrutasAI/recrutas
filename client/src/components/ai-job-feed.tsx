@@ -13,6 +13,7 @@ import { LoadingHype } from "./loading-hype";
 import { useToast } from "@/hooks/use-toast";
 import { track } from "@/lib/analytics";
 import { formatCheckedAgo } from "@shared/liveness";
+import { locationMatches, parseLocationFilter } from "@shared/location-filter";
 
 function isCareerPageLink(url: string | undefined, careerPageUrl: string | undefined): boolean {
   if (!url) return false;
@@ -165,7 +166,8 @@ export interface AIJobMatch {
     externalSource?: string;
     externalUrl?: string;
     careerPageUrl?: string;
-    postedDate?: string;
+    postedDate?: string | null;
+    firstSeenAt?: string | null;
     trustScore?: number;
     livenessStatus?: 'active' | 'stale' | 'unknown';
     ghostJobStatus?: 'clean' | 'suspicious' | 'flagged' | 'confirmed';
@@ -286,6 +288,7 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
   }, [data]);
 
   // Client-side filtering — instant, no network calls
+  const parsedLocation = useMemo(() => parseLocationFilter(locationFilter), [locationFilter]);
   const filteredMatches = useMemo(() => {
     if (!allMatches) return undefined;
     const term = searchTerm.toLowerCase().trim();
@@ -296,7 +299,7 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
       // City search: substring, case-insensitive — so "new york" matches
       // "New York, NY", "New York, New York", etc. (exact-match made cities
       // nearly impossible to find unless you picked an exact stored string).
-      if (locationFilter !== 'all' && !(m.job.location || '').toLowerCase().includes(locationFilter.toLowerCase().trim())) return false;
+      if (locationFilter !== 'all' && !locationMatches(m.job.location, parsedLocation)) return false;
       // Work type is exact now that `workType` is reliably classified at ingest
       // (location-dominant) — Remote means remote, not remote-or-hybrid.
       if (workTypeFilter !== 'all' && (m.job.workType || '').toLowerCase() !== workTypeFilter.toLowerCase()) return false;
@@ -312,13 +315,15 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
         }
       }
       if (dateCutoff !== null) {
-        if (!m.job.postedDate) return false;
-        const posted = new Date(m.job.postedDate).getTime();
+        // The employer's posting date when known, else when we first saw it.
+        const when = m.job.postedDate || m.job.firstSeenAt;
+        if (!when) return false;
+        const posted = new Date(when).getTime();
         if (isNaN(posted) || posted < dateCutoff) return false;
       }
       return true;
     });
-  }, [allMatches, searchTerm, locationFilter, workTypeFilter, companyFilter, experienceLevelFilter, datePostedFilter, verdictFilter]);
+  }, [allMatches, searchTerm, locationFilter, parsedLocation, workTypeFilter, companyFilter, experienceLevelFilter, datePostedFilter, verdictFilter]);
 
   // Render the full filtered set at once. All matches are already fetched in a
   // single request, so there is no network cost to showing them; rendering them
@@ -972,8 +977,10 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
                       {match.job.externalUrl && (
                         <div className="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
                           <div className="flex items-center">
-                            {match.job.postedDate && (
+                            {match.job.postedDate ? (
                               <span>Posted {new Date(match.job.postedDate).toLocaleDateString()}</span>
+                            ) : match.job.firstSeenAt && (
+                              <span title="The employer's site doesn't say when it was posted">First seen {new Date(match.job.firstSeenAt).toLocaleDateString()}</span>
                             )}
                           </div>
                           {(() => {
