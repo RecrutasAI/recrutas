@@ -3,7 +3,7 @@
  * the same ingestion input the ATS scrapers produce.
  */
 import { describe, it, expect } from 'vitest';
-import { pseudonym, toIngestion } from '../scripts/fleet-matcher';
+import { employerName, pseudonym, toIngestion } from '../scripts/fleet-matcher';
 
 const job = {
   job_id: 'j_abc', title: 'Registered Nurse', company_name: 'Kaiser Permanente', location: 'Oakland, CA',
@@ -30,5 +30,14 @@ describe('fleet matcher (server side)', () => {
     expect(toIngestion({ ...job, is_remote: true, location: null })).toMatchObject({ workType: 'remote', location: 'Remote' });
     expect(toIngestion({ ...job, url: null, apply_url: null })).toBeNull();
     expect(toIngestion({ ...job, company_name: null })).toBeNull();
+  });
+
+  it('shows employers by a name people recognise, and skips system codes', () => {
+    expect(employerName('Careers at Atlantic Health System')).toBe('Atlantic Health System');
+    expect(employerName('Kaiser Permanente')).toBe('Kaiser Permanente');
+    for (const code of ['Fa Ertb Saasfaprod1', 'eubt.fa.us6.oraclecloud.com', 'Ebwh (CX_1001)', '', null]) {
+      expect(employerName(code)).toBeNull();
+    }
+    expect(toIngestion({ ...job, company_name: 'Fa Ertb Saasfaprod1' })).toBeNull();
   });
 });

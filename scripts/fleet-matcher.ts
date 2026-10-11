@@ -74,13 +74,23 @@ interface FleetJob {
   salary_min: number | null; salary_max: number | null; vector: number[];
 }
 
+/** A company name people can recognise, or null when all we have is a system code. */
+export function employerName(raw: string | null): string | null {
+  const name = (raw || '').replace(/^\s*(careers|jobs|openings|work|join us) at\s+/i, '').trim();
+  // Oracle sites the Fleet couldn't name: "Fa Ertb Saasfaprod1", "eubt.fa.us6.oraclecloud.com", "Ebwh (CX_1001)".
+  // A job is only shown when we can tell people who the employer is.
+  if (!name || /saasfaprod|oraclecloud\.com|\(CX_\d+\)/i.test(name)) {return null;}
+  return name;
+}
+
 export function toIngestion(j: FleetJob): ExternalJobInput | null {
   const url = j.url || j.apply_url;
-  if (!j.title || !j.company_name || !url || !j.ats) {return null;}
+  const company = employerName(j.company_name);
+  if (!j.title || !company || !url || !j.ats) {return null;}
   const description = j.description || '';
   return {
     title: j.title,
-    company: j.company_name,
+    company,
     location: j.location || (j.is_remote ? 'Remote' : ''),
     description,
     requirements: [],
@@ -99,7 +109,9 @@ async function ingestOutbox(): Promise<string> {
   const raw = await download('outbox/latest.json.gz');
   if (!raw) {return 'no outbox yet';}
   const out = JSON.parse(gunzipSync(raw).toString('utf8')) as { generated_at: string; jobs: FleetJob[]; closed: string[] };
-  const mapped = out.jobs.map(toIngestion).filter((x): x is ExternalJobInput => x !== null);
+  const all = out.jobs.map(toIngestion);
+  const unnamed = all.filter(x => x === null).length;
+  const mapped = all.filter((x): x is ExternalJobInput => x !== null);
   // Skip postings Recrutas already has: ingestion "adopts" an existing row with the same link,
   // which would overwrite our scraper's company name and key with the Fleet's (and our scraper
   // would flip them back every run). Recrutas's own copy wins.
@@ -134,7 +146,7 @@ async function ingestOutbox(): Promise<string> {
       WHERE external_id IN (${sql.join(ids.map(id => sql`${id}`), sql`, `)}) AND status = 'active'`);
     closed = Number((r as any)?.rowCount ?? (r as any)?.count ?? 0);
   }
-  return `outbox ${out.generated_at}: ${out.jobs.length} matched jobs → ${existing.size} already in Recrutas (kept ours), ${totals.inserted} new, ${totals.duplicates} duplicates, ` +
+  return `outbox ${out.generated_at}: ${out.jobs.length} matched jobs → ${unnamed} skipped (employer not named), ${existing.size} already in Recrutas (kept ours), ${totals.inserted} new, ${totals.duplicates} duplicates, ` +
     `${totals.skippedNonUS} non-US, ${totals.skippedBadUrl} bad links, ${totals.errors} errors; ${vectors} vectors attached; ${closed} closed`;
 }
 
