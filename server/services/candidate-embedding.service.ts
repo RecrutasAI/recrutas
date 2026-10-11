@@ -85,7 +85,7 @@ export async function updateCandidateEmbedding(
  */
 export async function backfillCandidateEmbeddings(
   limit = 100,
-): Promise<{ processed: number; errors: number; rateLimited: number }> {
+): Promise<{ processed: number; errors: number; rateLimited: number; userIds: string[] }> {
   const { sql } = await import('drizzle-orm/sql');
 
   const candidates = await db.select()
@@ -99,6 +99,7 @@ export async function backfillCandidateEmbeddings(
   let processed = 0;
   let errors = 0;
   let rateLimited = 0;
+  const userIds: string[] = [];
 
   for (const c of candidates) {
     try {
@@ -112,6 +113,7 @@ export async function backfillCandidateEmbeddings(
         titles,
       );
       processed++;
+      userIds.push(c.userId);
       // Small delay to ease provider rate limits
       await new Promise(r => setTimeout(r, 200));
     } catch (err: any) {
@@ -123,5 +125,5 @@ export async function backfillCandidateEmbeddings(
   }
 
   console.log(`[CandidateEmbedding] Backfill: ${processed} computed, ${errors} errors, ${rateLimited} rate-limited`);
-  return { processed, errors, rateLimited };
+  return { processed, errors, rateLimited, userIds };
 }
