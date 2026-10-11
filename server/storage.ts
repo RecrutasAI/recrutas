@@ -1574,13 +1574,16 @@ export class DatabaseStorage implements IStorage {
           .from(jobPostings)
           .where(and(...conditions))
           .orderBy(
+            // `+ 0` keeps the planner off the HNSW index: an index scan takes the ~40
+            // nearest jobs overall and THEN filters to third-party, which left 0 rows.
+            // The third-party pool is small (~6K), so an exact sort is cheap.
             dist
-              ? sql`${dist} ASC`
+              ? sql`${dist} + 0 ASC`
               : skillMatchExpr
                 ? sql`${skillMatchExpr} DESC, ${jobPostings.createdAt} DESC`
                 : sql`${jobPostings.createdAt} DESC`,
           )
-          .limit(limit);
+          .limit(limit * 3);  // room for the repeats dropped below
       };
 
       // "0 matches" is the last resort: start strict, then relax one filter at a time.
@@ -1594,12 +1597,22 @@ export class DatabaseStorage implements IStorage {
         [relevance],
         ...(dist ? [[]] : []),
       ];
+      // Fill up to `limit` from the strictest step down: strict matches first, then the
+      // relaxed ones. Aggregators list one posting under several links (and spell its
+      // location differently), so keep only the best-ranked copy of each title at each company.
       let rows: { job: JobPosting; distance: unknown }[] = [];
+      const seen = new Set<string>();
       for (const step of steps) {
         if (!dist && step.every(c => !c)) {continue;}
-        rows = await runQuery(step);
-        if (rows.length > 0) {break;}
+        for (const row of await runQuery(step)) {
+          const key = [row.job.title, row.job.company].map(v => String(v ?? '').trim().toLowerCase()).join('|');
+          if (seen.has(key)) {continue;}
+          seen.add(key);
+          rows.push(row);
+        }
+        if (rows.length >= limit) {break;}
       }
+      rows = rows.slice(0, limit);
 
       return rows.map(({ job, distance }) => ({
         ...job,
