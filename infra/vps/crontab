@@ -13,6 +13,11 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # Read hard requirements (clearance, citizenship, sponsorship, years) for jobs
 # the sweep just added. Feeds the homepage "your market" number and verdicts.
 45 */4 * * * $RUN compute-job-requirements 30 npx tsx scripts/compute-job-requirements.ts
+# Place keys for the location filter (shared/places.ts): new jobs get them when saved; this
+# fills any left without (Fleet ingest at :25, scrapes) and, weekly, re-reads every live job so
+# an edited location or a rebuilt place list reaches old jobs. Writes only rows that change.
+35 * * * * $RUN compute-location-keys 20 npx tsx scripts/compute-location-keys.ts
+40 3 * * 0 $RUN compute-location-keys-weekly 30 npx tsx scripts/compute-location-keys.ts --recompute
 
 # Batch Embeddings (JOBS) — every 6h. The local provider (EMBED_PROVIDER=local,
 # bge-small) has no quota, so cadence is driven by feed freshness rather than by

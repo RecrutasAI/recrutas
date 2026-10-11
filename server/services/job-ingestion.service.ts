@@ -4,6 +4,7 @@
  */
 
 import { createHash } from 'crypto';
+import { keysForLocation } from '../lib/place-index';
 import { db } from '../db';
 import { jobPostings, users } from '@shared/schema';
 import { eq } from 'drizzle-orm';
@@ -202,6 +203,7 @@ function buildJobRow(job: any, systemUserId: string, now: Date, expiresAt: Date 
     createdAt: now,
     updatedAt: now,
     postedAt: realPostedAt(job.postedDate, now),
+    locationKeys: keysForLocation(job.location ?? null),
   };
 }
 

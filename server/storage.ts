@@ -68,6 +68,7 @@ import { inArray } from "drizzle-orm/sql/expressions";
 import { resolveCandidateName, type PersonName } from "./lib/candidate-name";
 import { jobPostUrlSqlCondition } from "./lib/job-post-url";
 import { parseLocationFilter, locationPatterns } from "../shared/location-filter";
+import { pickedKey } from "../shared/places";
 import { AGGREGATOR_SOURCES, THIRD_PARTY_COMPANIES, thirdPartyKind } from './lib/third-party';
 import { supabaseAdmin } from "./lib/supabase-admin";
 import { extractHardRequirements, verdictFor, yearsFromPositions, type CandidateFacts, type HardRequirements } from './lib/hard-requirements';
@@ -292,11 +293,15 @@ function escapeLike(s: string): string {
 // Applied before the 100-job cut: filtering the unfiltered top 100 only ever
 // found jobs that were already in it.
 /**
- * The location filter as SQL over `column`: the same rule the dashboard applies in memory
- * (shared/location-filter.ts). A city matches as a whole word however the post writes it
- * ("Onsite - Seattle", "Seattle, WA"); a chosen state drops jobs naming a different state.
+ * The location filter as SQL. A picked place ("Seattle, WA", "WA", "Remote") is a key matched
+ * exactly against the places each job's location resolves to (shared/places.ts), so every
+ * Seattle job is found however the post wrote it, and nothing else. Free text that isn't a
+ * place ("seattle" typed without a state) falls back to the text match in
+ * shared/location-filter.ts.
  */
-export function locationSql(column: SQL, raw: string | null | undefined): SQL | undefined {
+export function locationSql(column: SQL, keysColumn: SQL, raw: string | null | undefined): SQL | undefined {
+  const key = pickedKey(raw);
+  if (key) {return sql`${keysColumn} @> ARRAY[${key}]::text[]`;}
   const f = parseLocationFilter(raw);
   if (!f) {return undefined;}
   const p = locationPatterns(f);
@@ -319,7 +324,7 @@ function feedFilterConditions(filters?: FeedFilters): SQL[] {
     conditions.push(sql`LOWER(${jobPostings.title}) LIKE ${'%' + filters.jobTitle.toLowerCase() + '%'}`);
   }
   if (filters?.location?.trim()) {
-    const loc = locationSql(sql`${jobPostings.location}`, filters.location);
+    const loc = locationSql(sql`${jobPostings.location}`, sql`${jobPostings.locationKeys}`, filters.location);
     if (loc) {conditions.push(loc);}
   }
   if (filters?.workType) {
@@ -1078,7 +1083,7 @@ export class DatabaseStorage implements IStorage {
       const conds = [sql`source LIKE 'ATS:%'`, ...words.map(w => w.length >= 3
         ? sql`title ILIKE ${'%' + likeEsc(w) + '%'}`
         : sql`title ~* ${'\\m' + w.replace(/[^a-z0-9]/gi, '') + '\\M'}`)];
-      const loc = opts.location ? locationSql(sql`location`, opts.location) : undefined;
+      const loc = opts.location ? locationSql(sql`location`, sql`location_keys`, opts.location) : undefined;
       if (loc) {conds.push(loc);}
       if (opts.remoteOnly) {conds.push(sql`work_type = 'remote'`);}
       return sql.join(conds, sql` AND `);
@@ -1207,7 +1212,7 @@ export class DatabaseStorage implements IStorage {
     const conds = [sql`job_postings.status = 'active'`, sql`job_postings.source LIKE 'ATS:%'`, ...words.map(w => w.length >= 3
       ? sql`job_postings.title ILIKE ${'%' + likeEsc(w) + '%'}`
       : sql`job_postings.title ~* ${'\\m' + w.replace(/[^a-z0-9]/gi, '') + '\\M'}`)];
-    const loc = opts.location ? locationSql(sql`job_postings.location`, opts.location) : undefined;
+    const loc = opts.location ? locationSql(sql`job_postings.location`, sql`job_postings.location_keys`, opts.location) : undefined;
     if (loc) {conds.push(loc);}
     if (opts.remoteOnly) {conds.push(sql`job_postings.work_type = 'remote'`);}
     const notCitizen = facts.usCitizen === 'no';
@@ -1265,7 +1270,7 @@ export class DatabaseStorage implements IStorage {
       // Short words ("ml", "qa", "ui") would match inside other words.
       : sql`title ~* ${'\\m' + w.replace(/[^a-z0-9]/gi, '') + '\\M'}`);
     const conds = [sql`status = 'active'`, ...titleConds];
-    const loc = opts.location ? locationSql(sql`location`, opts.location) : undefined;
+    const loc = opts.location ? locationSql(sql`location`, sql`location_keys`, opts.location) : undefined;
     if (loc) {conds.push(loc);}
     if (opts.remoteOnly) {conds.push(sql`work_type = 'remote'`);}
 
@@ -1441,7 +1446,7 @@ export class DatabaseStorage implements IStorage {
       // Location SQL filter: when user specifies a city/region, fetch jobs in that location
       // OR remote jobs (remote is always relevant regardless of location).
       // This ensures the 200-row pool isn't exclusively remote jobs when a city is searched.
-      const locMatch = locationSql(sql`${jobPostings.location}`, filters.location);
+      const locMatch = locationSql(sql`${jobPostings.location}`, sql`${jobPostings.locationKeys}`, filters.location);
       if (locMatch) {
         conditions.push(
           or(
@@ -1601,7 +1606,7 @@ export class DatabaseStorage implements IStorage {
       // locations like "Seattle, WA, USA" or "Seattle Metro Area" still match.
       // Falls back to remote roles regardless.
       const locationCondition = (() => {
-        const match = locationSql(sql`${jobPostings.location}`, filters.location);
+        const match = locationSql(sql`${jobPostings.location}`, sql`${jobPostings.locationKeys}`, filters.location);
         if (!match) return null;
         return or(match, sql`LOWER(${jobPostings.location}) LIKE '%remote%'`);
       })();
@@ -1638,9 +1643,10 @@ export class DatabaseStorage implements IStorage {
           .limit(Math.max(limit * 5, 150));  // a pool to score: the closest vectors aren't always the best fits
       };
 
-      // "0 matches" is the last resort: start strict, then relax one filter at a time.
-      // Without a resume vector every step keeps a skill or title signal, so it never
-      // turns into random jobs.
+      // "0 matches" is the last resort: start strict, then relax the fit signals (title,
+      // skills) one at a time. The person's own choices, location and work type, are never
+      // relaxed: a Seattle search never answers with jobs elsewhere. Without a resume vector
+      // every step keeps a skill or title signal, so it never turns into random jobs.
       const relevance = skillCondition || titleCondition ? or(skillCondition, titleCondition) : null;
       // The person's own choices, location and work type, are never relaxed: a Seattle search
       // never answers with jobs elsewhere.

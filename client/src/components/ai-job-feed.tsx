@@ -14,6 +14,8 @@ import { useToast } from "@/hooks/use-toast";
 import { track } from "@/lib/analytics";
 import { formatCheckedAgo } from "@shared/liveness";
 import { locationMatches, parseLocationFilter } from "@shared/location-filter";
+import { pickedKey } from "@shared/places";
+import { LocationPicker, placeLabel } from "@/components/location-picker";
 
 function isCareerPageLink(url: string | undefined, careerPageUrl: string | undefined): boolean {
   if (!url) return false;
@@ -288,6 +290,7 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
 
   // Client-side filtering — instant, no network calls
   const parsedLocation = useMemo(() => parseLocationFilter(locationFilter), [locationFilter]);
+  const locationKey = useMemo(() => pickedKey(locationFilter), [locationFilter]);
   const filteredMatches = useMemo(() => {
     if (!allMatches) return undefined;
     const term = searchTerm.toLowerCase().trim();
@@ -298,7 +301,13 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
       // City search: substring, case-insensitive — so "new york" matches
       // "New York, NY", "New York, New York", etc. (exact-match made cities
       // nearly impossible to find unless you picked an exact stored string).
-      if (locationFilter !== 'all' && !locationMatches(m.job.location, parsedLocation)) return false;
+      // A picked place matches the places the job's location resolves to (the same keys the
+      // server filters on); a job saved before it had keys falls back to the text match.
+      if (locationFilter !== 'all') {
+        const keys: string[] | null | undefined = (m.job as any).locationKeys;
+        const ok = locationKey && Array.isArray(keys) ? keys.includes(locationKey) : locationMatches(m.job.location, parsedLocation);
+        if (!ok) return false;
+      }
       // Work type is exact now that `workType` is reliably classified at ingest
       // (location-dominant) — Remote means remote, not remote-or-hybrid.
       if (workTypeFilter !== 'all' && (m.job.workType || '').toLowerCase() !== workTypeFilter.toLowerCase()) return false;
@@ -322,18 +331,22 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
       }
       return true;
     });
-  }, [allMatches, searchTerm, locationFilter, parsedLocation, workTypeFilter, companyFilter, experienceLevelFilter, datePostedFilter, verdictFilter]);
+  }, [allMatches, searchTerm, locationFilter, parsedLocation, locationKey, workTypeFilter, companyFilter, experienceLevelFilter, datePostedFilter, verdictFilter]);
 
   // Render the full filtered set at once. All matches are already fetched in a
   // single request, so there is no network cost to showing them; rendering them
   // all avoids the scroll-reveal machinery (and its bugs) entirely.
   const visibleMatches = filteredMatches;
 
-  // Third-party listings — fetched whenever NO direct matches are visible: either the
-  // feed is genuinely empty, or a search/filter excluded everything. Staffing agencies
-  // and job boards, mixed and ranked by the person's resume (server side); the server
-  // relaxes filters before returning nothing, so "0 matches" is the last resort.
-  const noVisibleMatches = !isLoading && !isFetching && Array.isArray(filteredMatches) && filteredMatches.length === 0;
+  // Staffing agencies and job boards, mixed and ranked by the person's resume (server side);
+  // the server relaxes title and skills (never the location) before returning nothing.
+  // Third-party listings only when the person has NO direct matches at all. A filter that hides
+  // every direct match says so and offers to clear it; it never swaps in third-party jobs.
+  // Filters run on the server too (location, work type, date), so an empty list under a filter
+  // says nothing about whether the person has direct matches: only an unfiltered empty feed does.
+  const anyFilterSet = locationFilter !== 'all' || workTypeFilter !== 'all' || companyFilter !== 'all'
+    || experienceLevelFilter !== 'all' || datePostedFilter !== 'all' || verdictFilter !== 'all' || searchTerm.trim().length > 0;
+  const noVisibleMatches = !isLoading && !isFetching && !anyFilterSet && Array.isArray(allMatches) && allMatches.length === 0;
   const candidateSkills: string[] = useMemo(() => {
     const skills = cachedProfile?.skills;
     return Array.isArray(skills) ? skills.slice(0, 20) : [];
@@ -524,7 +537,6 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
     hideMutation.mutate(match.job.id);
   };
 
-  const locations = useMemo(() => [...new Set((allMatches || []).map(m => m.job.location).filter(Boolean))].sort(), [allMatches]);
   const companies = useMemo(() => [...new Set((allMatches || []).map(m => m.job.company).filter(Boolean))].sort(), [allMatches]);
 
   const clearFilters = () => {
@@ -545,10 +557,9 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
     (datePostedFilter !== 'all' ? 1 : 0) +
     (verdictFilter !== 'all' ? 1 : 0);
   const hasAnyFilter = activeFilterCount > 0 || searchTerm.length > 0;
-  // The candidate HAS matches but the active filters/search excluded them all.
-  // Distinct from a genuinely empty feed: we still offer "Clear filters", but we
-  // also surface aggregator results for their search intent.
-  const overFiltered = !!allMatches && allMatches.length > 0 && (!filteredMatches || filteredMatches.length === 0) && hasAnyFilter;
+  // Filters (here or on the server) left nothing: say so and offer to clear them. Third-party
+  // listings never stand in for a filtered-out feed.
+  const overFiltered = (!filteredMatches || filteredMatches.length === 0) && anyFilterSet;
 
   return (
     <div className="space-y-4">
@@ -617,25 +628,12 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
             </SelectContent>
           </Select>
 
-          {/* City search — free-text substring with suggestions, so any city is
-              findable by typing (the old exact-match dropdown hid all but the
-              exact stored strings). */}
-          <div className="relative w-full sm:w-[160px]">
-            <MapPin className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-            <Input
-              type="text"
-              list="job-feed-locations"
-              placeholder="City or location"
-              className="pl-9 h-10"
-              value={locationFilter === 'all' ? '' : locationFilter}
-              onChange={(e) => setLocationFilter(e.target.value === '' ? 'all' : e.target.value)}
-            />
-            <datalist id="job-feed-locations">
-              {locations.map(loc => (
-                <option key={loc} value={loc} />
-              ))}
-            </datalist>
-          </div>
+          {/* Location: every US place, applied only when one is picked (shared/places.ts). */}
+          <LocationPicker
+            className="w-full sm:w-[200px]"
+            value={locationFilter === 'all' ? '' : locationFilter}
+            onChange={(v) => setLocationFilter(v === '' ? 'all' : v)}
+          />
 
           <Select value={workTypeFilter} onValueChange={setWorkTypeFilter}>
             <SelectTrigger className="w-full sm:w-[140px]">
@@ -698,16 +696,16 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
             <div className="min-w-0 flex-1">
               <h3 className="text-sm sm:text-base font-semibold text-gray-900 dark:text-white">
                 {overFiltered
-                  ? "No on-platform jobs match your filters"
+                  ? (locationFilter !== 'all' ? `No direct matches in ${placeLabel(locationFilter)}` : "No direct matches fit your filters")
                   : fallbackJobs.length > 0
                     ? "No direct matches yet. Here are third-party listings."
                     : "Hang tight. New matches arrive daily."}
               </h3>
               <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-0.5">
                 {overFiltered
-                  ? (fallbackJobs.length > 0
-                      ? `None of your ${totalMatches} direct matches fit these filters. Here are third-party listings that do, or clear your filters.`
-                      : `None of your ${totalMatches} matches fit the current filters. Try widening or clearing them.`)
+                  ? (locationFilter !== 'all'
+                      ? "None of the jobs matched to your resume are there right now. Try a nearby city, the whole state, or clear the location."
+                      : "None of the jobs matched to your resume fit these filters. Try widening or clearing them.")
                   : fallbackJobs.length > 0
                     ? "These come from staffing agencies and job boards, not the employer directly, so you'll apply through them. Ranked by fit to your resume."
                     : "Polish your profile to surface more matches, or check back soon. Fresh opportunities are added every hour."}
