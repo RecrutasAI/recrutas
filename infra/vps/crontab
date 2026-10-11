@@ -79,6 +79,12 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # reposted. After the morning scrapes (where snapshot expiry closes jobs);
 # 16:00 UTC = 9am Pacific.
 0 16 * * * $RUN application-alerts 15 npx tsx scripts/application-alerts.ts --apply
+# Fleet matching (scripts/fleet-matcher.ts). The heavy work runs on GitHub: the jobs-fleet
+# "Job vectors" workflow and the private recrutas-matcher "Match" workflow (02/06/10/14/18/22:00).
+# This box only exports resume vectors under anonymous ids just before each match, and
+# inserts the matched jobs (vectors attached, so batch-embeddings skips them) after it.
+50 1,5,9,13,17,21 * * * $RUN fleet-export 5 npx tsx scripts/fleet-matcher.ts export
+40 2,6,10,14,18,22 * * * $RUN fleet-ingest 15 npx tsx scripts/fleet-matcher.ts ingest
 # Weekly summary: shown in the dashboard and over MCP (my_week), not emailed.
 # A commercial email needs a postal address (CAN-SPAM); to send it again, set
 # EMAIL_POSTAL_ADDRESS, re-add `0 15 * * 1 $RUN weekly-summary 30 npx tsx
