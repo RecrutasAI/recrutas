@@ -15,7 +15,7 @@ import { createHmac } from 'crypto';
 import { gunzipSync } from 'zlib';
 import { sql } from 'drizzle-orm/sql';
 import { db } from '../server/db';
-import { jobIngestionService, type ExternalJobInput } from '../server/services/job-ingestion.service';
+import { jobIngestionService, backfillPostedAt, type ExternalJobInput } from '../server/services/job-ingestion.service';
 import { extractSkillsFromText } from '../server/utils/skill-extractor';
 import { recordPipelineRun } from '../server/services/pipeline-run.service';
 import { getDirectUsJobLinks } from '../server/storage';
@@ -123,7 +123,7 @@ export function toIngestion(j: FleetJob): ExternalJobInput | null {
     source: `ATS:${j.ats}`,
     externalId: `fleet:${j.job_id}`,
     externalUrl: url,
-    postedDate: j.posted_at || new Date().toISOString(),
+    postedDate: j.posted_at || null,
   };
 }
 
@@ -172,6 +172,7 @@ async function ingestOutbox(): Promise<string> {
       WHERE jp.external_id = v.eid AND jp.company IS DISTINCT FROM v.c`);
     renamed += Number((r as any)?.rowCount ?? (r as any)?.count ?? 0);
   }
+  const dated = await backfillPostedAt(ours);
   const totals = { inserted: 0, duplicates: 0, errors: 0, skippedNonUS: 0, skippedBadUrl: 0 };
   for (let i = 0; i < inputs.length; i += 500) {
     const r = await jobIngestionService.ingestExternalJobs(inputs.slice(i, i + 500));
@@ -200,7 +201,7 @@ async function ingestOutbox(): Promise<string> {
     INSERT INTO fleet_ingest_state (id, outbox_generated_at, ingested_at) VALUES (1, ${out.generated_at}, NOW())
     ON CONFLICT (id) DO UPDATE SET outbox_generated_at = EXCLUDED.outbox_generated_at, ingested_at = NOW()`);
   return `outbox ${out.generated_at}: ${out.jobs.length} matched jobs → ${unnamed} skipped (employer not named), ${existing.size} already in Recrutas (kept ours), ${totals.inserted} new, ${totals.duplicates} duplicates, ` +
-    `${totals.skippedNonUS} non-US, ${totals.skippedBadUrl} bad links, ${totals.errors} errors; ${vectors} vectors attached; ${renamed} renamed; ${closed} closed`;
+    `${totals.skippedNonUS} non-US, ${totals.skippedBadUrl} bad links, ${totals.errors} errors; ${vectors} vectors attached; ${renamed} renamed; ${dated} posting dates added; ${closed} closed`;
 }
 
 const step = process.argv[2];

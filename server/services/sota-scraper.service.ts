@@ -200,7 +200,7 @@ export function convertToIngestionFormat(job: ScrapedJob): ExternalJobInput {
     source,
     externalId,
     externalUrl: job.externalUrl,
-    postedDate: job.postedDate?.toISOString() || new Date().toISOString()
+    postedDate: job.postedDate ? job.postedDate.toISOString() : null
   };
 }
 

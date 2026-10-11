@@ -74,7 +74,8 @@ export interface ExternalJobInput {
   externalId: string;
   externalUrl: string;
   careerPageUrl?: string;
-  postedDate: string;
+  /** The employer's posting date when the source gives one; omit rather than guess. */
+  postedDate?: string | null;
 }
 
 function getSourceTrustScore(source: string): number {
@@ -146,6 +147,23 @@ function toSalaryInt(value: unknown): number | null {
 }
 
 /** Build one job_postings row. Shared by the bulk path and the salvage path. */
+/**
+ * The employer's posting date, or null when we can't trust it. Many scrapers fall back to "now"
+ * when a source has no date, which made jobs posted days earlier show as "posted today". A date
+ * within 15 minutes of ingestion is treated as such a fallback, as are future and implausibly
+ * old dates.
+ */
+export function realPostedAt(value: unknown, now: Date = new Date()): Date | null {
+  if (value == null || value === '') {return null;}
+  const d = value instanceof Date ? value : new Date(String(value));
+  const t = d.getTime();
+  if (!Number.isFinite(t)) {return null;}
+  if (t > now.getTime() + 60 * 60 * 1000) {return null;}          // in the future
+  if (Math.abs(now.getTime() - t) < 15 * 60 * 1000) {return null;} // a defaulted "now"
+  if (d.getUTCFullYear() < 2015) {return null;}
+  return d;
+}
+
 function buildJobRow(job: any, systemUserId: string, now: Date, expiresAt: Date | null) {
   return {
     talentOwnerId: systemUserId,
@@ -178,7 +196,29 @@ function buildJobRow(job: any, systemUserId: string, now: Date, expiresAt: Date 
     status: 'active' as const,
     createdAt: now,
     updatedAt: now,
+    postedAt: realPostedAt(job.postedDate, now),
   };
+}
+
+/**
+ * Give existing rows the employer's posting date when they don't have one yet (rows inserted
+ * before posted_at existed, or by a scraper that had no date). Only rows with posted_at NULL are
+ * written, so each row is updated at most once.
+ */
+export async function backfillPostedAt(jobs: Array<{ externalUrl?: string | null; postedDate?: unknown }>, now: Date = new Date()): Promise<number> {
+  const known = jobs
+    .map(j => ({ url: j.externalUrl, at: realPostedAt(j.postedDate, now) }))
+    .filter((j): j is { url: string; at: Date } => !!j.url && !!j.at);
+  let updated = 0;
+  for (let i = 0; i < known.length; i += 500) {
+    const values = sql.join(known.slice(i, i + 500).map(j => sql`(${j.url}, ${j.at.toISOString()}::timestamp)`), sql`, `);
+    const r: any = await db.execute(sql`
+      UPDATE job_postings AS jp SET posted_at = v.p
+      FROM (VALUES ${values}) AS v(url, p)
+      WHERE jp.external_url = v.url AND jp.posted_at IS NULL`);
+    updated += Number(r?.rowCount ?? r?.count ?? 0);
+  }
+  return updated;
 }
 
 export interface SnapshotExpiryStats {
@@ -458,7 +498,12 @@ export class JobIngestionService {
       }
     }
 
-    console.log(`[JobIngestion] Complete. Inserted: ${stats.inserted}, Duplicates: ${stats.duplicates}, Errors: ${stats.errors}, Skipped non-US: ${stats.skippedNonUS}, Skipped bad URL: ${stats.skippedBadUrl}`);
+    // Postings we already had get the employer's date once it's known.
+    const datesAdded = await backfillPostedAt(jobs).catch(err => {
+      console.warn(`[JobIngestion] posted_at backfill failed: ${(err as Error).message}`);
+      return 0;
+    });
+    console.log(`[JobIngestion] Complete. Inserted: ${stats.inserted}, Duplicates: ${stats.duplicates}, Errors: ${stats.errors}, Skipped non-US: ${stats.skippedNonUS}, Skipped bad URL: ${stats.skippedBadUrl}, Posting dates added: ${datesAdded}`);
     return stats;
   }
 
