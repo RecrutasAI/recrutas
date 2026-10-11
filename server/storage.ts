@@ -67,6 +67,7 @@ import { sql, isNotNull, type SQL } from "drizzle-orm/sql";
 import { inArray } from "drizzle-orm/sql/expressions";
 import { resolveCandidateName, type PersonName } from "./lib/candidate-name";
 import { jobPostUrlSqlCondition } from "./lib/job-post-url";
+import { AGGREGATOR_SOURCES, THIRD_PARTY_COMPANIES, thirdPartyKind } from './lib/third-party';
 import { supabaseAdmin } from "./lib/supabase-admin";
 import { extractHardRequirements, verdictFor, yearsFromPositions, type CandidateFacts, type HardRequirements } from './lib/hard-requirements';
 import { normalizeSkills, parseSkillsInput } from "./skill-normalizer";
@@ -313,7 +314,8 @@ function feedFilterConditions(filters?: FeedFilters): SQL[] {
 }
 
 // Job board aggregators — excluded from the candidate feed (links don't go to actual job pages)
-const AGGREGATOR_SOURCES = new Set(['Adzuna', 'JSearch', 'Jooble', 'Indeed', 'ArbeitNow', 'USAJobs', 'RemoteOK', 'WeWorkRemotely', 'The Muse']);
+// Job boards, aggregators and staffing agencies: kept, labeled, and shown only when a person has
+// no direct matches. One list for the feed's exclusions and the fallback (server/lib/third-party.ts).
 
 // Reposters: they run a REAL ATS board (so source is `ATS:lever` and the URL is
 // a genuine jobs.lever.co deep link) but the roles are not their own — they are
@@ -444,16 +446,7 @@ const JOB_BOARD_HOSTS = [
   'talent.com', 'jobgether.com', 'google.com', 'hiring.cafe', 'hiringcafe.com', 'otta.com',
 ];
 
-const REPOSTER_COMPANIES = new Set([
-  'jobgether',              // remote-work marketplace relisting other companies' roles
-  'nexthire',               // recruiting agency
-  'bluelight consulting',   // staffing/outsourcing; 1,138 postings across only 17
-                            // distinct titles, and every one uses client language
-  'crisp recruit',          // recruiting agency
-  'seasoned recruitment',   // recruiting agency
-  'talent software services',
-  'horizontal talent',
-]);
+const REPOSTER_COMPANIES = THIRD_PARTY_COMPANIES;
 // SQL fragment: keep reposter-owned boards out of the direct feed.
 const reposterExclusion = sql`(
   ${jobPostings.company} IS NULL
@@ -1467,13 +1460,14 @@ export class DatabaseStorage implements IStorage {
   async getAggregatorFallbackJobs(
     skills: string[] = [],
     filters: { jobTitle?: string; location?: string; workType?: string } = {},
-    limit: number = 10
+    limit: number = 10,
+    vectorStr?: string,
   ): Promise<JobPosting[]> {
     try {
-      // No skill or title signal → nothing to relevance-match against. Return
+      // No skill, title or resume signal → nothing to relevance-match against. Return
       // empty rather than padding the empty state with recency-only noise (which
       // is just random aggregator jobs the candidate has no demonstrated fit for).
-      if (skills.length === 0 && !filters.jobTitle?.trim()) {
+      if (skills.length === 0 && !filters.jobTitle?.trim() && !vectorStr) {
         return [];
       }
 
@@ -1521,6 +1515,16 @@ export class DatabaseStorage implements IStorage {
           sql`${jobPostings.expiresAt} > NOW()`
         ),
         sql`${jobPostings.createdAt} > ${cutoffDateStr}`,
+        // US only, as in the main feed: empty/remote stay in, explicit non-US drops.
+        or(
+          sql`${jobPostings.location} IS NULL`,
+          sql`TRIM(${jobPostings.location}) = ''`,
+          and(
+            sql`NOT (${jobPostings.location} ~* ${NON_US_LOCATION_REGEX})`,
+            sql`NOT (regexp_replace(LOWER(${jobPostings.location}), 'new mexico', '', 'g') ~* ${MEXICO_COUNTRY_REGEX})`,
+            sql`NOT (${jobPostings.location} ~* ${', ?(' + CA_PROVINCE_CODES_RE_PART + ')( |,|$)'})`,
+          ),
+        ),
       ];
 
       const titleCondition = (() => {
@@ -1559,30 +1563,51 @@ export class DatabaseStorage implements IStorage {
           ))!
         : null;
 
+      // With a resume vector, rank by it (exact distance: the third-party pool is small);
+      // otherwise by skill overlap, then recency.
+      const dist = vectorStr ? sql`(${jobPostings.embedding} <=> ${vectorStr}::vector)` : null;
       const runQuery = async (extras: (any | null)[]) => {
         const conditions = [...baseConditions(), ...extras.filter(Boolean)];
+        if (dist) {conditions.push(sql`${jobPostings.embedding} IS NOT NULL`);}
         return db
-          .select()
+          .select({ job: jobPostings, distance: dist ?? sql<null>`NULL` })
           .from(jobPostings)
           .where(and(...conditions))
           .orderBy(
-            skillMatchExpr
-              ? sql`${skillMatchExpr} DESC, ${jobPostings.createdAt} DESC`
-              : sql`${jobPostings.createdAt} DESC`,
+            dist
+              ? sql`${dist} ASC`
+              : skillMatchExpr
+                ? sql`${skillMatchExpr} DESC, ${jobPostings.createdAt} DESC`
+                : sql`${jobPostings.createdAt} DESC`,
           )
           .limit(limit);
       };
 
-      // Strict pass: location + skill + title + workType.
-      let jobs = await runQuery([titleCondition, workTypeCondition, locationCondition, skillCondition]);
-
-      // If location starved the pool, retry without location so remote-anywhere
-      // candidates in low-coverage cities still see relevant aggregator results.
-      if (jobs.length === 0 && locationCondition) {
-        jobs = await runQuery([titleCondition, workTypeCondition, skillCondition]);
+      // "0 matches" is the last resort: start strict, then relax one filter at a time.
+      // Without a resume vector every step keeps a skill or title signal, so it never
+      // turns into random jobs.
+      const relevance = skillCondition || titleCondition ? or(skillCondition, titleCondition) : null;
+      const steps: (any | null)[][] = [
+        [titleCondition, workTypeCondition, locationCondition, skillCondition],
+        [titleCondition, workTypeCondition, skillCondition],
+        [titleCondition, skillCondition],
+        [relevance],
+        ...(dist ? [[]] : []),
+      ];
+      let rows: { job: JobPosting; distance: unknown }[] = [];
+      for (const step of steps) {
+        if (!dist && step.every(c => !c)) {continue;}
+        rows = await runQuery(step);
+        if (rows.length > 0) {break;}
       }
 
-      return jobs;
+      return rows.map(({ job, distance }) => ({
+        ...job,
+        thirdPartyKind: thirdPartyKind(job),
+        // Same 0-100 scale the feed shows for semantic fit.
+        matchScore: distance == null ? undefined
+          : Math.round(100 * Math.max(0, Math.min(1, ((1 - Number(distance)) - 0.3) / 0.5))),
+      })) as any;
     } catch (error) {
       console.error('Error fetching aggregator fallback jobs:', error);
       return [];

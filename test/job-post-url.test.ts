@@ -47,3 +47,23 @@ describe('jobPostUrlSqlCondition', () => {
     expect(cond).not.toMatch(/\$\d/);
   });
 });
+
+describe('job pages without a 4-digit id (Fleet systems, 2026-10-11)', () => {
+  it('accepts the posting pages', () => {
+    for (const u of [
+      'https://jobs.gem.com/bull-moose-xyz/am9icG9zdDrNNtRLjOW_cWhCLHzr80DH',
+      'https://mergeapi.applytojob.com/apply/jobs/details/6veU7SDIRe',
+      'https://adidevtechnologies.hire.trakstar.com/jobs/fk0z6pt',
+      'https://sonataone.darwinbox.in/ms/candidate/careers/a6aafe9a641be2',
+    ]) {expect(isJobPostUrl(u)).toBe(true);}
+  });
+  it('still rejects their landing pages and search pages', () => {
+    for (const u of [
+      'https://jobs.gem.com/bull-moose-xyz',
+      'https://mergeapi.applytojob.com/apply',
+      'https://adidevtechnologies.hire.trakstar.com/',
+      'https://sonataone.darwinbox.in/ms/candidate/careers',
+      'https://enmv.fa.us2.oraclecloud.com/?keyword=&lang=en&mode=jobs&site_number=CX_1',
+    ]) {expect(isJobPostUrl(u)).toBe(false);}
+  });
+});

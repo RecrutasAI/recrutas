@@ -99,7 +99,17 @@ async function ingestOutbox(): Promise<string> {
   const raw = await download('outbox/latest.json.gz');
   if (!raw) {return 'no outbox yet';}
   const out = JSON.parse(gunzipSync(raw).toString('utf8')) as { generated_at: string; jobs: FleetJob[]; closed: string[] };
-  const inputs = out.jobs.map(toIngestion).filter((x): x is ExternalJobInput => x !== null);
+  const mapped = out.jobs.map(toIngestion).filter((x): x is ExternalJobInput => x !== null);
+  // Skip postings Recrutas already has: ingestion "adopts" an existing row with the same link,
+  // which would overwrite our scraper's company name and key with the Fleet's (and our scraper
+  // would flip them back every run). Recrutas's own copy wins.
+  const existing = new Set<string>();
+  for (let i = 0; i < mapped.length; i += 1000) {
+    const urls = mapped.slice(i, i + 1000).map(j => j.externalUrl);
+    const r = rows(await db.execute(sql`SELECT external_url FROM job_postings WHERE external_url IN (${sql.join(urls.map(u => sql`${u}`), sql`, `)})`));
+    for (const x of r) {existing.add(x.external_url);}
+  }
+  const inputs = mapped.filter(j => !existing.has(j.externalUrl));
   const totals = { inserted: 0, duplicates: 0, errors: 0, skippedNonUS: 0, skippedBadUrl: 0 };
   for (let i = 0; i < inputs.length; i += 500) {
     const r = await jobIngestionService.ingestExternalJobs(inputs.slice(i, i + 500));
@@ -124,7 +134,7 @@ async function ingestOutbox(): Promise<string> {
       WHERE external_id IN (${sql.join(ids.map(id => sql`${id}`), sql`, `)}) AND status = 'active'`);
     closed = Number((r as any)?.rowCount ?? (r as any)?.count ?? 0);
   }
-  return `outbox ${out.generated_at}: ${out.jobs.length} matched jobs → ${totals.inserted} new, ${totals.duplicates} already here, ` +
+  return `outbox ${out.generated_at}: ${out.jobs.length} matched jobs → ${existing.size} already in Recrutas (kept ours), ${totals.inserted} new, ${totals.duplicates} duplicates, ` +
     `${totals.skippedNonUS} non-US, ${totals.skippedBadUrl} bad links, ${totals.errors} errors; ${vectors} vectors attached; ${closed} closed`;
 }
 

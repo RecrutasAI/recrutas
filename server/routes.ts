@@ -302,6 +302,7 @@ Requirements: ${(requirements || []).join('; ') || 'Not specified'}`;
 import { registerMetricsRoutes } from './routes/metrics-api.js';
 import { registerAdminConsoleRoutes } from './routes/admin-console.js';
 import { isResumeFileField } from './extension-fill-helpers.js';
+import { parseSkillsInput } from './skill-normalizer.js';
 
 interface LiveStatsRow { active_jobs: number; companies: number; recently_checked: number }
 
@@ -735,6 +736,26 @@ export async function registerRoutes(app: Express): Promise<Express> {
       console.error('Error fetching aggregator fallback:', error);
       res.status(503).json({ jobs: [] });
     }
+  }));
+
+  // Third-party listings for a signed-in person with no direct matches: staffing agencies and
+  // job boards mixed, ranked by their resume vector, relaxing filters before ever returning
+  // nothing. Each job says which kind of third party it is; the feed labels them.
+  app.get('/api/third-party-matches', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const profile: any = await storage.getCandidateUser(req.user.id);
+    const skills = parseSkillsInput(profile?.skills ?? []).slice(0, 20);
+    let vectorStr: string | undefined;
+    try {
+      const v = profile?.vectorEmbedding ? JSON.parse(profile.vectorEmbedding) : null;
+      if (Array.isArray(v) && v.length > 0) {vectorStr = `[${v.join(',')}]`;}
+    } catch { /* malformed: rank by skills */ }
+    const jobTitle = req.query.jobTitle ? String(req.query.jobTitle).slice(0, 200) : undefined;
+    const location = req.query.location ? String(req.query.location).slice(0, 200) : undefined;
+    const rawWorkType = req.query.workType ? String(req.query.workType) : undefined;
+    const workType = rawWorkType && ['remote', 'hybrid', 'onsite'].includes(rawWorkType) ? rawWorkType : undefined;
+    const jobs = await storage.getAggregatorFallbackJobs(skills, { jobTitle, location, workType }, 30, vectorStr);
+    res.set('Cache-Control', 'private, max-age=300');
+    res.json({ jobs });
   }));
 
   // Platform stats
