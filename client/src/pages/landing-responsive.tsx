@@ -129,10 +129,14 @@ function Hero({ onStart }: { onStart: () => void }) {
               ...(stats.catalogJobs && stats.catalogCompanies
                 ? [[stats.catalogJobs.toLocaleString(), "direct US jobs"], [`${floorTo(stats.catalogCompanies, 100).toLocaleString()}+`, "companies"]]
                 : [[stats.activeJobs.toLocaleString(), "live roles"], [stats.companies.toLocaleString(), "companies"]]),
-              // Only quote the check rate when it is a number worth quoting.
-              checkedPct >= 50
-                ? [`${checkedPct}%`, `checked < ${stats.checkWindowHours}h`]
-                : ["4h", "between board re-reads"],
+              // The check rate is measured on Recrutas's own jobs, so it can't sit next to the
+              // catalog count. Every catalog job is re-read at least every 3 days (Fleet boards:
+              // daily for big ones, every 2-3 days for small ones; ours: every 4 hours).
+              stats.catalogJobs
+                ? ["≤ 3 days", "between re-reads"]
+                : checkedPct >= 50
+                  ? [`${checkedPct}%`, `checked < ${stats.checkWindowHours}h`]
+                  : ["4h", "between board re-reads"],
             ].map(([value, label]) => (
               <div key={label} className="px-4 sm:px-10 py-5">
                 <dt className="sr-only">{label}</dt>
