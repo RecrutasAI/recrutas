@@ -29,7 +29,11 @@ export const JOB_MARKER_PATTERN = '(gh_jid|jobid|requisition|posting|/job/|/jobs
 export const ATS_HOST_PATTERN =
   '(boards\\.greenhouse\\.io|job-boards\\.greenhouse\\.io|jobs\\.lever\\.co|jobs\\.ashbyhq\\.com' +
   '|\\.recruitee\\.com|\\.workable\\.com|\\.bamboohr\\.com|myworkdayjobs\\.com|smartrecruiters\\.com' +
-  '|icims\\.com|taleo\\.net|\\.breezy\\.hr/p/)';
+  '|icims\\.com|taleo\\.net|\\.breezy\\.hr/p/' +
+  // Job pages whose ids carry no 4-digit run (found matching Fleet jobs, 2026-10-11):
+  // Gem /<company>/<id>, JazzHR /apply/jobs/details/<id>, Trakstar /jobs/<id>, Darwinbox careers/<id>.
+  '|jobs\\.gem\\.com/[^/?#]+/[^/?#]{8,}|\\.applytojob\\.com/apply/jobs/details/[^/?#]+' +
+  '|\\.hire\\.trakstar\\.com/jobs/[a-z0-9]{5,}|\\.darwinbox\\.in/ms/candidate/careers/[a-z0-9]{8,})';
 
 const bareDomainRe = new RegExp(BARE_DOMAIN_PATTERN);
 const jobIdRe = new RegExp(JOB_ID_PATTERN);

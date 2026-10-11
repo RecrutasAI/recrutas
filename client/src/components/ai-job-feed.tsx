@@ -325,11 +325,10 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
   // all avoids the scroll-reveal machinery (and its bugs) entirely.
   const visibleMatches = filteredMatches;
 
-  // Aggregator fallback — fetched whenever NO matches are visible: either the
-  // feed is genuinely empty (zero on-platform matches), or a manual search/filter
-  // excluded everything. These are external aggregator listings (Adzuna et al.);
-  // URLs leave the platform. Matched using the same signals as the main feed:
-  // profile skills, the active search/title intent, location, and work-type filter.
+  // Third-party listings — fetched whenever NO direct matches are visible: either the
+  // feed is genuinely empty, or a search/filter excluded everything. Staffing agencies
+  // and job boards, mixed and ranked by the person's resume (server side); the server
+  // relaxes filters before returning nothing, so "0 matches" is the last resort.
   const noVisibleMatches = !isLoading && !isFetching && Array.isArray(filteredMatches) && filteredMatches.length === 0;
   const candidateSkills: string[] = useMemo(() => {
     const skills = cachedProfile?.skills;
@@ -339,14 +338,13 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
   const fallbackWorkType = workTypeFilter !== 'all' ? workTypeFilter : '';
   const fallbackJobTitle = searchTerm.trim();
   const { data: fallbackData } = useQuery<{ jobs: any[] }>({
-    queryKey: ['/api/aggregator-fallback', candidateSkills.join(','), fallbackJobTitle, fallbackLocation, fallbackWorkType],
+    queryKey: ['/api/third-party-matches', candidateSkills.join(','), fallbackJobTitle, fallbackLocation, fallbackWorkType],
     queryFn: async () => {
       const params = new URLSearchParams();
-      if (candidateSkills.length > 0) params.set('skills', candidateSkills.join(','));
       if (fallbackJobTitle) params.set('jobTitle', fallbackJobTitle);
       if (fallbackLocation) params.set('location', fallbackLocation);
       if (fallbackWorkType) params.set('workType', fallbackWorkType);
-      const response = await apiRequest("GET", `/api/aggregator-fallback?${params.toString()}`);
+      const response = await apiRequest("GET", `/api/third-party-matches?${params.toString()}`);
       return response.json();
     },
     enabled: noVisibleMatches,
@@ -698,16 +696,16 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
                 {overFiltered
                   ? "No on-platform jobs match your filters"
                   : fallbackJobs.length > 0
-                    ? "We're sharpening your matches"
+                    ? "No direct matches yet. Here are third-party listings."
                     : "Hang tight. New matches arrive daily."}
               </h3>
               <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-0.5">
                 {overFiltered
                   ? (fallbackJobs.length > 0
-                      ? `None of your ${totalMatches} matches fit these filters. Here are roles from across the web that do. Or clear your filters.`
+                      ? `None of your ${totalMatches} direct matches fit these filters. Here are third-party listings that do, or clear your filters.`
                       : `None of your ${totalMatches} matches fit the current filters. Try widening or clearing them.`)
                   : fallbackJobs.length > 0
-                    ? "While our top-tier matches catch up, here are roles aligned to your profile from across the web."
+                    ? "These come from staffing agencies and job boards, not the employer directly, so you'll apply through them. Ranked by fit to your resume."
                     : "Polish your profile to surface more matches, or check back soon. Fresh opportunities are added every hour."}
               </p>
             </div>
@@ -749,8 +747,11 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <Badge variant="secondary" className="bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 text-xs">
                             <ExternalLink className="h-3 w-3 mr-1" />
-                            via {job.source}
+                            {job.thirdPartyKind === 'agency' ? 'Staffing agency' : `via ${job.source}`}
                           </Badge>
+                          {typeof job.matchScore === 'number' && job.matchScore > 0 && (
+                            <span className="text-xs text-gray-500 dark:text-gray-400">{job.matchScore}% fit</span>
+                          )}
                         </div>
                         <h3 className="font-semibold text-base sm:text-lg leading-tight">
                           <span className="line-clamp-2 sm:line-clamp-1">{job.title}</span>

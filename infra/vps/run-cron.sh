@@ -61,7 +61,7 @@ set +a
 # "Pause background jobs" switch (admin console / Autopilot, runtime_settings
 # pauseNonEssentialCrons). Under load these wait; backups, embeddings, the ATS
 # scrapers and alerts always run. If the setting can't be read, the job runs.
-NONESSENTIAL_JOBS="${NONESSENTIAL_JOBS:-discover-companies scrape-external-jobs auto-hide-ghost-jobs warm-candidate-matches compute-job-requirements}"
+NONESSENTIAL_JOBS="${NONESSENTIAL_JOBS:-discover-companies scrape-external-jobs auto-hide-ghost-jobs warm-candidate-matches compute-job-requirements fleet-export fleet-ingest}"
 case " $NONESSENTIAL_JOBS " in
   *" $JOB "*)
     PAUSED="$(psql "${DATABASE_URL:-}" -tAX -c "SELECT value::text FROM runtime_settings WHERE key = 'pauseNonEssentialCrons'" 2>/dev/null || true)"
