@@ -84,7 +84,9 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # This box only exports resume vectors under anonymous ids just before each match, and
 # inserts the matched jobs (vectors attached, so batch-embeddings skips them) after it.
 50 1,5,9,13,17,21 * * * $RUN fleet-export 5 npx tsx scripts/fleet-matcher.ts export
-50 2,6,10,14,18,22 * * * $RUN fleet-ingest 15 npx tsx scripts/fleet-matcher.ts ingest
+# Hourly: GitHub starts the matcher late or skips a slot (2026-10-11: 18:13 skipped, 18:43 ran
+# at 18:49, after the old :50 insert). A run with no new outbox stops after one small check.
+25 * * * * $RUN fleet-ingest 15 npx tsx scripts/fleet-matcher.ts ingest
 # Weekly summary: shown in the dashboard and over MCP (my_week), not emailed.
 # A commercial email needs a postal address (CAN-SPAM); to send it again, set
 # EMAIL_POSTAL_ADDRESS, re-add `0 15 * * 1 $RUN weekly-summary 30 npx tsx
