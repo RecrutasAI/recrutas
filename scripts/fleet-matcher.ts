@@ -122,6 +122,19 @@ async function ingestOutbox(): Promise<string> {
     for (const x of r) {existing.add(x.external_url);}
   }
   const inputs = mapped.filter(j => !existing.has(j.externalUrl));
+  // Fleet jobs we already hold keep their row, but take the Fleet's current company name: the
+  // Fleet fixes names as it re-reads boards ("extrahopnetworks" → "ExtraHop"). Only rows whose
+  // name actually changed are written.
+  let renamed = 0;
+  const ours = mapped.filter(j => existing.has(j.externalUrl));
+  for (let i = 0; i < ours.length; i += 500) {
+    const values = sql.join(ours.slice(i, i + 500).map(j => sql`(${j.externalId}, ${j.company})`), sql`, `);
+    const r = await db.execute(sql`
+      UPDATE job_postings AS jp SET company = v.c, updated_at = NOW()
+      FROM (VALUES ${values}) AS v(eid, c)
+      WHERE jp.external_id = v.eid AND jp.company IS DISTINCT FROM v.c`);
+    renamed += Number((r as any)?.rowCount ?? (r as any)?.count ?? 0);
+  }
   const totals = { inserted: 0, duplicates: 0, errors: 0, skippedNonUS: 0, skippedBadUrl: 0 };
   for (let i = 0; i < inputs.length; i += 500) {
     const r = await jobIngestionService.ingestExternalJobs(inputs.slice(i, i + 500));
@@ -147,7 +160,7 @@ async function ingestOutbox(): Promise<string> {
     closed = Number((r as any)?.rowCount ?? (r as any)?.count ?? 0);
   }
   return `outbox ${out.generated_at}: ${out.jobs.length} matched jobs → ${unnamed} skipped (employer not named), ${existing.size} already in Recrutas (kept ours), ${totals.inserted} new, ${totals.duplicates} duplicates, ` +
-    `${totals.skippedNonUS} non-US, ${totals.skippedBadUrl} bad links, ${totals.errors} errors; ${vectors} vectors attached; ${closed} closed`;
+    `${totals.skippedNonUS} non-US, ${totals.skippedBadUrl} bad links, ${totals.errors} errors; ${vectors} vectors attached; ${renamed} renamed; ${closed} closed`;
 }
 
 const step = process.argv[2];
