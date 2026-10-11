@@ -53,6 +53,20 @@ async function upload(files: Array<{ path: string; content: string | Buffer }>, 
   if (!r.ok) {throw new Error(`upload: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);}
 }
 
+/**
+ * Drop the dataset's version history, keeping only the current files. Old commits would otherwise
+ * keep a deleted user's anonymous resume vector forever; the privacy policy promises it is gone
+ * within a day. Run once a day, from the 01:50 UTC export.
+ */
+async function squashHistory(): Promise<void> {
+  const r = await fetch(`${HF}/api/datasets/${DATASET}/super-squash/main`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${need('HF_TOKEN')}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: 'Daily history squash: deleted users leave no copies' }),
+  });
+  if (!r.ok) {throw new Error(`squash: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);}
+}
+
 async function download(path: string): Promise<Buffer | null> {
   const r = await fetch(`${HF}/datasets/${DATASET}/resolve/main/${path}`, { headers: { Authorization: `Bearer ${need('HF_TOKEN')}` } });
   if (r.status === 404) {return null;}
@@ -87,7 +101,9 @@ async function exportInbox(): Promise<string> {
     { path: 'inbox/candidates.json', content: JSON.stringify(inbox) },
     { path: 'inbox/recrutas-links.json', content: catalog },
   ], `Inbox: ${inbox.candidates.length} users, ${inbox.held.length} shown Fleet jobs, ${links.length} direct links`);
-  return `exported ${inbox.candidates.length} users, ${inbox.held.length} shown Fleet jobs, ${links.length} direct links (${Math.round(catalog.length / 1024)} KB)`;
+  const squashed = new Date().getUTCHours() === 1;
+  if (squashed) {await squashHistory();}
+  return `${squashed ? 'history squashed, ' : ''}exported ${inbox.candidates.length} users, ${inbox.held.length} shown Fleet jobs, ${links.length} direct links (${Math.round(catalog.length / 1024)} KB)`;
 }
 
 interface FleetJob {
