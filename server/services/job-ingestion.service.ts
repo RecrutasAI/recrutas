@@ -146,16 +146,20 @@ function toSalaryInt(value: unknown): number | null {
   return Math.round(n);
 }
 
-/** Build one job_postings row. Shared by the bulk path and the salvage path. */
 /**
  * The employer's posting date, or null when we can't trust it. Many scrapers fall back to "now"
  * when a source has no date, which made jobs posted days earlier show as "posted today". A date
  * within 15 minutes of ingestion is treated as such a fallback, as are future and implausibly
- * old dates.
+ * old dates. A day with no time (Oracle, Workday, Paycom send "2026-10-08", stored as midnight
+ * UTC) is kept at noon UTC, which is that same day in every US time zone; at midnight it would
+ * show as the day before.
  */
 export function realPostedAt(value: unknown, now: Date = new Date()): Date | null {
   if (value == null || value === '') {return null;}
-  const d = value instanceof Date ? value : new Date(String(value));
+  let d = value instanceof Date ? value : new Date(String(value));
+  if (Number.isFinite(d.getTime()) && d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0) {
+    d = new Date(d.getTime() + 12 * 60 * 60 * 1000);
+  }
   const t = d.getTime();
   if (!Number.isFinite(t)) {return null;}
   if (t > now.getTime() + 60 * 60 * 1000) {return null;}          // in the future
@@ -164,6 +168,7 @@ export function realPostedAt(value: unknown, now: Date = new Date()): Date | nul
   return d;
 }
 
+/** Build one job_postings row. Shared by the bulk path and the salvage path. */
 function buildJobRow(job: any, systemUserId: string, now: Date, expiresAt: Date | null) {
   return {
     talentOwnerId: systemUserId,
