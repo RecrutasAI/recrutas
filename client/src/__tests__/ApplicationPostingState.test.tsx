@@ -100,3 +100,30 @@ describe('applications overview', () => {
     expect(screen.queryByTestId('weekly-summary')).toBeNull();
   });
 });
+
+describe('did you hear back', () => {
+  const daysAgo = (n: number) => new Date(Date.now() - n * 864e5).toISOString();
+
+  it('asks a week after applying and records the answer', async () => {
+    let sent: unknown = null;
+    server.use(http.put('*/api/candidate/application/:id/status', async ({ request }) => {
+      sent = await request.json();
+      return HttpResponse.json({});
+    }));
+    renderWith([app(6, {}, { appliedAt: daysAgo(9), lastStatusUpdate: daysAgo(9) })]);
+    const ask = await screen.findByTestId('hear-back');
+    expect(ask).toHaveTextContent('Applied 9 days ago. Did you hear back?');
+    fireEvent.click(screen.getByRole('button', { name: 'Not yet' }));
+    await vi.waitFor(() => expect(sent).toEqual({ status: 'submitted', source: 'hear_back_prompt' }));
+  });
+
+  it('waits a week, and asks only while there is no news', async () => {
+    renderWith([
+      app(7, {}, { appliedAt: daysAgo(3), lastStatusUpdate: daysAgo(3) }),
+      app(8, {}, { status: 'interview_scheduled', appliedAt: daysAgo(20), lastStatusUpdate: daysAgo(20) }),
+      app(9, {}, { appliedAt: daysAgo(20), lastStatusUpdate: daysAgo(2) }),                 // answered "not yet" 2 days ago
+    ]);
+    await screen.findByText('Role 7');
+    expect(screen.queryByTestId('hear-back')).toBeNull();
+  });
+});

@@ -109,14 +109,16 @@ export default function ApplicationTracker() {
   });
 
   const updateStatusMutation = useMutation({
-    mutationFn: async ({ applicationId, status }: { applicationId: number; status: string }) => {
+    mutationFn: async ({ applicationId, status, source }: { applicationId: number; status: string; source?: string }) => {
       // Use candidate-specific endpoint for self-service status update
-      const res = await apiRequest('PUT', `/api/candidate/application/${applicationId}/status`, { status });
+      const res = await apiRequest('PUT', `/api/candidate/application/${applicationId}/status`, { status, source });
       if (!res.ok) {throw new Error('Failed to update status');}
       return res.json();
     },
-    onSuccess: () => {
-      toast({ title: "Status Updated", description: "Your application status has been updated." });
+    onSuccess: (_data, variables) => {
+      toast(variables.source === 'hear_back_prompt' && variables.status === 'submitted'
+        ? { title: "Thanks", description: "We'll check in again in a week." }
+        : { title: "Status Updated", description: "Your application status has been updated." });
       queryClient.invalidateQueries({ queryKey: ["/api/candidate/applications"] });
     },
     onError: () => {
@@ -243,6 +245,11 @@ export default function ApplicationTracker() {
                 <CardContent className="p-4 pt-0">
                   <div className="space-y-2">
                     <PostingStateNote application={application} />
+                    <HearBackPrompt
+                      application={application}
+                      pending={updateStatusMutation.isPending}
+                      onAnswer={(status) => updateStatusMutation.mutate({ applicationId: application.id, status, source: 'hear_back_prompt' })}
+                    />
 
                     {/* Timeline Info */}
                     <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-gray-600">
@@ -438,4 +445,44 @@ function PostingStateNote({ application }: { application: ApplicationStatus }) {
     );
   }
   return null;
+}
+
+const HEAR_BACK_AFTER_DAYS = 7;
+
+/** Days since the candidate last told us anything about this application (or applied). */
+export function daysWithoutNews(application: Pick<ApplicationStatus, 'appliedAt' | 'lastStatusUpdate'>, now = Date.now()): number | null {
+  const last = Math.max(...[application.lastStatusUpdate, application.appliedAt]
+    .map(d => (d ? new Date(d).getTime() : NaN)).filter(Number.isFinite));
+  return Number.isFinite(last) ? Math.floor((now - last) / 86_400_000) : null;
+}
+
+/**
+ * A week after applying (or after the last answer), ask whether the employer replied. One tap
+ * records the outcome; "Not yet" asks again a week later. Only for jobs applied to on the
+ * employer's own site, where we can't see the reply ourselves.
+ */
+function HearBackPrompt({ application, pending, onAnswer }: {
+  application: ApplicationStatus; pending: boolean; onAnswer: (status: string) => void;
+}) {
+  const days = daysWithoutNews(application);
+  const waiting = ['submitted', 'applied'].includes(application.status);
+  if (!application.job?.externalUrl || !waiting || days == null || days < HEAR_BACK_AFTER_DAYS) {return null;}
+  const checkedIn = !!application.lastStatusUpdate && !!application.appliedAt
+    && new Date(application.lastStatusUpdate).getTime() - new Date(application.appliedAt).getTime() > 86_400_000;
+  const choices: Array<[string, string]> = [['submitted', 'Not yet'], ['interview_scheduled', 'Interview'], ['rejected', 'Not selected'], ['offer', 'Offer']];
+  return (
+    <div data-testid="hear-back" className="flex flex-wrap items-center gap-2 rounded-md border border-dashed px-3 py-2 text-sm">
+      <span className="text-muted-foreground">
+        {checkedIn ? `${days} days since you last checked in.` : `Applied ${days} days ago.`} Did you hear back?
+      </span>
+      <div className="flex flex-wrap gap-1.5">
+        {choices.map(([status, label]) => (
+          <Button key={status} type="button" variant="outline" size="sm" className="h-7 px-2.5" disabled={pending}
+            onClick={() => onAnswer(status)}>
+            {label}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
 }

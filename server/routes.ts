@@ -2255,6 +2255,14 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       
       // Update the status
       const updatedApplication = await storage.updateApplicationStatusByCandidate(applicationId, status);
+      // Outcomes are the measure of whether applying through Recrutas works.
+      const appliedAt = application.appliedAt ? new Date(application.appliedAt).getTime() : NaN;
+      serverTrack(req.user.id, 'application_outcome', {
+        status,
+        previous_status: application.status,
+        days_since_applied: Number.isFinite(appliedAt) ? Math.floor((Date.now() - appliedAt) / 86_400_000) : null,
+        source: req.body.source === 'hear_back_prompt' ? 'hear_back_prompt' : 'status_menu',
+      });
       res.json(updatedApplication);
     } catch (error) {
       console.error("Error updating application status:", error);
