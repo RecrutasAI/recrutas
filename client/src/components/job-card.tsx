@@ -75,9 +75,7 @@ export default function JobCard({ job, onEdit, onViewMatches }: JobCardProps) {
               )}
             </p>
             <div className="flex items-center space-x-4 mt-2 text-sm text-neutral-600">
-              {(job as any).postedAt
-                ? <span>Posted {new Date((job as any).postedAt).toLocaleDateString()}</span>
-                : <span>First seen {new Date(job.createdAt).toLocaleDateString()}</span>}
+              {(job as any).postedAt && <span>Posted {new Date((job as any).postedAt).toLocaleDateString()}</span>}
               <span className="flex items-center space-x-1">
                 <div className={`w-2 h-2 rounded-full ${getStatusDot(job.status)}`}></div>
                 <span className="capitalize">{job.status}</span>

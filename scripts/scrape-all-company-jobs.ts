@@ -112,7 +112,8 @@ async function main(): Promise<PipelineSummary> {
             // rewrites every URL, which used to re-insert every job.
             externalId: atsJobKey(`ATS:${r.value.atsType}`, r.value.company, j.url),
             externalUrl: j.url,
-            postedDate: new Date().toISOString(),
+            // The ATS's own posting date; none when it doesn't give one (never "now").
+            postedDate: j.postedAt ?? null,
           });
         }
       }
@@ -239,7 +240,7 @@ async function fetchJsonLdJobs(url: string, companyName: string): Promise<any[]>
         source: 'career_page',
         externalId: externalUrl,
         externalUrl,
-        postedDate: p.datePosted || new Date().toISOString(),
+        postedDate: p.datePosted || null,
       };
     });
   } catch {

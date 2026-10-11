@@ -475,7 +475,6 @@ export async function registerRoutes(app: Express): Promise<Express> {
         careerPageUrl: job.careerPageUrl,
         // The employer's posting date when known; never our first-seen date dressed up as one.
         postedDate: job.postedAt ?? null,
-        firstSeenAt: job.createdAt ?? null,
         trustScore: job.trustScore ?? 0,
         livenessStatus: job.livenessStatus ?? 'unknown',
         ghostJobStatus: job.ghostJobStatus ?? 'clean',

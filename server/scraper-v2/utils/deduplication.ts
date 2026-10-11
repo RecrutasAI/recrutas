@@ -95,7 +95,9 @@ export class DeduplicationEngine {
       
       if (similarity >= this.config.fuzzyThreshold) {
         // Additional checks to avoid false positives
-        const timeDiff = Math.abs(job.postedDate.getTime() - existing.postedDate.getTime());
+        // Unknown posting dates can't rule a match out.
+        const timeDiff = job.postedDate && existing.postedDate
+          ? Math.abs(job.postedDate.getTime() - existing.postedDate.getTime()) : 0;
         const timeWindow = this.config.timeWindowHours * 60 * 60 * 1000;
         
         if (timeDiff < timeWindow) {

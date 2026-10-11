@@ -359,7 +359,7 @@ class CareerPageScraper {
         workType: this.determineWorkType(job.location?.name || ''),
         externalUrl: job.absolute_url || company.careerUrl,
         source: 'external',
-        postedDate: job.updated_at || new Date().toISOString()
+        postedDate: job.first_published || null  // never updated_at: any edit moves it
       }));
 
       console.log(`[CareerScraper] Fetched ${jobs.length} jobs from ${company.name} (Greenhouse)`);
