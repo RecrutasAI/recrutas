@@ -55,8 +55,7 @@ async function upload(files: Array<{ path: string; content: string | Buffer }>, 
 
 /**
  * Drop the dataset's version history, keeping only the current files. Old commits would otherwise
- * keep a deleted user's anonymous resume vector forever; the privacy policy promises it is gone
- * within a day. Run once a day, from the 01:50 UTC export.
+ * keep a deleted user's anonymous resume vector forever. Run once a day, from the 01:50 UTC export.
  */
 async function squashHistory(): Promise<void> {
   const r = await fetch(`${HF}/api/datasets/${DATASET}/super-squash/main`, {

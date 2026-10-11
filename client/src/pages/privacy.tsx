@@ -67,14 +67,7 @@ export default function PrivacyPolicy() {
               to us under their terms for business customers.
             </p>
             <p>
-              <strong>Job matching.</strong> To match you against jobs from our full catalog, we turn
-              your resume into a list of numbers that describes its content (an embedding) on our own
-              servers. That list, under a random ID instead of your name or email, is stored in a
-              private Hugging Face dataset, and the matching runs on GitHub's servers. Only our
-              database links the random ID to you. The matches come back to our servers, where your
-              feed is built. If you delete your account, your embedding is left out of the next
-              upload, within 4 hours, and earlier copies are erased from the dataset's history
-              within a day.
+              We use service providers, including GitHub and Hugging Face, to compute job matches.
             </p>
           </section>
 
@@ -82,7 +75,7 @@ export default function PrivacyPolicy() {
             <h2>4. Who we share it with</h2>
             <ul>
               <li><strong>Employers you apply to.</strong> When you apply on an employer's own site, what you submit goes to that employer under their privacy policy; the extension only fills the form, and you choose whether to submit. When you apply to a job posted on Recrutas, the employer sees your application and profile.</li>
-              <li><strong>Service providers</strong> who run parts of Recrutas for us: Vercel (website hosting), Hetzner (our database and servers, in the United States), Supabase (sign-in and resume file storage), Cloudflare (CAPTCHA and encrypted backups), Resend (email), PostHog (product analytics), Hugging Face and GitHub (job matching, as described above), and the AI providers above.</li>
+              <li><strong>Service providers</strong> who run parts of Recrutas for us: Vercel (website hosting), Hetzner (our database and servers, in the United States), Supabase (sign-in and resume file storage), Cloudflare (CAPTCHA and encrypted backups), Resend (email), PostHog (product analytics), GitHub and Hugging Face (job matching), and the AI providers above.</li>
               <li><strong>AI tools you connect.</strong> If you create a token for the MCP connector, the AI tool you connect (for example Claude Code or Cursor) can read your matches, job details and application history. You can revoke a token at any time in Settings.</li>
               <li><strong>When the law requires it,</strong> or to protect the rights and safety of our users or Recrutas.</li>
             </ul>
