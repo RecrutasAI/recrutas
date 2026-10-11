@@ -251,6 +251,20 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
 
   const startedAt = new Date();
+  const WARM_BUDGET_MS = 40_000;
+  const warmFeeds = async (userIds: string[], budgetMs: number): Promise<number> => {
+    if (!userIds.length) {return 0;}
+    const { storage } = await import('../storage.js');
+    const deadline = Date.now() + budgetMs;
+    let warmed = 0;
+    for (const id of userIds) {
+      if (Date.now() > deadline) {break;}
+      try { await storage.getJobRecommendations(id); warmed++; } catch (e: any) {
+        console.warn(`[BatchEmbed] Feed warm failed for ${id}: ${e?.message}`);
+      }
+    }
+    return warmed;
+  };
   (async () => {
     const { recordPipelineRun } = await import('./pipeline-run.service.js');
     try {
@@ -263,7 +277,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       // window. Same total work, ordered by who is waiting on it.
       const { backfillCandidateEmbeddings } = await import('./candidate-embedding.service.js');
       const candidateResult = await backfillCandidateEmbeddings(100);
-      console.log('[BatchEmbed] Candidates done:', candidateResult);
+      console.log('[BatchEmbed] Candidates done:', { ...candidateResult, userIds: candidateResult.userIds.length });
+
+      // Build each newly embedded person's feed now, so their dashboard opens from
+      // cache instead of scoring for 2-4 s on first load. The new vector has just
+      // invalidated whatever was cached. Bounded so the every-minute run stays short;
+      // anyone left over gets their feed scored on load, as before.
+      const warmed = await warmFeeds(candidateResult.userIds, WARM_BUDGET_MS);
+      if (candidateResult.userIds.length) {console.log(`[BatchEmbed] Feeds warmed: ${warmed}/${candidateResult.userIds.length}`);}
 
       // Job embeddings
       const jobResult = candidatesOnly
@@ -274,7 +295,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       const processed = jobResult.processed + candidateResult.processed;
       const failed = jobResult.errors + candidateResult.errors;
       const throttled = jobResult.rateLimited + candidateResult.rateLimited;
-      const stats = { jobResult, candidateResult };
+      const { userIds: _ids, ...candidateCounts } = candidateResult;  // no user ids in the run log
+      const stats = { jobResult, candidateResult: candidateCounts, feedsWarmed: warmed };
 
       // Loud failure: a candidate-side wipeout from HARD errors (tried some, wrote
       // none, and the failures weren't mere quota throttling) means the provider is
