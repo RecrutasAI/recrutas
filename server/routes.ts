@@ -811,12 +811,20 @@ export async function registerRoutes(app: Express): Promise<Express> {
       ]);
       const result = rows as { rows?: LiveStatsRow[] } | LiveStatsRow[];
       const row: Partial<LiveStatsRow> = (Array.isArray(result) ? result : result.rows ?? [])[0] ?? {};
+      // Every open US job posted directly by its employer that we match against: Recrutas's own
+      // plus the Fleet's, each counted once (computed by the matcher every 4 hours).
+      let catalog: { jobs: number; companies: number; computed_at: string } | undefined;
+      try {
+        const c: any = await db.execute(sql`SELECT jobs, companies, computed_at FROM catalog_stats WHERE id = 1`);
+        catalog = (c?.rows ?? c)[0];
+      } catch { /* not computed yet */ }
       res.set('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=3600, stale-if-error=86400');
       res.json({
         activeJobs: row.active_jobs ?? 0,
         companies: row.companies ?? 0,
         recentlyChecked: row.recently_checked ?? 0,
         checkWindowHours: LIVE_BADGE_MAX_AGE_HOURS,
+        ...(catalog ? { catalogJobs: Number(catalog.jobs), catalogCompanies: Number(catalog.companies), catalogComputedAt: catalog.computed_at } : {}),
       });
     } catch (error) {
       console.error('Error fetching live stats:', error);

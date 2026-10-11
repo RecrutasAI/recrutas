@@ -18,6 +18,12 @@ import { db } from '../server/db';
 import { jobIngestionService, type ExternalJobInput } from '../server/services/job-ingestion.service';
 import { extractSkillsFromText } from '../server/utils/skill-extractor';
 import { recordPipelineRun } from '../server/services/pipeline-run.service';
+import { getDirectUsJobLinks } from '../server/storage';
+import { AGGREGATOR_SOURCES, THIRD_PARTY_COMPANIES } from '../server/lib/third-party';
+import { linkKey } from '../server/lib/canonical-url';
+
+/** Employers we can't name: Oracle sites known only by a code. Shared with the matcher's catalog count. */
+export const UNNAMED_EMPLOYER = /saasfaprod|oraclecloud\.com|\(CX_\d+\)/i;
 
 const DATASET = process.env.MATCHER_DATASET || 'recrutas/matcher';
 const HF = 'https://huggingface.co';
@@ -33,18 +39,18 @@ export function pseudonym(userId: string, key: string): string {
   return createHmac('sha256', key).update(userId).digest('hex').slice(0, 32);
 }
 
-/** Commit one small file to the dataset (the inbox is a few KB per hundred users). */
-async function upload(path: string, content: string, summary: string): Promise<void> {
+/** Commit small files to the dataset in one commit (inline, a few MB at most). */
+async function upload(files: Array<{ path: string; content: string | Buffer }>, summary: string): Promise<void> {
   const body = [
     JSON.stringify({ key: 'header', value: { summary } }),
-    JSON.stringify({ key: 'file', value: { path, content: Buffer.from(content).toString('base64'), encoding: 'base64' } }),
+    ...files.map(f => JSON.stringify({ key: 'file', value: { path: f.path, content: Buffer.from(f.content).toString('base64'), encoding: 'base64' } })),
   ].join('\n');
   const r = await fetch(`${HF}/api/datasets/${DATASET}/commit/main`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${need('HF_TOKEN')}`, 'Content-Type': 'application/x-ndjson' },
     body,
   });
-  if (!r.ok) {throw new Error(`upload ${path}: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);}
+  if (!r.ok) {throw new Error(`upload: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);}
 }
 
 async function download(path: string): Promise<Buffer | null> {
@@ -64,8 +70,24 @@ async function exportInbox(): Promise<string> {
     candidates: cands.map(c => ({ pid: pseudonym(c.id, key), v: JSON.parse(c.v) as number[] })),
     held: held.map(h => h.id as string),
   };
-  await upload('inbox/candidates.json', JSON.stringify(inbox), `Inbox: ${inbox.candidates.length} users, ${inbox.held.length} shown Fleet jobs`);
-  return `exported ${inbox.candidates.length} users, ${inbox.held.length} shown Fleet jobs`;
+  // For the deduplicated catalog count the homepage shows: fingerprints of our own direct links
+  // (Fleet link normalisation, server/lib/canonical-url.ts), our company names, and the rules the
+  // matcher applies to Fleet jobs so both sides count the same way. Plain JSON text: the dataset's
+  // simple upload rejects binary files.
+  const links = await getDirectUsJobLinks();
+  const catalog = JSON.stringify({
+    exported_at: inbox.exported_at,
+    link_keys: [...new Set(links.map(l => linkKey(l.url)))],
+    companies: [...new Set(links.map(l => l.company.trim().toLowerCase()).filter(Boolean))],
+    third_party_companies: [...THIRD_PARTY_COMPANIES],
+    third_party_sources: [...AGGREGATOR_SOURCES],
+    unnamed_employer: UNNAMED_EMPLOYER.source,
+  });
+  await upload([
+    { path: 'inbox/candidates.json', content: JSON.stringify(inbox) },
+    { path: 'inbox/recrutas-links.json', content: catalog },
+  ], `Inbox: ${inbox.candidates.length} users, ${inbox.held.length} shown Fleet jobs, ${links.length} direct links`);
+  return `exported ${inbox.candidates.length} users, ${inbox.held.length} shown Fleet jobs, ${links.length} direct links (${Math.round(catalog.length / 1024)} KB)`;
 }
 
 interface FleetJob {
@@ -79,7 +101,7 @@ export function employerName(raw: string | null): string | null {
   const name = (raw || '').replace(/^\s*(careers|jobs|openings|work|join us) at\s+/i, '').trim();
   // Oracle sites the Fleet couldn't name: "Fa Ertb Saasfaprod1", "eubt.fa.us6.oraclecloud.com", "Ebwh (CX_1001)".
   // A job is only shown when we can tell people who the employer is.
-  if (!name || /saasfaprod|oraclecloud\.com|\(CX_\d+\)/i.test(name)) {return null;}
+  if (!name || UNNAMED_EMPLOYER.test(name)) {return null;}
   return name;
 }
 
@@ -108,7 +130,18 @@ export function toIngestion(j: FleetJob): ExternalJobInput | null {
 async function ingestOutbox(): Promise<string> {
   const raw = await download('outbox/latest.json.gz');
   if (!raw) {return 'no outbox yet';}
-  const out = JSON.parse(gunzipSync(raw).toString('utf8')) as { generated_at: string; jobs: FleetJob[]; closed: string[] };
+  const out = JSON.parse(gunzipSync(raw).toString('utf8')) as {
+    generated_at: string; jobs: FleetJob[]; closed: string[];
+    stats?: { catalog?: { jobs: number; companies: number } };
+  };
+  // The deduplicated catalog count the homepage shows (computed by the matcher).
+  const cat = out.stats?.catalog;
+  if (cat && cat.jobs > 0) {
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS catalog_stats (id int PRIMARY KEY, jobs int NOT NULL, companies int NOT NULL, computed_at timestamptz NOT NULL)`);
+    await db.execute(sql`
+      INSERT INTO catalog_stats (id, jobs, companies, computed_at) VALUES (1, ${cat.jobs}, ${cat.companies}, ${out.generated_at})
+      ON CONFLICT (id) DO UPDATE SET jobs = EXCLUDED.jobs, companies = EXCLUDED.companies, computed_at = EXCLUDED.computed_at`);
+  }
   const all = out.jobs.map(toIngestion);
   const unnamed = all.filter(x => x === null).length;
   const mapped = all.filter((x): x is ExternalJobInput => x !== null);
