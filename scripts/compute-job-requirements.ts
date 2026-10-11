@@ -5,6 +5,8 @@
  *
  *   npx tsx scripts/compute-job-requirements.ts            # fill missing (cron)
  *   npx tsx scripts/compute-job-requirements.ts --dry-run  # count only
+ *   npx tsx scripts/compute-job-requirements.ts --recompute  # re-read every live job after a rule
+ *                                                            # change; writes only rows that differ
  */
 import 'dotenv/config';
 import { sql } from 'drizzle-orm/sql';
@@ -15,6 +17,7 @@ import { extractHardRequirements } from '../server/lib/hard-requirements.js';
 const BATCH = 1000;
 const MAX_MS = 25 * 60 * 1000;
 const dryRun = process.argv.includes('--dry-run');
+const recompute = process.argv.includes('--recompute');
 const rows = (r: any): any[] => (r?.rows ?? r) as any[];
 
 async function main(): Promise<PipelineSummary> {
@@ -25,13 +28,13 @@ async function main(): Promise<PipelineSummary> {
   if (dryRun) {return { status: 'ok', itemsProcessed: 0, message: `dry run: ${missing} missing` };}
 
   const started = Date.now();
-  let done = 0, lastId = 0;
+  let done = 0, lastId = 0, changed = 0;
+  const pending = recompute ? sql`TRUE` : sql`NOT EXISTS (SELECT 1 FROM job_hard_requirements r WHERE r.job_id = j.id)`;
   const tally = { clearance: 0, usCitizen: 0, usPerson: 0, noSponsorship: 0, years: 0 };
   while (Date.now() - started < MAX_MS) {
     const batch = rows(await db.execute(sql`
       SELECT j.id, j.description FROM job_postings j
-      WHERE j.status = 'active' AND j.id > ${lastId}
-        AND NOT EXISTS (SELECT 1 FROM job_hard_requirements r WHERE r.job_id = j.id)
+      WHERE j.status = 'active' AND j.id > ${lastId} AND ${pending}
       ORDER BY j.id LIMIT ${BATCH}`));
     if (!batch.length) {break;}
     lastId = batch[batch.length - 1].id;
@@ -44,15 +47,25 @@ async function main(): Promise<PipelineSummary> {
       if (r.minYears != null) {tally.years++;}
       return sql`(${b.id}, ${r.clearance}, ${r.clearanceObtainable}, ${r.usCitizen}, ${r.usPerson}, ${r.noSponsorship}, ${r.minYears})`;
     });
-    await db.execute(sql`
+    // Recompute updates only rows whose reading changed: an UPDATE that sets the same values
+    // still writes a new row version (and WAL) in Postgres.
+    const res: any = await db.execute(sql`
       INSERT INTO job_hard_requirements (job_id, clearance, obtainable, us_citizen, us_person, no_sponsorship, min_years)
       VALUES ${sql.join(values, sql`, `)}
-      ON CONFLICT (job_id) DO NOTHING`);
+      ON CONFLICT (job_id) ${recompute ? sql`DO UPDATE SET clearance = EXCLUDED.clearance, obtainable = EXCLUDED.obtainable,
+        us_citizen = EXCLUDED.us_citizen, us_person = EXCLUDED.us_person, no_sponsorship = EXCLUDED.no_sponsorship,
+        min_years = EXCLUDED.min_years, computed_at = now()
+        WHERE (job_hard_requirements.clearance, job_hard_requirements.obtainable, job_hard_requirements.us_citizen,
+               job_hard_requirements.us_person, job_hard_requirements.no_sponsorship, job_hard_requirements.min_years)
+          IS DISTINCT FROM (EXCLUDED.clearance, EXCLUDED.obtainable, EXCLUDED.us_citizen, EXCLUDED.us_person,
+               EXCLUDED.no_sponsorship, EXCLUDED.min_years)` : sql`DO NOTHING`}`);
+    changed += Number(res?.count ?? res?.rowCount ?? 0);
     done += batch.length;
     if (done % 10000 < BATCH) {console.log(`[JobRequirements] ${done} done`);}
   }
-  console.log(`[JobRequirements] filled ${done} in ${Math.round((Date.now() - started) / 1000)}s: ${JSON.stringify(tally)}`);
-  return { status: 'ok', itemsProcessed: done, message: `${done} filled`, stats: { ...tally, remaining: Math.max(0, missing - done) } };
+  console.log(`[JobRequirements] ${recompute ? 'read' : 'filled'} ${done} (${changed} written) in ${Math.round((Date.now() - started) / 1000)}s: ${JSON.stringify(tally)}`);
+  return { status: 'ok', itemsProcessed: done, message: recompute ? `${done} re-read, ${changed} changed` : `${done} filled`,
+    stats: { ...tally, changed, remaining: recompute ? 0 : Math.max(0, missing - done) } };
 }
 
 const finish = (code: number) => { client?.end(); process.exit(code); };

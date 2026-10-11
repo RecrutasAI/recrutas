@@ -36,15 +36,24 @@ const PREFERRED_RE = /\b(prefer(red|ably)?|nice[- ]to[- ]have|a plus|bonus|desir
 const CLEARANCE_RES: [ClearanceLevel, RegExp][] = [
   ['ts_sci', /\bTS\s*\/\s*SCI\b|\btop secret\s*\/\s*SCI\b|\btop secret SCI\b|\bSCI (eligib|access)|\beligib\w* for SCI\b|\bSCI clearance\b/i],
   ['top_secret', /\btop[- ]secret\b|\bTS clearance\b/i],
-  ['secret', /\bsecret (security )?clearance\b|\bactive secret\b|\bDoD secret\b/i],
+  ['secret', /(?<!top[- ])\bsecret (security )?clearance\b|\bactive secret\b|\bDoD secret\b/i],
   ['public_trust', /\bpublic trust\b.{0,40}\b(clearance|position|investigation|background|determination|suitability)|\b(clearance|position|investigation)\b.{0,30}\bpublic trust\b/i],
 ];
+/** Two clearance levels joined by "or" ("Active Secret or Top Secret"), not "Active or Current Top Secret". */
+const CLEARANCE_OR_RE = /\b(secret|TS|public trust)\b[^.]{0,30}\bor\b[^.]{0,30}\b(top[- ]secret|TS|secret|SCI)\b/i;
+/** "Top Secret/SCI" also matches the plain Top Secret pattern; it's one requirement, not two. */
+const named_ts_sci = (s: string): boolean => CLEARANCE_RES[0][1].test(s);
 const LEVEL_RANK: Record<ClearanceLevel, number> = { public_trust: 1, secret: 2, top_secret: 3, ts_sci: 4 };
-const OBTAIN_RE = /\b(ability|able|eligib\w*) to (obtain|get|acquire|be granted)\b|\b(obtain|acquire)\b.{0,30}\bclearance\b|\bclearance eligib|\beligible for (a )?(security )?clearance/i;
+const OBTAIN_RE = /\b(ability|able|eligib\w*|desire) to (obtain|get|acquire|be granted)\b|\b(obtain|acquire)\b.{0,45}\bclearance\b|\bclearance eligib|\beligible for (a )?(security )?clearance/i;
 
 const US_CITIZEN_RE = /\b(u\.?s\.?|united states)\s+citizen(ship)?\b.{0,60}\b(required|is required|must|mandatory|necessary)\b|\bmust (be|hold) (a )?(u\.?s\.?|united states) citizen|\b(requires?|required:?) (u\.?s\.?|united states) citizenship|\bonly (u\.?s\.?|united states) citizens\b/i;
-const US_PERSON_RE = /\bU\.?S\.? persons?\b|\bITAR\b|\bexport[- ]control(led)?\b.{0,80}\b(citizen|permanent resident|green card|u\.?s\.? person)/i;
-const NO_SPONSOR_RE = /\b(not|unable to|cannot|can't|won't|will not|do not|does not|don't|doesn't|no longer)\s+(be able to\s+)?(offer|provide|consider|support)?\s*(visa\s+|immigration\s+|employment\s+)?sponsor(ship)?\b|\bsponsorship (is )?not (available|offered|provided|possible)\b|\bno (visa |immigration )?sponsorship\b|\bwithout (the )?(need|requirement) (for|of) (visa |immigration )?sponsorship/i;
+const US_PERSON_RE = /\bU\.?S\.? persons?\b|\bexport[- ]control(led)?\b.{0,80}\b(citizen|permanent resident|green card|u\.?s\.? person)|\b(green card|permanent residen\w*)\b.{0,40}\b(u\.?s\.?|united states) citizen|\b(u\.?s\.?|united states) citizen\w*.{0,40}\b(green card|permanent resident)/i;
+// ITAR named in a sentence that restricts who can do the job, not "knowledge of ITAR".
+const ITAR_RE = /\bITAR\b/;
+const ITAR_RULE_RE = /\b(requir\w*|subject to|must|access|restrict\w*|eligib\w*|citizen\w*|permanent resident|green card)\b/i;
+// The posting's own scope ("for roles outside of engineering") makes the statement conditional.
+const CONDITIONAL_RE = /\b(outside( of)?|except( for)?|other than|for (certain|some|select) (roles|positions))\b/i;
+const NO_SPONSOR_RE = /\b(not|unable to|cannot|can't|won't|will not|do not|does not|don't|doesn't|no longer)\s+(be able to\s+)?(offer|provide|consider|support)?\s*((visa|immigration|employment([- ]based)?|work)\s+)*sponsor(ship)?\b|\bsponsorship (is )?not (available|offered|provided|possible)\b|\bno ((visa|immigration|employment([- ]based)?)\s+)*sponsorship\b|\bnot eligible for ((visa|immigration|employment)\s+)*sponsorship\b|\bwithout (the )?(need|requirement) (for|of) (current or future )?((visa|immigration)\s+)*sponsorship|\bwithout (requiring |needing |any )?((visa|immigration|employment)\s+)*sponsorship\b|\b(not|never)\s+(now or in the future\s+)?require\s+((visa|immigration|employment)\s+)*sponsorship|\bcannot require ((visa|immigration)\s+)*sponsorship/i;
 const YEARS_RE = /\b(\d{1,2})\s*(?:\+|plus)?\s*(?:-|to|–)?\s*(?:\d{1,2}\s*)?\+?\s*years?\b(?:\s+of)?[^.\n]{0,60}?\bexperience\b|\bexperience\b[^.\n]{0,25}?\b(\d{1,2})\s*\+?\s*years?\b|\bminimum (?:of )?(\d{1,2})\s*years?\b/gi;
 
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', rsquo: "'", lsquo: "'", ldquo: '"', rdquo: '"', ndash: '-', mdash: '-' };
@@ -89,9 +98,13 @@ export function extractHardRequirements(description: string | null | undefined):
         if (OBTAIN_RE.test(s)) {
           req.clearanceObtainable = true;
         } else {
-          for (const [level, re] of CLEARANCE_RES) {
-            if (re.test(s) && (!req.clearance || LEVEL_RANK[level] > LEVEL_RANK[req.clearance])) {req.clearance = level;}
-          }
+          // "Active Secret or Top Secret": either one qualifies, so the lower one is the requirement.
+          const named = CLEARANCE_RES.filter(([, re]) => re.test(s)).map(([level]) => level)
+            .filter(level => !(level === 'top_secret' && named_ts_sci(s)));
+          const pick = named.length > 1 && CLEARANCE_OR_RE.test(s)
+            ? named.reduce((a, b) => (LEVEL_RANK[a] < LEVEL_RANK[b] ? a : b))
+            : named.reduce<ClearanceLevel | null>((a, b) => (!a || LEVEL_RANK[b] > LEVEL_RANK[a] ? b : a), null);
+          if (pick && (!req.clearance || LEVEL_RANK[pick] > LEVEL_RANK[req.clearance])) {req.clearance = pick;}
         }
       }
       // "citizen or permanent resident" is the broader US-person rule, not
@@ -100,14 +113,15 @@ export function extractHardRequirements(description: string | null | undefined):
         if (/permanent resident|green card|lawful(ly)? admitted|asylee|refugee/i.test(s)) {req.usPerson = true;}
         else {req.usCitizen = true;}
       }
-      if (US_PERSON_RE.test(s)) {req.usPerson = true;}
+      if (US_PERSON_RE.test(s) || (ITAR_RE.test(s) && ITAR_RULE_RE.test(s))) {req.usPerson = true;}
       for (const m of s.matchAll(YEARS_RE)) {
         const n = Number(m[1] ?? m[2] ?? m[3]);
         if (n >= 1 && n <= 15 && (req.minYears === null || n > req.minYears)) {req.minYears = n;}
       }
     }
     // Sponsorship statements are often phrased as a note, not a requirement.
-    if (NO_SPONSOR_RE.test(s)) {req.noSponsorship = true;}
+    // "authorization to receive technology ... without sponsorship for an export license" is not a visa.
+    if (NO_SPONSOR_RE.test(s) && !CONDITIONAL_RE.test(s) && !/\bexport\b/i.test(s)) {req.noSponsorship = true;}
   }
   // A clearance requirement implies the posting is closed to non-citizens too.
   return req;
