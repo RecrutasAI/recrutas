@@ -1172,7 +1172,7 @@ Rules:
 - FACTS ARE NEVER GUESSED. Work authorization, sponsorship, citizenship, age, security clearance, relocation, start date and salary are answered ONLY from the CANDIDATE'S OWN ANSWERS; years of experience ONLY from EXPERIENCE. When the answer isn't there, return action "skip" with reason "needs candidate". Never infer them from location, name, school or anything else.
 - "How did you hear about us" / referral source: answer "Company website" unless a better source is evident.
 - For screening questions: write a professional, specific answer using the candidate's real experience. Keep under 200 words.
-- VOLUNTARY self-identification / EEO / demographic fields (Gender, Race, Ethnicity, Hispanic/Latino, Veteran Status, Disability Status): these are almost always dropdowns with a decline choice. Return action "click_then_type" with value "Decline to self-identify" EVEN IF no options are listed (the options are often hidden until the dropdown opens). If options ARE listed with a different decline phrasing ("I don't wish to answer", "Prefer not to answer", "I do not wish to disclose"), use that exact option text instead. Do NOT skip EEO fields.
+- VOLUNTARY self-identification / EEO / demographic fields (Gender, Pronouns, Race, Ethnicity, Hispanic/Latino, Veteran Status, Disability Status): these are almost always dropdowns with a decline choice. Return action "click_then_type" with value "Decline to self-identify" EVEN IF no options are listed (the options are often hidden until the dropdown opens). If options ARE listed with a different decline phrasing ("I don't wish to answer", "Prefer not to answer", "I do not wish to disclose"), use that exact option text instead. Do NOT skip EEO fields.
 - CANDIDATE'S OWN ANSWERS: when a question asks about anything listed there (work authorization, sponsorship, citizenship, age 18+, security clearance, relocation, notice period / start date, salary), answer from it exactly, picking the option text that means the same thing.
 - MULTI-SELECT fields (marked "MULTI-SELECT" — the candidate may pick several options, e.g. "In what cities are you available to work?"): return a SINGLE action whose value is a PIPE-delimited list of every applicable option, e.g. value: "New York | Remote". Derive choices from the candidate's location and the job's location(s); include "Remote" when offered and appropriate. Use " | " ONLY to separate distinct options — never inside one option's text (e.g. keep "New York, NY" intact).
 - For select/dropdown with native <select> type: use action "select" with value matching EXACTLY one of the provided options. Always pick the best-matching option rather than leaving it blank.
@@ -1264,7 +1264,9 @@ Analyze the form and return the actions JSON to fill every field you can.`;
 
       // Facts are never guessed: drop any fact without a saved answer (or resume evidence for
       // years of experience), tag every value with its source, and list what needs the candidate.
-      const truth = enforceTruth(actions, fields, stated, { totalYears: parsed.experience?.totalYears });
+      const resumeCompanies = ((parsed.experience?.positions || []) as Array<{ company?: string }>).map(p => p.company || '');
+      const jobCompany = (String(jobContext || '').split('\n')[0].match(/ at (.+)$/) || [])[1] || null;
+      const truth = enforceTruth(actions, fields, stated, { totalYears: parsed.experience?.totalYears, companies: resumeCompanies }, jobCompany);
       actions = truth.actions;
 
       // Include resume URL for upload_resume actions (best-effort: a signed-URL
@@ -1414,7 +1416,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
           continue;
         }
 
-        if (/gender|race|ethnic|hispanic|latino|veteran|disability/i.test(searchText)) {
+        if (/gender|race|ethnic|hispanic|latino|veteran|disability|pronoun/i.test(searchText)) {
           // Voluntary EEO / self-identification: decline. Use a listed decline
           // option if present, else the standard phrasing (the option list is
           // usually hidden until the dropdown is opened).

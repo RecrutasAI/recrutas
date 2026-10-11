@@ -31,6 +31,7 @@ describe('factOf', () => {
     expect(factOf({ id: 'x', label: 'Do you hold an active security clearance?' })).toBe('clearance');
     expect(factOf({ id: 'x', label: 'Are you willing to relocate to Austin?' })).toBe('relocation');
     expect(factOf({ id: 'x', label: 'When can you start?' })).toBe('start_date');
+    expect(factOf({ id: 'x', label: 'Are you able to work a hybrid schedule, with three days per week in our office?' })).toBe('work_arrangement');
   });
   it('leaves ordinary fields alone', () => {
     for (const f of [F.first, F.country, F.consent, F.gender, F.why, F.resume]) {expect(factOf(f)).toBeNull();}
@@ -86,5 +87,75 @@ describe('enforceTruth', () => {
     );
     expect(needsYou.map(n => n.fieldId)).toEqual(['q_visa']);
     expect(actions.map(a => a.fieldId)).toEqual(['q_why']);
+  });
+});
+
+// Questions from a real Ashby form (ibotta, 2026-10-10).
+describe('enforceTruth on an Ashby form', () => {
+  const A = {
+    auth: { id: 'auth', type: 'radio', label: 'Are you authorized to work lawfully in the United States for Ibotta?', options: ['Yes', 'No'] },
+    sponsor: { id: 'sp', type: 'radio', label: 'Will you now or in the future require Ibotta to commence ("sponsor") an immigration case in order to employ you?', options: ['Yes', 'No'] },
+    before: { id: 'prev', type: 'radio', label: 'Have you worked for Ibotta previously?', options: ['Yes', 'No'] },
+    relocate: { id: 'den', type: 'radio', label: 'If this position is located in Denver, CO as Hybrid, are you willing to relocate to Denver if you are not already local?', options: ['Yes', 'No', 'N/A - Local to Denver'] },
+  } satisfies Record<string, FillField>;
+  const fields = Object.values(A);
+  const guesses = [
+    { fieldId: 'auth', action: 'select', value: 'Yes' },
+    { fieldId: 'sp', action: 'select', value: 'No' },
+    { fieldId: 'prev', action: 'select', value: 'No' },
+    { fieldId: 'den', action: 'select', value: 'N/A - Local to Denver' },
+  ];
+
+  it('recognises each question', () => {
+    expect([A.auth, A.sponsor, A.before, A.relocate].map(factOf)).toEqual(['work_auth', 'sponsorship', 'prior_employment', 'relocation']);
+  });
+
+  it('never keeps a guessed relocation, and asks about prior employment when the resume has no employers', () => {
+    const { actions, needsYou } = enforceTruth(guesses, fields, {}, {});
+    expect(actions).toEqual([]);
+    expect(needsYou.map(n => n.fact).sort()).toEqual(['prior_employment', 'relocation', 'sponsorship', 'work_auth']);
+  });
+
+  it('answers prior employment from the resume, with the evidence', () => {
+    const no = enforceTruth(guesses, fields, {}, { companies: ['Stripe', 'Acme Corp'] }, 'Ibotta').actions.find(a => a.fieldId === 'prev');
+    expect(no).toMatchObject({ value: 'No', source: 'resume', evidence: "Ibotta isn't among the employers on your resume" });
+    const yes = enforceTruth(guesses, fields, {}, { companies: ['Ibotta, Inc.'] }).actions.find(a => a.fieldId === 'prev');
+    expect(yes).toMatchObject({ value: 'Yes', source: 'resume', evidence: 'Ibotta, Inc. is on your resume' });
+  });
+
+  it('uses saved answers for authorization, sponsorship and relocation', () => {
+    const { actions, needsYou } = enforceTruth(guesses, fields,
+      { workAuthorizedUS: 'yes', needsSponsorship: 'no', willingToRelocate: 'no' }, { companies: ['Stripe'] });
+    const by = Object.fromEntries(actions.map(a => [a.fieldId, a.value]));
+    expect(by).toEqual({ auth: 'Yes', sp: 'No', prev: 'No', den: 'No' });
+    expect(needsYou).toEqual([]);
+  });
+});
+
+describe('enforceTruth when the AI leaves fact questions out', () => {
+  it('lists optional fact questions too, and still answers prior employment from the resume', () => {
+    const fields: FillField[] = [
+      { id: 'den', type: 'radio', label: 'Are you willing to relocate to Denver?', options: ['Yes', 'No'] },
+      { id: 'prev', type: 'radio', label: 'Have you worked for Ibotta previously?', options: ['Yes', 'No'] },
+      { id: 'why', type: 'textarea', label: 'Why Ibotta?' },
+    ];
+    const { actions, needsYou } = enforceTruth([], fields, {}, { companies: ['Stripe'] });
+    expect(needsYou.map(n => n.fieldId)).toEqual(['den']);
+    expect(actions).toEqual([{ fieldId: 'prev', action: 'select', value: 'No', source: 'resume', evidence: "Ibotta isn't among the employers on your resume" }]);
+  });
+});
+
+describe('enforceTruth for required questions nothing answered', () => {
+  it('lists a required field the AI skipped or left out, but not optional ones or files', () => {
+    const fields: FillField[] = [
+      { id: 'country', type: 'custom_select', label: 'Country*', required: true },
+      { id: 'city', type: 'text', label: 'City', required: true },
+      { id: 'site', type: 'text', label: 'Website' },
+      { id: 'cv', type: 'file', label: 'Resume', required: true },
+    ];
+    const { actions, needsYou } = enforceTruth(
+      [{ fieldId: 'country', action: 'skip' }, { fieldId: 'site', action: 'skip' }], fields, {}, {});
+    expect(needsYou.map(n => [n.fieldId, n.fact])).toEqual([['country', 'other'], ['city', 'other']]);
+    expect(actions.map(a => a.fieldId)).toEqual(['site']);
   });
 });

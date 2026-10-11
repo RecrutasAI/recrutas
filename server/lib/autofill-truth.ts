@@ -12,9 +12,10 @@
 export type FillSource = 'profile' | 'resume' | 'answer' | 'default';
 export type Fact =
   | 'sponsorship' | 'work_auth' | 'citizenship' | 'over18' | 'clearance'
-  | 'relocation' | 'start_date' | 'salary' | 'years_experience';
+  | 'relocation' | 'start_date' | 'salary' | 'years_experience' | 'prior_employment' | 'work_arrangement'
+  | 'other';  // a required question nothing could answer
 
-export interface FillField { id: string; label?: string; name?: string; type?: string; options?: string[] }
+export interface FillField { id: string; label?: string; name?: string; type?: string; options?: string[]; required?: boolean }
 export interface FillAction { fieldId: string; action: string; value?: string; reason?: string; source?: FillSource; evidence?: string }
 export interface NeedsYou { fieldId: string; label: string; fact: Fact }
 
@@ -26,9 +27,11 @@ const FACTS: Array<[Fact, RegExp]> = [
   ['over18', /(at least|over|older than) (18|eighteen)|18 years of age|age of 18/i],
   ['clearance', /security clearance|\bclearance\b|\bts\/sci\b|top secret/i],
   ['relocation', /relocat/i],
+  ['work_arrangement', /\bhybrid\b|\bon-?site\b|\bin[- ]office\b|\bin (the|our) office\b|days (a|per) week|\bcommute\b/i],
   ['start_date', /notice period|earliest (start|available)|when can you start|start date|available to start/i],
   ['salary', /salary|compensation|expected pay|desired pay|pay expectation|hourly rate|rate expectation/i],
   ['years_experience', /\byears? of (\w+ )*experience|\d+\+? (or more )?years|how many years/i],
+  ['prior_employment', /\b(worked|been employed|employed)\b.{0,60}\b(before|previously|in the past)\b|\bpreviously (worked|been employed)\b|\bformer(ly)? (an? )?employee\b/i],
 ];
 
 export function factOf(field: FillField): Fact | null {
@@ -58,15 +61,43 @@ function sourceOf(field: FillField, action: FillAction): FillSource {
   return 'resume';
 }
 
-const isYes = (v = '') => /^\s*(yes|y|true|i am|i do|i will|i have)\b/i.test(v);
-const isNo = (v = '') => /^\s*(no|n|false|i am not|i do not|i don'?t|i will not|i won'?t)\b/i.test(v);
+// A lone y/n counts only as the whole answer: "N/A - Local to Denver" is not a "no".
+const isYes = (v = '') => /^\s*(yes|true|i am|i do|i will|i have)\b|^\s*y\s*$/i.test(v);
+const isNo = (v = '') => /^\s*(no|false|i am not|i do not|i don'?t|i will not|i won'?t)\b|^\s*n\s*$/i.test(v);
 
 /**
  * Keep only actions whose values have a source; tag each one. Facts without a saved answer
  * (or resume evidence for years of experience) are dropped and listed as needs-you.
  */
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/** The employer a "have you worked for X before?" question names, else the job's company. */
+function employerAsked(label: string, jobCompany?: string | null): string | null {
+  const named = label.match(/\b(?:for|at|by)\s+([A-Z][\w&.' -]{1,40}?)(?:\s+(?:before|previously|in the past)\b|\s*[?,(]|$)/);
+  if (named && !/^(us|this|our)\b/i.test(named[1])) {return named[1].trim();}
+  return jobCompany?.trim() || null;
+}
+
+/**
+ * "Have you worked for X before?" from the resume: Yes when X is one of its employers,
+ * No when the resume lists employers and X isn't one, with that evidence shown. Without
+ * an identifiable X or any employers on the resume, it needs the candidate.
+ */
+function priorEmployment(field: FillField, companies: string[], jobCompany?: string | null): { value: string; evidence: string } | null {
+  const employer = employerAsked(field.label || '', jobCompany);
+  const known = companies.map(c => c?.trim()).filter((c): c is string => !!c && norm(c).length >= 3);
+  if (!employer || !known.length) {return null;}
+  const hit = known.find(c => norm(c) === norm(employer) || norm(employer).includes(norm(c)) || norm(c).includes(norm(employer)));
+  const opts = field.options || [];
+  const pick = (yes: boolean) => (yes ? opts.find(o => isYes(o)) : opts.find(o => isNo(o))) || (yes ? 'Yes' : 'No');
+  return hit
+    ? { value: pick(true), evidence: `${hit} is on your resume` }
+    : { value: pick(false), evidence: `${employer} isn't among the employers on your resume` };
+}
+
 export function enforceTruth(
-  actions: FillAction[], fields: FillField[], stated: Stated, resume: { totalYears?: number | string | null },
+  actions: FillAction[], fields: FillField[], stated: Stated,
+  resume: { totalYears?: number | string | null; companies?: string[] }, jobCompany?: string | null,
 ): { actions: FillAction[]; needsYou: NeedsYou[] } {
   const byId = new Map(fields.map(f => [f.id, f]));
   const kept: FillAction[] = [];
@@ -83,7 +114,7 @@ export function enforceTruth(
     if (!field) {continue;}
     const fact = factOf(field);
     if (a.action === 'skip') {
-      if (fact) {needs(field, fact);} else {kept.push(a);}
+      if (fact) {needs(field, fact);} else if (field.required && field.type !== 'file') {needs(field, 'other');} else {kept.push(a);}
       continue;
     }
     if (!fact) { kept.push({ ...a, source: sourceOf(field, a) }); continue; }
@@ -93,6 +124,12 @@ export function enforceTruth(
       if (Number.isFinite(years) && years > 0) {
         kept.push({ ...a, source: 'resume', evidence: `About ${years} year${years === 1 ? '' : 's'} of experience on your resume` });
       } else {needs(field, fact);}
+      continue;
+    }
+
+    if (fact === 'prior_employment') {
+      const answer = priorEmployment(field, resume.companies || [], jobCompany);
+      if (answer) {kept.push({ ...a, value: answer.value, source: 'resume', evidence: answer.evidence });} else {needs(field, fact);}
       continue;
     }
 
@@ -114,12 +151,24 @@ export function enforceTruth(
     kept.push({ ...a, value, source: 'answer' });
   }
 
-  // Required facts the AI left out entirely also need the candidate.
+  // Fact questions the AI left out entirely also need the candidate, required or not:
+  // forms often mark eligibility questions optional, and a blank one still matters.
   const covered = new Set(kept.map(a => a.fieldId));
   for (const f of fields) {
     if (covered.has(f.id) || flagged.has(f.id) || f.type === 'file' || f.type === 'hidden') {continue;}
     const fact = factOf(f);
-    if (fact && (f as any).required) {needs(f, fact);}
+    if (!fact) {
+      if (f.required) {needs(f, 'other');}
+      continue;
+    }
+    if (fact === 'prior_employment') {
+      const answer = priorEmployment(f, resume.companies || [], jobCompany);
+      if (answer) {
+        kept.push({ fieldId: f.id, action: f.type === 'radio' || f.type === 'select' ? 'select' : 'click_then_type', value: answer.value, source: 'resume', evidence: answer.evidence });
+        continue;
+      }
+    }
+    needs(f, fact);
   }
   return { actions: kept, needsYou };
 }
