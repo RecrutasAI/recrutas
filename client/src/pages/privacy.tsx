@@ -2,7 +2,7 @@ import { LegalPage } from "@/components/site/site-shell";
 
 export default function PrivacyPolicy() {
   return (
-    <LegalPage title="Privacy Policy" updated="October 5, 2026">
+    <LegalPage title="Privacy Policy" updated="October 11, 2026">
 
           <section>
             <p>
@@ -64,8 +64,10 @@ export default function PrivacyPolicy() {
               and to suggest form answers. To do that, your resume text, the form's fields and
               screenshot, and relevant parts of your profile are sent to one of these providers:
               Groq, Google (Gemini), OpenRouter, or Hugging Face. They process it to return a result
-              to us under their terms for business customers. Job matching itself runs on our own
-              servers.
+              to us under their terms for business customers.
+            </p>
+            <p>
+              We use service providers, including GitHub and Hugging Face, to compute job matches.
             </p>
           </section>
 
@@ -73,7 +75,7 @@ export default function PrivacyPolicy() {
             <h2>4. Who we share it with</h2>
             <ul>
               <li><strong>Employers you apply to.</strong> When you apply on an employer's own site, what you submit goes to that employer under their privacy policy; the extension only fills the form, and you choose whether to submit. When you apply to a job posted on Recrutas, the employer sees your application and profile.</li>
-              <li><strong>Service providers</strong> who run parts of Recrutas for us: Vercel (website hosting), Hetzner (our database and servers, in the United States), Supabase (sign-in and resume file storage), Cloudflare (CAPTCHA and encrypted backups), Resend (email), PostHog (product analytics), and the AI providers above.</li>
+              <li><strong>Service providers</strong> who run parts of Recrutas for us: Vercel (website hosting), Hetzner (our database and servers, in the United States), Supabase (sign-in and resume file storage), Cloudflare (CAPTCHA and encrypted backups), Resend (email), PostHog (product analytics), GitHub and Hugging Face (job matching), and the AI providers above.</li>
               <li><strong>AI tools you connect.</strong> If you create a token for the MCP connector, the AI tool you connect (for example Claude Code or Cursor) can read your matches, job details and application history. You can revoke a token at any time in Settings.</li>
               <li><strong>When the law requires it,</strong> or to protect the rights and safety of our users or Recrutas.</li>
             </ul>
