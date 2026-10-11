@@ -6,6 +6,7 @@
  */
 
 import { ScrapedJob, CompanyConfig, ATSType, JobLocation, SalaryInfo } from '../types.js';
+import { parseSourceDate, workdayPostedOn } from '../../lib/posted-date';
 import { logger } from '../utils/logger.js';
 
 // Structured job-board APIs (Greenhouse, Lever, Ashby) return every posting with its full
@@ -218,7 +219,7 @@ function parseWorkdayResponse(data: any, company: CompanyConfig, apiUrl: string)
           ats: 'workday',
           scrapeMethod: 'api',
         },
-        postedDate: posting.postedOn ? new Date(posting.postedOn) : new Date(),
+        postedDate: workdayPostedOn(posting.postedOn),
         scrapedAt: new Date(),
         updatedAt: new Date(),
         status: 'active',
@@ -302,7 +303,7 @@ function parseGreenhouseResponse(data: any, company: CompanyConfig): ScrapedJob[
           ats: 'greenhouse',
           scrapeMethod: 'api'
         },
-        postedDate: new Date(job.updated_at || job.created_at || Date.now()),
+        postedDate: parseSourceDate(job.first_published),  // never updated_at: any edit moves it
         scrapedAt: new Date(),
         updatedAt: new Date(),
         status: 'active',
@@ -364,7 +365,7 @@ function parseLeverResponse(data: any, company: CompanyConfig): ScrapedJob[] {
           ats: 'lever',
           scrapeMethod: 'api'
         },
-        postedDate: new Date(job.createdAt || Date.now()),
+        postedDate: parseSourceDate(job.createdAt),
         scrapedAt: new Date(),
         updatedAt: new Date(),
         status: 'active',
@@ -419,7 +420,7 @@ function parseAshbyResponse(data: any, company: CompanyConfig): ScrapedJob[] {
           ats: 'ashby',
           scrapeMethod: 'api'
         },
-        postedDate: new Date(job.createdAt || Date.now()),
+        postedDate: parseSourceDate(job.publishedAt),  // Ashby's posting date; createdAt is the requisition
         scrapedAt: new Date(),
         updatedAt: new Date(),
         status: 'active',
@@ -474,7 +475,7 @@ function parseSmartRecruitersResponse(data: any, company: CompanyConfig): Scrape
           ats: 'smartrecruiters',
           scrapeMethod: 'api'
         },
-        postedDate: new Date(job.releasedDate || Date.now()),
+        postedDate: parseSourceDate(job.releasedDate),
         scrapedAt: new Date(),
         updatedAt: new Date(),
         status: 'active',

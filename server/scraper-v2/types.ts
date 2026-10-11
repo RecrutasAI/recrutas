@@ -47,7 +47,8 @@ export interface ScrapedJob {
   
   // Metadata
   source: JobSource;
-  postedDate: Date;
+  /** The employer's posting date; null when the source doesn't give one (never the scrape time). */
+  postedDate: Date | null;
   expiresAt?: Date;
   scrapedAt: Date;
   updatedAt: Date;

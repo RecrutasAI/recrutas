@@ -330,8 +330,9 @@ function feedFilterConditions(filters?: FeedFilters): SQL[] {
   }
   if (filters?.postedWithinDays) {
     const postedCutoff = new Date(Date.now() - filters.postedWithinDays * 24 * 60 * 60 * 1000).toISOString();
-    // The employer's posting date when known, else when we first saw it.
-    conditions.push(sql`coalesce(${jobPostings.postedAt}, ${jobPostings.createdAt}) > ${postedCutoff}`);
+    // Only the employer's own posting date counts: a job we first saw yesterday may have been
+    // posted months ago, so an undated job is never shown as recent.
+    conditions.push(sql`${jobPostings.postedAt} > ${postedCutoff}`);
   }
   return conditions;
 }
@@ -1837,7 +1838,7 @@ export class DatabaseStorage implements IStorage {
     }
 
     return discoveryJobs.map((job: any) => {
-      const { freshness, daysOld } = getFreshnessLabel(job.postedAt ?? job.createdAt);
+      const { freshness, daysOld } = getFreshnessLabel(job.postedAt ?? null);
       return {
         ...job,
         requirements: Array.isArray(job.requirements) ? job.requirements : [],
@@ -2050,7 +2051,7 @@ export class DatabaseStorage implements IStorage {
           location: candidate.location,
           workType: candidate.workType,
         }, vectorDistMap.get(job.id));
-        const { freshness, daysOld } = getFreshnessLabel(job.postedAt ?? job.createdAt);
+        const { freshness, daysOld } = getFreshnessLabel(job.postedAt ?? null);
 
         return {
           ...job,
@@ -2152,7 +2153,7 @@ export class DatabaseStorage implements IStorage {
           const goodFit = job.matchScore >= TRUST_FIT_GATE;
           const fit = job.matchScore / 100;
           const trust = (job.trustScore || 0) / 100;
-          const recency = computeRecencyScore(job.postedAt ?? job.createdAt);
+          const recency = computeRecencyScore(job.postedAt ?? null);
           const compositeScore =
             (goodFit ? 0.70 : 0.85) * fit +
             (goodFit ? 0.15 * trust : 0) +

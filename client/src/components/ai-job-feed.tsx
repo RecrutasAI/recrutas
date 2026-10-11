@@ -167,7 +167,6 @@ export interface AIJobMatch {
     externalUrl?: string;
     careerPageUrl?: string;
     postedDate?: string | null;
-    firstSeenAt?: string | null;
     trustScore?: number;
     livenessStatus?: 'active' | 'stale' | 'unknown';
     ghostJobStatus?: 'clean' | 'suspicious' | 'flagged' | 'confirmed';
@@ -315,8 +314,8 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
         }
       }
       if (dateCutoff !== null) {
-        // The employer's posting date when known, else when we first saw it.
-        const when = m.job.postedDate || m.job.firstSeenAt;
+        // Only the employer's own posting date counts; a job without one can't be shown as recent.
+        const when = m.job.postedDate;
         if (!when) return false;
         const posted = new Date(when).getTime();
         if (isNaN(posted) || posted < dateCutoff) return false;
@@ -977,10 +976,8 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
                       {match.job.externalUrl && (
                         <div className="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
                           <div className="flex items-center">
-                            {match.job.postedDate ? (
+                            {match.job.postedDate && (
                               <span>Posted {new Date(match.job.postedDate).toLocaleDateString()}</span>
-                            ) : match.job.firstSeenAt && (
-                              <span title="The employer's site doesn't say when it was posted">First seen {new Date(match.job.firstSeenAt).toLocaleDateString()}</span>
                             )}
                           </div>
                           {(() => {

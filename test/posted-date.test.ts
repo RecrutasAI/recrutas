@@ -31,3 +31,28 @@ describe('realPostedAt', () => {
     expect(realPostedAt('2026-10-11T08:00:00Z', now)).not.toBeNull();
   });
 });
+
+import { parseSourceDate, workdayPostedOn } from '../server/lib/posted-date';
+import { atsDate } from '../server/lib/adzuna-link-resolver';
+
+describe('source posting dates', () => {
+  it('reads each ATS format', () => {
+    expect(parseSourceDate('2026-09-03T13:30:34-04:00')?.toISOString()).toBe('2026-09-03T17:30:34.000Z');   // Greenhouse first_published
+    expect(parseSourceDate(1786469891368)?.toISOString()).toBe(new Date(1786469891368).toISOString());     // Lever createdAt (ms)
+    expect(parseSourceDate('2026-10-05 13:25:03 UTC')?.toISOString()).toBe('2026-10-05T13:25:03.000Z');   // Recruitee
+    expect(parseSourceDate('2026-05-29')?.toISOString()).toBe('2026-05-29T00:00:00.000Z');                 // Workable
+    expect(atsDate('2026-04-07T17:12:35.753+00:00')).toBe('2026-04-07T17:12:35.753Z');                     // Ashby
+    expect(parseSourceDate('')).toBeNull();
+    expect(parseSourceDate(undefined)).toBeNull();
+    expect(parseSourceDate('Posted 3 Days Ago')).toBeNull();
+  });
+
+  it('turns Workday\'s relative "Posted N Days Ago" into the day, and "30+" into nothing', () => {
+    const now = new Date('2026-10-11T21:00:00Z');
+    expect(workdayPostedOn('Posted Today', now)?.toISOString().slice(0, 10)).toBe('2026-10-11');
+    expect(workdayPostedOn('Posted Yesterday', now)?.toISOString().slice(0, 10)).toBe('2026-10-10');
+    expect(workdayPostedOn('Posted 3 Days Ago', now)?.toISOString().slice(0, 10)).toBe('2026-10-08');
+    expect(workdayPostedOn('Posted 30+ Days Ago', now)).toBeNull();
+    expect(workdayPostedOn(undefined, now)).toBeNull();
+  });
+});
