@@ -70,6 +70,9 @@ export interface CapacityInput {
   parsesOnRules7d?: number | null;
   /** Sign-ups in the last 7 days: with the parse signal, the "pay for AI" trigger. */
   signups7d?: number | null;
+  /** People who uploaded a resume but have no matching data yet, and how long the oldest has waited. */
+  candidatesWaiting?: number | null;
+  candidatesWaitingOldestMin?: number | null;
 }
 
 /** Below this many parses a week the share is noise; the signal reads "unknown". */
@@ -94,6 +97,7 @@ export function evaluateSignals(i: CapacityInput): Signal[] {
   const loadPerCpu = i.load1 !== null && i.cpus ? i.load1 / i.cpus : null;
   const failing = (i.failingPipelineNames ?? []);
   return [
+    candidatesWaitingSignal(i),
     {
       key: 'feedP95', label: 'Feed response time (p95, 24h)', value: i.feedP95Ms,
       display: i.feedP95Ms === null ? 'not measured' : `${(i.feedP95Ms / 1000).toFixed(1)} s${i.feedSamples < 5 ? ` (only ${i.feedSamples} requests)` : ''}`,
@@ -212,6 +216,27 @@ function aiParseSignal(i: CapacityInput): Signal {
   };
 }
 
+/**
+ * A new user's matching data is made by a job that runs every minute (it can wait up to a few
+ * minutes behind the job-matching batch). Someone still waiting after 15 minutes sees an empty
+ * feed: on launch day, the first thing to watch.
+ */
+export const WAITING_AMBER_MIN = 15;
+export const WAITING_RED_MIN = 60;
+function candidatesWaitingSignal(i: CapacityInput): Signal {
+  const waiting = i.candidatesWaiting ?? null;
+  const oldest = waiting === 0 ? 0 : (i.candidatesWaitingOldestMin ?? null);
+  return {
+    key: 'candidatesWaiting', label: 'New users waiting for their first matches', value: oldest,
+    display: waiting === null ? 'not measured' : waiting === 0 ? 'none waiting'
+      : `${waiting} waiting${oldest !== null ? ` · oldest ${Math.round(oldest)} min` : ''}`,
+    level: waiting === null ? 'unknown' : grade(oldest, WAITING_AMBER_MIN, WAITING_RED_MIN),
+    healthy: 'none waiting longer than 15 min', actAt: 'anyone waiting an hour',
+    playbook: 'These people uploaded a resume but have no matches yet, so their feed is empty. The job that prepares them runs every minute on the server; if it is failing, it shows under "Scheduled jobs failing" (embed-candidates).',
+    actions: [],
+  };
+}
+
 /** The worst level among the signals, ignoring unknowns. */
 export function overallLevel(signals: Signal[]): Level {
   // A snoozed signal is still shown, but an admin has accepted it.
@@ -247,7 +272,7 @@ export interface Overview {
 export async function getOverview(conn: Conn = db): Promise<Overview> {
   const count = (q: any) => one(conn, q, r => num(r.n), null as number | null);
   const pipelines = Object.values(RUNNABLE_JOBS).map(j => j.pipeline);
-  const [signups24h, signups7d, users, active7d, resumes, apps7d, feed, conns, health, jobs, backlog, failing, parses, settings, lastRuns, requests, snoozes] = await Promise.all([
+  const [signups24h, signups7d, users, active7d, resumes, apps7d, feed, conns, health, jobs, backlog, failing, parses, settings, lastRuns, requests, snoozes, waiting] = await Promise.all([
     count(sql`SELECT count(*)::int AS n FROM users WHERE "createdAt" > NOW() - INTERVAL '24 hours' AND id IN ${realUserIds}`),
     count(sql`SELECT count(*)::int AS n FROM users WHERE "createdAt" > NOW() - INTERVAL '7 days' AND id IN ${realUserIds}`),
     count(sql`SELECT count(*)::int AS n FROM users WHERE id IN ${realUserIds}`),
@@ -293,6 +318,12 @@ export async function getOverview(conn: Conn = db): Promise<Overview> {
       ORDER BY pipeline, started_at DESC`).then(rows).catch(() => [] as any[]),
     latestRequests(conn).catch(() => ({} as Record<string, JobRequest>)),
     activeSnoozes(conn).catch(() => ({} as Record<string, Snooze>)),
+    one(conn, sql`
+      SELECT count(*)::int AS n, EXTRACT(EPOCH FROM (NOW() - min(coalesce(parsed_at, updated_at, created_at)))) / 60 AS oldest_min
+      FROM candidate_users WHERE resume_url IS NOT NULL AND embedding IS NULL AND user_id IN ${realUserIds}
+        -- recent uploads with readable text; an unreadable file (a few characters) never gets matches
+        AND coalesce(parsed_at, updated_at, created_at) > NOW() - INTERVAL '2 days' AND length(coalesce(resume_text, '')) >= 200`,
+      r => ({ n: num(r.n), oldestMin: num(r.oldest_min) }), { n: null as number | null, oldestMin: null as number | null }),
   ]);
 
   const s = health.stats || {};
@@ -303,6 +334,7 @@ export async function getOverview(conn: Conn = db): Promise<Overview> {
     activeJobs: num(jobs?.live), embeddingBacklog: backlog.n, embeddingOldestMin: backlog.oldestMin,
     failingPipelines: failing.n, failingPipelineNames: failing.names, healthCheckAgeMin: health.ageMin,
     parses7d: parses.total, parsesOnRules7d: parses.onRules, signups7d,
+    candidatesWaiting: waiting.n, candidatesWaitingOldestMin: waiting.oldestMin,
   }).map(sig => ({ ...sig, snoozedUntil: snoozes[sig.key]?.until ?? null }));
   const runByPipeline = new Map(lastRuns.map((r: any) => [r.pipeline, r]));
 

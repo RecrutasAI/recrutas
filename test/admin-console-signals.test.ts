@@ -120,3 +120,15 @@ describe('signals you can act on (2026-10-09)', () => {
     expect(overallLevel(signals.map(s => (s.key === 'embeddingBacklog' ? { ...s, snoozedUntil: '2099-01-01T00:00:00Z' } : s)))).toBe('green');
   });
 });
+
+describe('new users waiting for their first matches', () => {
+  it('is green with nobody waiting, amber past 15 minutes, red past an hour', () => {
+    expect(level({ ...prod, candidatesWaiting: 0 }, 'candidatesWaiting')).toBe('green');
+    expect(level({ ...prod, candidatesWaiting: 3, candidatesWaitingOldestMin: 4 }, 'candidatesWaiting')).toBe('green');
+    expect(level({ ...prod, candidatesWaiting: 3, candidatesWaitingOldestMin: 20 }, 'candidatesWaiting')).toBe('amber');
+    expect(level({ ...prod, candidatesWaiting: 1, candidatesWaitingOldestMin: 75 }, 'candidatesWaiting')).toBe('red');
+    expect(level(prod, 'candidatesWaiting')).toBe('unknown');
+    expect(evaluateSignals({ ...prod, candidatesWaiting: 2, candidatesWaitingOldestMin: 20 }).find(s => s.key === 'candidatesWaiting')!.display)
+      .toBe('2 waiting · oldest 20 min');
+  });
+});
