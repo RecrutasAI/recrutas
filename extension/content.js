@@ -126,6 +126,27 @@
 
   // ── Label text resolver ────────────────────────────────────────────────────
 
+  // The question a control belongs to, for controls the label[for] lookup can't
+  // name: radio groups labelled by a sibling <label> (Ashby puts the question in a
+  // <label for=…> that points at no input), autocompletes with only a placeholder,
+  // yes/no button pairs. Walks up a few levels for a label/legend that wraps no
+  // control and doesn't point at one of `skip` (an option's own label).
+  function questionLabel(el, skip = []) {
+    const skipIds = new Set(skip.map(x => x.id).filter(Boolean));
+    let node = el.parentElement;
+    for (let depth = 0; node && node.tagName !== 'FORM' && depth < 6; depth++, node = node.parentElement) {
+      for (const c of node.children) {
+        if (!/^(LABEL|LEGEND)$/.test(c.tagName)) continue;
+        if (c.querySelector('input, select, textarea')) continue;
+        const f = c.getAttribute('for');
+        if (f && skipIds.has(f)) continue;
+        const t = c.textContent?.trim();
+        if (t) return t;
+      }
+    }
+    return '';
+  }
+
   function getLabelText(el) {
     if (el.id) {
       const scope = el.getRootNode ? el.getRootNode() : document;
@@ -176,9 +197,16 @@
 
       if (['hidden', 'submit', 'button', 'image', 'reset'].includes(type)) continue;
       if (el.readOnly || el.disabled) continue;
+      // Helper inputs nobody types into: react-select's hidden "required" twin (no
+      // id/name, aria-hidden or out of the tab order) and the phone widget's own
+      // country search. Sending them made the model answer the same question twice.
+      if (!el.id && !el.name && (el.getAttribute('aria-hidden') === 'true' || el.tabIndex < 0)) continue;
+      if (el.closest('.iti__dropdown-content, .iti__country-list') || /^iti-\d+__/.test(el.id || '')) continue;
       // Radios are collected as grouped fields (one per name) further down, so
       // the model sees the question + all options instead of N disconnected inputs.
       if (type === 'radio') continue;
+      // Yes/No button pairs are collected further down, as one choice field.
+      if (type === 'checkbox' && toggleButtons(el).length >= 2) continue;
 
       // Allow visually-hidden inputs (React Select, comboboxes use opacity:0 / position:absolute)
       const isFileInput = el.type === 'file';
@@ -196,11 +224,12 @@
       const fieldId = el.id || el.name || `recrutas_${fields.length}`;
       if (seen.has(fieldId)) continue;
       seen.add(fieldId);
+      if (!el.id && !el.name) el.setAttribute('data-recrutas-id', fieldId);
 
       const field = {
         id: fieldId,
         type: type,
-        label: getLabelText(el) || el.getAttribute('aria-label') || el.getAttribute('placeholder') || '',
+        label: getLabelText(el) || el.getAttribute('aria-label') || questionLabel(el) || el.getAttribute('placeholder') || '',
         name: el.getAttribute('name') || '',
         required: el.required || el.getAttribute('aria-required') === 'true',
       };
@@ -262,6 +291,7 @@
         (first.getAttribute('aria-labelledby')
           ? byId(first.getAttribute('aria-labelledby'), first)?.textContent?.trim() || ''
           : '') ||
+        questionLabel(first, group.radios) ||
         getLabelText(first);
       fields.push({
         id: key,
@@ -273,20 +303,46 @@
       });
     }
 
+    // Yes/No button pairs (Ashby): the answer is a pressed button; the checkbox
+    // beside them is hidden. Reported as a single-choice field so the model and
+    // the truth rules see the question and its options.
+    for (const box of deepQueryAll('input[type="checkbox"]')) {
+      const buttons = toggleButtons(box);
+      if (buttons.length < 2) continue;
+      const fieldId = box.id || box.name || `recrutas_${fields.length}`;
+      if (seen.has(fieldId)) continue;
+      seen.add(fieldId);
+      if (!box.id && !box.name) box.setAttribute('data-recrutas-id', fieldId);
+      fields.push({
+        id: fieldId,
+        type: 'radio',
+        label: getLabelText(box) || questionLabel(box) || '',
+        name: box.getAttribute('name') || '',
+        required: box.required || box.getAttribute('aria-required') === 'true',
+        options: buttons.map(b => b.textContent.trim()),
+      });
+    }
+
     // Custom dropdown elements (Workday, iCIMS, Taleo use div[role="listbox"] instead of <select>)
     const customDropdowns = deepQueryAll(
       '[role="listbox"], [role="combobox"], [data-automation-id*="select"], [data-automation-id*="dropdown"]'
     );
     for (const el of customDropdowns) {
+      // An <input role="combobox"> was already collected by the first loop; tagging
+      // it again here gave it a second made-up id and lost the first.
+      if (el.matches('input, select, textarea')) continue;
       // Skip if we already captured a child input from this container
       if (el.querySelector('input, select') &&
-          Array.from(el.querySelectorAll('input, select')).some(child => seen.has(child.id || child.name))) {
+          Array.from(el.querySelectorAll('input, select')).some(child =>
+            seen.has(child.id || child.name || child.getAttribute('data-recrutas-id')))) {
         continue;
       }
 
+      if (el.closest('.iti') || /^iti-\d+__/.test(el.id || '')) continue;  // the phone widget's country list
       const fieldId = el.id || el.getAttribute('data-automation-id') || `recrutas_custom_${fields.length}`;
       if (seen.has(fieldId)) continue;
       seen.add(fieldId);
+      if (!el.id && !el.getAttribute('data-automation-id')) el.setAttribute('data-recrutas-id', fieldId);
 
       const options = Array.from(el.querySelectorAll('[role="option"], li, [data-value]'))
         .map(opt => opt.textContent?.trim())
@@ -295,7 +351,7 @@
       fields.push({
         id: fieldId,
         type: 'custom_select',
-        label: getLabelText(el) || el.getAttribute('aria-label') || '',
+        label: getLabelText(el) || el.getAttribute('aria-label') || questionLabel(el) || '',
         name: '',
         required: el.getAttribute('aria-required') === 'true',
         options: options.length > 0 ? options : undefined,
@@ -359,6 +415,7 @@
 
   function findElement(fieldId) {
     return document.getElementById(fieldId)
+      || deepQuery(`[data-recrutas-id="${CSS.escape(fieldId)}"]`)
       || deepQuery(`[name="${CSS.escape(fieldId)}"]`)
       || deepQuery(`[id="${CSS.escape(fieldId)}"]`);
   }
@@ -636,6 +693,27 @@
     return anySuccess;
   }
 
+  // The buttons that answer a yes/no question rendered as a button pair.
+  function toggleButtons(box) {
+    return Array.from(box.parentElement?.querySelectorAll(':scope > button[aria-pressed]') || [])
+      .filter(b => b.textContent?.trim());
+  }
+
+  // ACTION: pick the button whose text matches `value` in a yes/no button pair.
+  async function executeToggle(box, value) {
+    const wanted = value.trim().toLowerCase();
+    const buttons = toggleButtons(box);
+    const text = b => b.textContent.trim().toLowerCase();
+    const btn = buttons.find(b => text(b) === wanted)
+      || buttons.find(b => /^(yes|true)\b/.test(wanted) && /^yes\b/.test(text(b)))
+      || buttons.find(b => /^(no|false)\b/.test(wanted) && /^no\b/.test(text(b)));
+    if (!btn) return false;
+    if (btn.getAttribute('aria-pressed') !== 'true') pointerPress(btn);
+    const ok = await waitFor(() => btn.getAttribute('aria-pressed') === 'true', 800, 100);
+    if (ok) highlightFilled(btn);
+    return !!ok;
+  }
+
   // ACTION: check
   function executeCheck(el) {
     if (el.type !== 'checkbox') return false;
@@ -772,6 +850,10 @@
           success = executeRadio(el, action.value || '');
           continue;
         }
+        if (el.type === 'checkbox' && toggleButtons(el).length >= 2) {
+          success = await executeToggle(el, action.value || '');
+          continue;
+        }
 
         // Combobox/react-select: route to the dropdown driver regardless of the
         // model's action, honouring the same time budget as click_then_type.
@@ -884,7 +966,7 @@
     const title = document.createElement('strong');
     title.textContent = `${needsYou.length} question${needsYou.length === 1 ? ' needs' : 's need'} you`;
     const intro = document.createElement('p');
-    intro.textContent = "We don't guess facts like these. Answer them on this form.";
+    intro.textContent = "We only fill what we know. Answer these on this form.";
     const list = document.createElement('ul');
     for (const n of needsYou) {
       const el = findElement(n.fieldId);

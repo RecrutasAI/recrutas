@@ -28,6 +28,11 @@ describe('isResumeFileField — extension résumé upload targeting', () => {
     expect(isResumeFileField({ label: 'Headshot photo' })).toBe(false);
   });
 
+  it('does NOT target a nameless, unlabelled file input (Ashby autofill uploader)', () => {
+    expect(isResumeFileField({ id: 'recrutas_0', label: '', name: '' })).toBe(false);
+    expect(isResumeFileField({ id: '_systemfield_resume', label: 'Resume', name: '' })).toBe(true);
+  });
+
   it('handles missing field defensively', () => {
     expect(isResumeFileField(undefined)).toBe(false);
   });

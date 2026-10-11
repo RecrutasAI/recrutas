@@ -8,6 +8,10 @@
 // the fill-form guard so a résumé is never attached to a cover-letter input.
 export function isResumeFileField(field?: { id?: string; label?: string; name?: string }): boolean {
   if (!field) return false;
+  // A file input with no label and no name (only the id the extension made up) can't
+  // be identified: on Ashby it is the "autofill from resume" uploader, which re-parses
+  // the resume and overwrites what we filled. Never attach to it.
+  if (!(field.label || '').trim() && !(field.name || '').trim() && /^recrutas_/.test(field.id || '')) return false;
   const text = `${field.label || ''} ${field.name || ''} ${field.id || ''}`.toLowerCase();
   return !/cover[\s_-]?letter|coverletter|transcript|writing[\s_-]?sample|portfolio|photo|headshot/.test(text);
 }
