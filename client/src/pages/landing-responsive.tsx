@@ -16,7 +16,13 @@ interface LiveStats {
   companies: number;
   recentlyChecked: number;
   checkWindowHours: number;
+  /** Every open US job posted directly by its employer that we match against, counted once. */
+  catalogJobs?: number;
+  catalogCompanies?: number;
 }
+
+/** Round down, never up: a public number must not overstate what we have. */
+const floorTo = (n: number, step: number) => Math.floor(n / step) * step;
 
 function useLiveStats() {
   return useQuery<LiveStats>({
@@ -105,7 +111,9 @@ function Hero({ onStart }: { onStart: () => void }) {
           <span className="whitespace-nowrap text-emerald-600 dark:text-emerald-400">Made to fit you.</span>
         </h1>
         <p className="mt-6 text-lg sm:text-xl leading-relaxed text-neutral-600 dark:text-neutral-400 max-w-2xl">
-          Upload your resume once. Get live US roles ranked by fit, with an honest verdict on each. Then hear what happened after you apply.
+          {stats?.catalogJobs
+            ? <>Upload your resume once. We rank {floorTo(stats.catalogJobs, 10_000).toLocaleString()}+ live US jobs, each posted directly by the employer, by fit to you, with an honest verdict on each. Then hear what happened after you apply.</>
+            : <>Upload your resume once. Get live US roles ranked by fit, with an honest verdict on each. Then hear what happened after you apply.</>}
         </p>
         <div className="mt-9 flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
           <PrimaryButton onClick={onStart}>
@@ -118,8 +126,9 @@ function Hero({ onStart }: { onStart: () => void }) {
         <div className={`relative border-t ${RULE}`}>
           <dl className={`mx-auto max-w-6xl lg:border-x ${RULE} grid grid-cols-3 divide-x divide-neutral-200 dark:divide-neutral-800`}>
             {[
-              [stats.activeJobs.toLocaleString(), "live roles"],
-              [stats.companies.toLocaleString(), "companies"],
+              ...(stats.catalogJobs && stats.catalogCompanies
+                ? [[stats.catalogJobs.toLocaleString(), "direct US jobs"], [`${floorTo(stats.catalogCompanies, 100).toLocaleString()}+`, "companies"]]
+                : [[stats.activeJobs.toLocaleString(), "live roles"], [stats.companies.toLocaleString(), "companies"]]),
               // Only quote the check rate when it is a number worth quoting.
               checkedPct >= 50
                 ? [`${checkedPct}%`, `checked < ${stats.checkWindowHours}h`]

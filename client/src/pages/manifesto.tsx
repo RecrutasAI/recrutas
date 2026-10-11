@@ -37,8 +37,8 @@ export default function ManifestoPage() {
 
           <Section label="we already have the jobs">
             <p>
-              The problem was never a shortage of openings. On any given day we track more than 145,000
-              live roles from over 2,500 companies<Fn n={3} />, and those are only the ones employers post
+              The problem was never a shortage of openings. On any given day we track more than 860,000
+              live roles from over 15,000 companies<Fn n={3} />, and those are only the ones employers post
               themselves.
             </p>
             <p>

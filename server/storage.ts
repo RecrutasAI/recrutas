@@ -557,6 +557,25 @@ END`;
 const jobPostUrlRequirement = sql.raw(jobPostUrlSqlCondition('"job_postings"."external_url"'));
 
 /**
+ * Recrutas's own direct, US, live job links with their company, for the deduplicated catalog
+ * count (scripts/fleet-matcher.ts → the matcher). Same exclusions as the direct feed: no job
+ * boards or aggregators, no third-party companies, a real job-post link, not outside the US.
+ */
+export async function getDirectUsJobLinks(): Promise<Array<{ url: string; company: string }>> {
+  const r: any = await db.execute(sql`
+    SELECT ${jobPostings.externalUrl} AS url, coalesce(${jobPostings.company}, '') AS company
+    FROM ${jobPostings}
+    WHERE ${jobPostings.status} = 'active' AND ${jobPostings.externalUrl} IS NOT NULL
+      AND ${jobPostings.source} NOT IN (${sql.join([...AGGREGATOR_SOURCES].map(s => sql`${s}`), sql`, `)})
+      AND ${reposterExclusion} AND ${jobPostUrlRequirement}
+      AND (${jobPostings.location} IS NULL OR TRIM(${jobPostings.location}) = '' OR (
+        NOT (${jobPostings.location} ~* ${NON_US_LOCATION_REGEX})
+        AND NOT (regexp_replace(LOWER(${jobPostings.location}), 'new mexico', '', 'g') ~* ${MEXICO_COUNTRY_REGEX})
+        AND NOT (${jobPostings.location} ~* ${', ?(' + CA_PROVINCE_CODES_RE_PART + ')( |,|$)'})))`);
+  return (r?.rows ?? r) as Array<{ url: string; company: string }>;
+}
+
+/**
  * Database Storage Implementation
  *
  * Implements the IStorage interface using Drizzle ORM for PostgreSQL.
