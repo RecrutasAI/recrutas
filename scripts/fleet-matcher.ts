@@ -134,6 +134,10 @@ async function ingestOutbox(): Promise<string> {
     generated_at: string; jobs: FleetJob[]; closed: string[];
     stats?: { catalog?: { jobs: number; companies: number } };
   };
+  // Runs hourly because GitHub starts the matcher late or not at all; only a new outbox is processed.
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS fleet_ingest_state (id int PRIMARY KEY, outbox_generated_at text NOT NULL, ingested_at timestamptz NOT NULL)`);
+  const last = rows(await db.execute(sql`SELECT outbox_generated_at FROM fleet_ingest_state WHERE id = 1`))[0]?.outbox_generated_at;
+  if (last === out.generated_at) {return `outbox ${out.generated_at} already ingested`;}
   // The deduplicated catalog count the homepage shows (computed by the matcher).
   const cat = out.stats?.catalog;
   if (cat && cat.jobs > 0) {
@@ -192,6 +196,9 @@ async function ingestOutbox(): Promise<string> {
       WHERE external_id IN (${sql.join(ids.map(id => sql`${id}`), sql`, `)}) AND status = 'active'`);
     closed = Number((r as any)?.rowCount ?? (r as any)?.count ?? 0);
   }
+  await db.execute(sql`
+    INSERT INTO fleet_ingest_state (id, outbox_generated_at, ingested_at) VALUES (1, ${out.generated_at}, NOW())
+    ON CONFLICT (id) DO UPDATE SET outbox_generated_at = EXCLUDED.outbox_generated_at, ingested_at = NOW()`);
   return `outbox ${out.generated_at}: ${out.jobs.length} matched jobs → ${unnamed} skipped (employer not named), ${existing.size} already in Recrutas (kept ours), ${totals.inserted} new, ${totals.duplicates} duplicates, ` +
     `${totals.skippedNonUS} non-US, ${totals.skippedBadUrl} bad links, ${totals.errors} errors; ${vectors} vectors attached; ${renamed} renamed; ${closed} closed`;
 }
