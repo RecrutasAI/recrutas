@@ -32,8 +32,13 @@ export type Fact =
   | 'other';  // a required question nothing could answer
 
 export interface FillField { id: string; label?: string; name?: string; type?: string; options?: string[]; required?: boolean }
-export interface FillAction { fieldId: string; action: string; value?: string; reason?: string; source?: FillSource; evidence?: string }
-export interface NeedsYou { fieldId: string; label: string; fact: Fact | 'essay'; saveAs?: keyof Stated }
+/** `strict`: the extension may only pick an option that is the value or starts with it. */
+export interface FillAction { fieldId: string; action: string; value?: string; reason?: string; source?: FillSource; evidence?: string; strict?: boolean }
+/**
+ * A question for the candidate. `saveAs`: the saved answer it fills (offer "use on every form");
+ * `saveKey`: its wording, for a question that isn't a fact but may come back word for word.
+ */
+export interface NeedsYou { fieldId: string; label: string; fact: Fact | 'essay'; saveAs?: keyof Stated; saveKey?: string }
 
 /**
  * Order matters: the first match wins. Per-job facts come before the broad ones ("If you were
@@ -185,6 +190,8 @@ export interface TruthContext {
   /** The candidate's profile location ("Seattle, WA"). */
   location?: string | null;
   jobCompany?: string | null;
+  /** Answers the candidate saved from forms for other questions, by wording (labelKey). */
+  custom?: Record<string, string>;
   /** Wordings the rules miss, as the shared map placed them (labelKey → fact or 'none'). */
   topics?: ReadonlyMap<string, Fact | 'none'>;
   /** The candidate's skills (profile), part of what a resume quote may come from. */
@@ -198,7 +205,7 @@ export interface TruthContext {
  * of its agencies" names two), else the job's company.
  */
 function employersAsked(label: string, jobCompany?: string | null): string[] {
-  const named = label.match(/\b(?:for|at|by|of)\s+([A-Z][\w&.',/ -]{1,80}?)(?:\s+(?:before|previously|in the past)\b|\s+or any\b|\s*[?(]|$)/);
+  const named = label.match(/\b(?:for|at|by|of|with)\s+([A-Z][\w&.',/ -]{1,80}?)(?:\s+(?:before|previously|in the past)\b|\s+or any\b|\s*[?(]|$)/);
   if (named && !/^(us|this|our)\b/i.test(named[1])) {
     const list = named[1].split(/\s*(?:,|\bor\b|\band\b|\/)\s*/).map(n => n.trim()).filter(n => /^[A-Z]/.test(n) && n.length >= 2);
     if (list.length) {return list;}
@@ -347,10 +354,11 @@ function timeZoneAnswer(field: FillField, ctx: TruthContext): Pick<FillAction, '
  * "How did you hear about us?": the truth is that the candidate found the job on Recrutas, a job
  * board. Recrutas if the form offers it, else the form's job-board / online choice, else "Other".
  */
-function howHeardAnswer(field: FillField): Pick<FillAction, 'action' | 'value' | 'evidence'> {
+function howHeardAnswer(field: FillField): Pick<FillAction, 'action' | 'value' | 'evidence' | 'strict'> {
   const evidence = 'You found this job on Recrutas, a job board';
   const opts = field.options || [];
-  if (!opts.length) {return { action: 'type', value: 'Recrutas (job board)', evidence };}
+  // A dropdown whose options the page didn't list: the usual wording, so only a real match is picked.
+  if (!opts.length) {return field.type === 'custom_select' || field.type === 'select' ? { action: 'click_then_type', value: 'Job board', evidence, strict: true } : { action: 'type', value: 'Recrutas (job board)', evidence };}
   // A general job board, never a narrower one that isn't true ("College Job Boards").
   const narrow = /college|universit|campus|school|career fair|military|veteran|diversity|government|niche|industry/i;
   const pick = opts.find(o => /recrutas/i.test(o))
@@ -443,7 +451,11 @@ export function enforceTruth(actions: FillAction[], fields: FillField[], ctx: Tr
   const needsYou: NeedsYou[] = [];
   const needs = (field: FillField, fact: Fact | 'essay') => {
     const saveAs = fact === 'essay' ? undefined : STATED_KEY[fact as Fact];
-    needsYou.push({ fieldId: field.id, label: (field.label || field.name || field.id).trim().slice(0, 140), fact, ...(saveAs ? { saveAs } : {}) });
+    // Another question worth keeping word for word: short-answer, not a follow-up, not about this employer.
+    const label = field.label || '';
+    const saveKey = fact === 'other' && !FOLLOW_UP.test(label) && field.type !== 'textarea' && labelKey(label).length >= 8
+      && !(ctx.jobCompany && labelKey(label).includes(labelKey(ctx.jobCompany))) ? labelKey(label) : undefined;
+    needsYou.push({ fieldId: field.id, label: label.trim().slice(0, 140) || field.name || field.id, fact, ...(saveAs ? { saveAs } : {}), ...(saveKey ? { saveKey } : {}) });
   };
 
   for (const field of fields) {
@@ -471,6 +483,13 @@ export function enforceTruth(actions: FillAction[], fields: FillField[], ctx: Tr
     }
 
     if (FOLLOW_UP.test(label)) { if (field.required) {needs(field, 'other');} continue; }
+
+    // A question the candidate answered on an earlier form and chose to keep, word for word.
+    const kept0 = ctx.custom?.[labelKey(label)];
+    if (kept0 && !isEssay(field)) {
+      const opt = field.options?.length ? field.options.find(o => norm(o) === norm(kept0)) : kept0;
+      if (opt) { kept.push({ fieldId: field.id, action: field.options?.length ? (field.type === 'select' || field.type === 'radio' ? 'select' : 'click_then_type') : 'type', value: opt, source: 'answer', evidence: 'Your saved answer to this question' }); continue; }
+    }
 
     if (isEssay(field)) {
       if (ai && ai.action !== 'skip' && ai.value?.trim()) {
@@ -500,5 +519,7 @@ export function enforceTruth(actions: FillAction[], fields: FillField[], ctx: Tr
     kept.push({ ...ai, source });
   }
   // Actions for ids not in the field list (the AI's own additions) are dropped: nothing to check them against.
+  // Every element stays listed, even when a form renders one question as two (a dropdown and
+  // its input): the extension shows the question once but watches each element for an answer.
   return { actions: kept, needsYou };
 }

@@ -22,6 +22,8 @@ export interface ApplicationAnswersData {
   driversLicense?: YesNo;
   languages?: string;
   backgroundCheck?: YesNo;
+  /** Answers kept from application forms, by question wording. */
+  custom?: Record<string, string>;
 }
 
 const YES_NO_QUESTIONS: { key: keyof ApplicationAnswersData; label: string }[] = [
@@ -130,6 +132,36 @@ export function ApplicationAnswers() {
             value={answers.languages ?? ""} onChange={(e) => set("languages", e.target.value)} />
         </div>
       </div>
+
+      {answers.custom && Object.keys(answers.custom).length > 0 && (
+        <div className="grid gap-2" data-testid="kept-answers">
+          <div>
+            <h4 className="text-sm font-medium text-slate-900 dark:text-slate-100">Answers kept from forms</h4>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Questions you answered on a form and chose to keep. They fill again when a form asks the same question.
+            </p>
+          </div>
+          <ul className="grid gap-1.5">
+            {Object.entries(answers.custom).map(([question, value]) => (
+              <li key={question} className="flex items-start justify-between gap-3 rounded-md border border-slate-200 dark:border-slate-700 px-3 py-2">
+                <div className="min-w-0 text-sm">
+                  <p className="text-slate-700 dark:text-slate-300 first-letter:uppercase break-words">{question}</p>
+                  <p className="text-slate-900 dark:text-slate-100 font-medium break-words">{value}</p>
+                </div>
+                <Button type="button" variant="ghost" size="sm" className="shrink-0 h-8"
+                  aria-label={`Remove the kept answer to: ${question}`}
+                  onClick={() => setAnswers((a) => {
+                    const custom = { ...(a.custom ?? {}) };
+                    delete custom[question];
+                    return { ...a, custom };
+                  })}>
+                  Remove
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="flex justify-end">
         <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>

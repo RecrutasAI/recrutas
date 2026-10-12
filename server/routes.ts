@@ -1330,7 +1330,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       const jobCompany = (String(jobContext || '').split('\n')[0].match(/ at (.+)$/) || [])[1] || null;
       const topics = await topicsPromise;
       const truth = enforceTruth(actions, fields, {
-        topics,
+        topics, custom: stated.custom && typeof stated.custom === 'object' ? stated.custom : undefined,
         stated, resume, location: profileData.location, jobCompany, places: placeIndex(),
         skills: Array.isArray(profile.skills) ? (profile.skills as string[]) : [],
       });
@@ -1890,7 +1890,17 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     driversLicense: yesNo,
     languages: z.string().trim().max(120).optional(),
     backgroundCheck: yesNo,
+    // Answers to other questions the candidate chose to keep, by wording (labelKey); an empty
+    // string removes one. Only what they saved from a form, at most MAX_CUSTOM_ANSWERS.
+    custom: z.record(z.string().min(1).max(300), z.string().trim().max(200)).optional(),
   }).strict();
+  const MAX_CUSTOM_ANSWERS = 100;
+  /** Saved custom answers merged with changes; empty values removed, newest kept within the cap. */
+  const mergeCustom = (current: Record<string, string> = {}, changes: Record<string, string> = {}): Record<string, string> => {
+    const merged = { ...current };
+    for (const [k, v] of Object.entries(changes)) { delete merged[k]; if (v) {merged[k] = v;} }
+    return Object.fromEntries(Object.entries(merged).slice(-MAX_CUSTOM_ANSWERS));
+  };
 
   app.get('/api/candidate/application-answers', isAuthenticated, asyncHandler(async (req: any, res) => {
     const [profile, user] = await Promise.all([storage.getCandidateUser(req.user.id), storage.getUser(req.user.id)]);
@@ -1905,14 +1915,15 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     if (!parsed.success) {
       return res.status(400).json({ message: 'Invalid answers', issues: parsed.error.issues.map(i => i.path.join('.')) });
     }
-    const { phone, ...changes } = parsed.data;
+    const { phone, custom, ...changes } = parsed.data;
     const profile: any = await storage.getCandidateUser(req.user.id);
-    const answers = { ...(profile?.jobPreferences?.applicationAnswers || {}), ...changes };
+    const current = profile?.jobPreferences?.applicationAnswers || {};
+    const answers = { ...current, ...changes, ...(custom ? { custom: mergeCustom(current.custom, custom) } : {}) };
     await storage.upsertCandidateUser({ userId: req.user.id, jobPreferences: { ...(profile?.jobPreferences || {}), applicationAnswers: answers } });
     if (phone !== undefined) {
       await storage.updateUserInfo(req.user.id, { phone_number: phone || null } as any);
     }
-    res.json({ success: true, saved: Object.keys(changes) });
+    res.json({ success: true, saved: [...Object.keys(changes), ...Object.keys(custom ?? {}).map(k => `custom:${k}`)] });
   }));
 
   app.put('/api/candidate/application-answers', isAuthenticated, asyncHandler(async (req: any, res) => {
@@ -1920,8 +1931,11 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     if (!parsed.success) {
       return res.status(400).json({ message: 'Invalid answers', issues: parsed.error.issues.map(i => i.path.join('.')) });
     }
-    const { phone, ...answers } = parsed.data;
+    const { phone, custom, ...rest } = parsed.data;
     const profile: any = await storage.getCandidateUser(req.user.id);
+    // Saved form answers survive a Settings save that doesn't send them.
+    const keptCustom = custom ? mergeCustom({}, custom) : profile?.jobPreferences?.applicationAnswers?.custom;
+    const answers = { ...rest, ...(keptCustom && Object.keys(keptCustom).length ? { custom: keptCustom } : {}) };
     const jobPreferences = { ...(profile?.jobPreferences || {}), applicationAnswers: answers };
     await storage.upsertCandidateUser({ userId: req.user.id, jobPreferences });
     if (phone !== undefined) {
