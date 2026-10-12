@@ -192,7 +192,8 @@ export default function AIMatchBreakdownModal({
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[580px] max-h-[90vh] overflow-y-auto p-0 gap-0 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl">
         {/* Header */}
-        <DialogHeader className="p-6 pb-4 space-y-0">
+        {/* pr-14 keeps the score ring clear of the dialog's close button (top right). */}
+        <DialogHeader className="p-6 pr-14 pb-4 space-y-0">
           <div className="flex items-start gap-4">
             {/* Job info */}
             <div className="flex-1 min-w-0">

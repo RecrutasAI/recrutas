@@ -163,10 +163,12 @@ export function FeedbackButton() {
     <>
       <button
         onClick={() => setOpen(true)}
+        aria-label="Feedback"
         className={`fixed bottom-20 right-4 sm:bottom-5 sm:right-5 z-50 flex items-center gap-2 h-9 px-3 border ${RULE} bg-white/90 dark:bg-black/90 backdrop-blur font-geist-mono text-[11px] uppercase tracking-[0.14em] text-neutral-700 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white hover:border-neutral-900 dark:hover:border-white transition-colors`}
       >
         <MessageSquare className="h-3.5 w-3.5" />
-        Feedback
+        {/* Icon only on phones, where the label covered the job cards. */}
+        <span className="hidden sm:inline">Feedback</span>
       </button>
       <FeedbackDialog open={open} onOpenChange={setOpen} />
     </>

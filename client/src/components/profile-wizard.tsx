@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { US_METROS } from "@/lib/us-metros";
+import { LocationPicker } from "@/components/location-picker";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
@@ -708,22 +708,11 @@ export default function ProfileWizard({ onComplete, skipResumeStep = false }: Pr
                 <MapPin className="h-4 w-4" /> Where are you located?
                 <span className="text-xs font-normal text-gray-500 dark:text-gray-400">(required)</span>
               </Label>
-              <Select value={userLocation} onValueChange={setUserLocation}>
-                <SelectTrigger id="location">
-                  <SelectValue placeholder="Select your location" />
-                </SelectTrigger>
-                <SelectContent>
-                  {userLocation && !US_METROS.includes(userLocation as typeof US_METROS[number]) && (
-                    <SelectItem value={userLocation}>{userLocation} (current)</SelectItem>
-                  )}
-                  {US_METROS.map(loc => (
-                    <SelectItem key={loc} value={loc}>{loc}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {/* Every US place, the same picker the feed uses (not a short list of metros). */}
+              <LocationPicker value={userLocation} onChange={setUserLocation} placeholder="City, state or Remote" />
               {/* Continue stays disabled until this is set; say why. */}
               {!userLocation && (
-                <p className="text-xs text-gray-500 dark:text-gray-400">Pick the metro you're in, or the closest one, to continue.</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">Type your city and pick it from the list to continue.</p>
               )}
             </div>
 

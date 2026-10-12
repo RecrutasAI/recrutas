@@ -18,6 +18,7 @@
  */
 
 import { parseSkillsInput, getRelatedSkills } from './skill-normalizer';
+import { pickedKey } from '../shared/places';
 import { extractSkillsFromText } from './utils/skill-extractor';
 import { cosineSimilarity } from './ml-matching';
 
@@ -504,8 +505,21 @@ export function scoreJob(
     const jobWork = (job.workType || '').toLowerCase();
     const candWork = (candidateContext.workType || '').toLowerCase();
 
-    // Location: +4 for match or remote job, +2 for same state/region
-    if (jobLoc && candLoc) {
+    // Location: +4 for the same place or a remote job, +2 for the same state. Compared on the
+    // places each location resolves to (shared/places.ts) when the job has them: as text, a
+    // profile of "WA" matched any location containing "wa" (Hawaii, Washington DC).
+    const jobKeys: string[] | null | undefined = (job as any).locationKeys;
+    const candKey = pickedKey(candidateContext.location);
+    if (Array.isArray(jobKeys) && jobKeys.length && candKey) {
+      const candState = candKey === 'remote' ? null : candKey.startsWith('state|') ? candKey : `state|${candKey.split('|')[1]}`;
+      if (jobKeys.includes('remote') || jobWork.includes('remote')) {
+        contextBonus += 4;
+      } else if (jobKeys.includes(candKey)) {
+        contextBonus += candKey.startsWith('state|') ? 2 : 4;
+      } else if (candState && jobKeys.includes(candState)) {
+        contextBonus += 2;
+      }
+    } else if (jobLoc && candLoc) {
       const isRemoteJob = jobWork.includes('remote') || jobLoc.includes('remote');
       if (isRemoteJob) {
         contextBonus += 4; // remote = fits anyone
