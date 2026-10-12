@@ -42,7 +42,24 @@ export function parseLocationFilter(raw: string | null | undefined): LocationFil
 }
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const words = (s: string) => s.split(/[\s.-]+/).filter(Boolean).map(escapeRe).join('[ .-]+');
+// Abbreviations posts use for the first word of a place name ("St. Louis", "Ft. Worth", "Mt. Pleasant").
+const WORD_FORMS: Record<string, string> = { saint: '(saint|st)', st: '(saint|st)', fort: '(fort|ft)', ft: '(fort|ft)', mount: '(mount|mt)', mt: '(mount|mt)' };
+const words = (s: string) => s.split(/[\s.-]+/).filter(Boolean)
+  .map(w => WORD_FORMS[w] ?? escapeRe(w)).join('[ .-]+');
+
+/**
+ * Other names posts use for a city, by "city|ST". Only unambiguous ones: "LA" is also Louisiana's
+ * code, so it is not here.
+ */
+export const CITY_ALIASES: Record<string, string[]> = {
+  'new york|NY': ['nyc', 'new york city', 'manhattan', 'brooklyn', 'queens', 'bronx', 'staten island'],
+  'washington|DC': ['dc', 'd c', 'washington dc'],
+  'san francisco|CA': ['sf', 'sf bay area'],
+};
+const cityPattern = (city: string, state?: string): string => {
+  const alts = [words(city), ...(CITY_ALIASES[`${city}|${state ?? ''}`] ?? []).map(words)];
+  return `(^|[^a-z0-9])(${alts.join('|')})([^a-z0-9]|$)`;
+};
 
 export interface LocationPatterns {
   /** Lowercase location must match (city as a whole word, or "remote"). */
@@ -60,7 +77,7 @@ export interface LocationPatterns {
 export function locationPatterns(f: LocationFilter): LocationPatterns {
   if (f.remote) {return { city: 'remote' };}
   const p: LocationPatterns = {};
-  if (f.city) {p.city = `(^|[^a-z0-9])${words(f.city)}([^a-z0-9]|$)`;}
+  if (f.city) {p.city = cityPattern(f.city, f.state);}
   if (f.state) {
     const others = Object.keys(US_STATES).filter(c => c !== f.state);
     p.otherCodes = `(^|[ ,(/-])(${others.join('|')})([ ,)/.-]|$)`;

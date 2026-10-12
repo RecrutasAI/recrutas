@@ -165,6 +165,8 @@ export const jobPostings = pgTable("job_postings", {
   // When the employer posted it, as their hiring system reports it. Null when unknown: the UI then
   // says "First seen" (created_at), never "Posted".
   postedAt: timestamp("posted_at"),
+  // Places the location resolves to (shared/places.ts): "seattle|WA", "state|WA", "remote".
+  locationKeys: text("location_keys").array(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table: any) => ({
