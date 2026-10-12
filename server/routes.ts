@@ -1255,6 +1255,9 @@ ${fieldDescriptions}
 
 Analyze the form and return the actions JSON to fill every field you can.`;
 
+      // Wordings the fixed rules miss, from the shared map (classified once, by AI, for everyone):
+      // started now so it runs alongside the fill's own AI call.
+      const topicsPromise = topicsFor(fields);
       let actions: Array<{ fieldId: string; action: string; value?: string; reason?: string; evidence?: string }> = [];
 
       try {
@@ -1325,8 +1328,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       // Facts are never guessed: drop any fact without a saved answer (or resume evidence for
       // years of experience), tag every value with its source, and list what needs the candidate.
       const jobCompany = (String(jobContext || '').split('\n')[0].match(/ at (.+)$/) || [])[1] || null;
-      // Wordings the fixed rules miss, from the shared map (classified once, by AI, for everyone).
-      const topics = await topicsFor(fields);
+      const topics = await topicsPromise;
       const truth = enforceTruth(actions, fields, {
         topics,
         stated, resume, location: profileData.location, jobCompany, places: placeIndex(),

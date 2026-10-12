@@ -103,12 +103,38 @@ const DEGREES: Array<[string, RegExp]> = [
   ['High school diploma or GED', /\bhigh school\b|\bged\b|secondary school/i],
 ];
 
-/** The highest degree the resume text names, with the line it's on. */
+/**
+ * The highest degree the resume text names, with the words around it. Many stored resume texts
+ * have no line breaks (flattened PDFs), so the quote is a window around the match, not a "line".
+ */
 export function highestEducation(facts: ResumeFacts): { level: string; evidence: string } | null {
-  const lines = facts.text.split(/\n+/).map(l => l.trim()).filter(Boolean);
+  const text = facts.text.replace(/\s+/g, ' ');
   for (const [level, re] of DEGREES) {
-    const line = lines.find(l => re.test(l));
-    if (line) {return { level, evidence: `On your resume: "${line.slice(0, 120)}"` };}
+    const m = re.exec(text);
+    if (m) {
+      const at = m.index;
+      const quote = text.slice(Math.max(0, at - 30), Math.min(text.length, at + m[0].length + 60)).trim();
+      return { level, evidence: `On your resume: "…${quote}…"` };
+    }
   }
   return null;
+}
+
+/**
+ * A work-history field ("Current/Most recent Employer", "Job title at second most recent
+ * employer", "Start date with current employer") from the resume's roles, most recent first.
+ */
+export function workHistoryValue(facts: ResumeFacts, label: string): { value: string; evidence: string } | null {
+  const l = label.toLowerCase();
+  const index = /\b(third|3rd)\b/.test(l) ? 2 : /\b(second|2nd)\b/.test(l) ? 1 : 0;
+  const role = facts.positions[index];
+  if (!role) {return null;}
+  const evidence = `On your resume: ${role.title}${role.company ? ` at ${role.company}` : ''}${role.duration ? ` (${role.duration})` : ''}`;
+  const [start, end] = role.duration.split(/\s*(?:–|—|-|\bto\b)\s*/);
+  let value: string | undefined;
+  if (/\bstart/.test(l)) {value = start;}
+  else if (/\bend\b|\bend date|until/.test(l)) {value = /present|current/i.test(end ?? '') && /n\/?a/i.test(l) ? 'N/A' : end;}
+  else if (/title|position|role/.test(l)) {value = role.title;}
+  else if (/employer|company/.test(l)) {value = role.company;}
+  return value?.trim() ? { value: value.trim(), evidence } : null;
 }

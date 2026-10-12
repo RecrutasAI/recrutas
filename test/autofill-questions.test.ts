@@ -201,9 +201,22 @@ describe('no quote, no answer', () => {
     expect(a.evidence).toMatch(/^On your resume: "/);
   });
   it('a typed value that is itself on the resume counts as its own quote', () => {
-    const title = q('Most Recent Job Title', { type: 'text', options: undefined });
-    expect(one(title, c, { action: 'type', value: 'Account Manager' }).actions[0]).toMatchObject({ source: 'resume' });
-    expect(one(title, c, { action: 'type', value: 'VP of Sales' }).actions).toEqual([]);
+    const cert = q('Certifications', { type: 'text', options: undefined });
+    expect(one(cert, c, { action: 'type', value: 'CCure 9000 Certified Technician' }).actions[0]).toMatchObject({ source: 'resume' });
+    expect(one(cert, c, { action: 'type', value: 'AWS Certified Architect' }).actions).toEqual([]);
+  });
+  it('work-history fields come from the right role, whatever the AI typed', () => {
+    const two = resumeFacts({ positions: [
+      { title: 'Account Manager', company: 'Ogilvy', duration: '2020 - 2024', responsibilities: [] },
+      { title: 'Account Coordinator', company: 'Wieden', duration: 'Jun 2017 - Dec 2019', responsibilities: [] },
+    ] }, '');
+    const cc = ctx({}, two);
+    const t = (label: string, ai = 'Account Manager') => one(q(label, { type: 'text', options: undefined }), cc, { action: 'type', value: ai }).actions[0]?.value;
+    expect(t('Most Recent Job Title', 'VP of Sales')).toBe('Account Manager');
+    expect(t('Job title at second most recent employer:')).toBe('Account Coordinator');
+    expect(t('Second most recent employer:')).toBe('Wieden');
+    expect(t('Start date of second most recent employer:')).toBe('Jun 2017');
+    expect(t('Current/Most recent Employer:')).toBe('Ogilvy');
   });
   it('a bare yes is never its own quote', () => {
     expect(one(q('Are you CCure Certified?', { type: 'text', options: undefined }), c, { action: 'type', value: 'Yes' }).actions).toEqual([]);
@@ -242,8 +255,48 @@ describe('the shared map of wordings', () => {
     expect(one(f, ctx({ needsSponsorship: 'no' }, {}, { topics })).actions[0]).toMatchObject({ value: 'No', source: 'answer' });
   });
   it('a yes/no fact never lands on a name box, whatever the map says', () => {
-    const employer = q('Current/Most recent Employer:', { type: 'text', options: undefined });
-    const topics = new Map([['current most recent employer', 'prior_employment' as const]]);
-    expect(factOf(employer, topics)).toBeNull();
+    const names = q('Names of former employers', { type: 'text', options: undefined });
+    const topics = new Map([['names of former employers', 'prior_employment' as const]]);
+    expect(factOf(names, topics)).toBeNull();
+  });
+});
+
+describe('found filling three real forms (DH Pace, Boldly, Pacific Legal, 2026-10-12)', () => {
+  const seattle = ctx({}, {}, { location: 'Seattle, WA' });
+  it('"How did you hear" never picks a narrower board that isn’t true', () => {
+    const f = q('How did you hear about this opportunity?', { options: ['College Job Boards', 'Indeed', 'Other'] });
+    expect(one(f, ctx()).actions[0].value).toBe('Other');
+  });
+  it('a per-skill years grid is the candidate’s, never total years', () => {
+    const f = q('In the list of skills below, how many years experience do you have for each?', { options: ['0-1', '2-3', '4-6'] });
+    expect(one(f, ctx({}, { totalYears: 6 })).needsYou[0].fact).toBe('years_experience');
+    const ex = q('How many total years of professional experience do you have exclusively as an Executive Assistant?', { options: ['0-2', '3-4', '5-6'] });
+    expect(one(ex, ctx({}, { totalYears: 6 })).actions).toEqual([]);   // not on the resume's roles
+  });
+  it('a question that mentions email is not the email field', () => {
+    const f = q('Email Management for Executives you directly support', { options: ['0-1', '2-3'] });
+    expect(one(f, ctx(), { action: 'click_then_type', value: 'ada@example.com' }).actions).toEqual([]);
+  });
+  it('"eligible for employment" and "permission to work" are work authorization; "able to work hybrid" is not', () => {
+    expect(factOf({ id: 'x', label: 'Are you legally eligible for employment in the US?' })).toBe('work_auth');
+    expect(factOf({ id: 'x', label: 'Do you have permission to work in the country in which you reside?' })).toBe('work_auth');
+    expect(factOf({ id: 'x', label: 'Are you able to work a hybrid schedule, with three days per week in our office?' })).toBe('work_arrangement');
+  });
+  it('"start date with your current employer" is work history, not when you can start', () => {
+    expect(factOf({ id: 'x', label: 'Start Date with current/most recent employer:' })).toBe('work_history');
+    expect(factOf({ id: 'x', label: 'When is your earliest availability to start?' })).toBe('start_date');
+  });
+  it('the country list gets the United States for a US location, and "the 48 contiguous states" is a yes', () => {
+    const country = q('Country you live in', { options: ['Canada', 'United States', 'Mexico'] });
+    expect(one(country, seattle).actions[0]).toMatchObject({ value: 'United States', source: 'profile' });
+    const lower48 = q('Do you live in one of the 48 contiguous United States or in Alaska?');
+    expect(one(lower48, seattle).actions[0]).toMatchObject({ value: 'Yes', source: 'profile' });
+    expect(one(lower48, ctx({}, {}, { location: 'Honolulu, HI' })).actions[0].value).toBe('No');
+  });
+  it('the education quote is the words around the degree, even in a resume with no line breaks', () => {
+    const e = highestEducation(resumeFacts({}, 'TEST USER Seattle WA | Programmer Analyst at Walmart 2011 - 2016 | UNIVERSITY OF ARIZONA, Tucson, Arizona M.S., Computer Science'));
+    expect(e?.level).toBe("Master's degree");
+    expect(e?.evidence).toMatch(/M\.S\., Computer Science/);
+    expect(e?.evidence).not.toMatch(/TEST USER/);
   });
 });

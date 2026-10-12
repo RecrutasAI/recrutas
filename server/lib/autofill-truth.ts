@@ -19,7 +19,7 @@
  *   - choices with an honest default ("how did you hear": Recrutas or a job board, EEO decline).
  */
 import { resolveLocation, type PlaceIndex } from '../../shared/places';
-import { type ResumeFacts, highestEducation, yearsWith } from './resume-facts';
+import { type ResumeFacts, highestEducation, workHistoryValue, yearsWith } from './resume-facts';
 
 export type FillSource = 'profile' | 'resume' | 'answer' | 'default' | 'draft';
 export type Fact =
@@ -28,6 +28,7 @@ export type Fact =
   | 'drivers_license' | 'languages' | 'background_check'
   | 'residence' | 'time_zone' | 'commute' | 'education_level'
   | 'criminal_history' | 'physical' | 'schedule' | 'referral' | 'prior_application' | 'relatives' | 'restrictions' | 'employment_record'
+  | 'work_history'
   | 'other';  // a required question nothing could answer
 
 export interface FillField { id: string; label?: string; name?: string; type?: string; options?: string[]; required?: boolean }
@@ -42,11 +43,13 @@ const FACTS: Array<[Fact, RegExp]> = [
   ['criminal_history', /convicted|conviction|felony|misdemeanou?r|criminal (record|history|offen[cs]e|charge)|pled guilty|plead(ed)? guilty|driving (violations?|record|tickets?)|moving violations?|\bdui\b|\bdwi\b/i],
   ['restrictions', /non-?compete|non-?solicit|restrictive covenant|employment (contract|agreement)|under (a|an|any) (contract|agreement)|bound by (a|an|any)/i],
   ['employment_record', /discharged|terminated|fired|asked to resign|dismissed from/i],
+  // A field of the employment-history section, filled from the resume's roles in order.
+  ['work_history', /^(?!.*(reason|responsibilit|duties|why|describe|supervisor|manager|salary|pay|phone|contact|may we)).*(\b(current|most recent|recent|second|2nd|third|3rd)\b[^?]{0,40}\b(employer|company|job title|title|position)\b|\b(job title|title|position) (at|with) (your )?(current|most recent|second|2nd|third|3rd|previous)|\b(start|end) date (with|of|at|for) (your )?(current|most recent|second|2nd|third|3rd|previous)|^\s*your (current )?(job )?title:?\s*$|^\s*(current|most recent) (employer|company|job title|title)\b)/i],
   ['relatives', /\brelatives?\b|related to (a|an|any)|family member|(parent|guardian|spouse|sibling|child) of (a|an) (current|former)/i],
   ['prior_application', /(previously|ever|before) (applied|interviewed)|(applied|interviewed) (to|with|at|for|by) .{0,40}(before|previously|in the past)|have you (ever )?(applied|interviewed)\b/i],
   ['referral', /\breferr(al|ed|er)\b|refer(red)? you|referee/i],
   ['sponsorship', /sponsor|\bvisa\b|\bh-?1b\b/i],
-  ['work_auth', /(legally |lawfully )?(authori[sz]ed|eligible|permitted|right) to work|work authori[sz]ation|without restriction|work permit/i],
+  ['work_auth', /(legally |lawfully )?(authori[sz]ed|eligible|permitted|right|allowed) (to work|for employment)|work authori[sz]ation|without restriction|work permit|permission to work/i],
   ['citizenship', /\bu\.?s\.? citizen|citizen of the united states|citizenship/i],
   ['over18', /(at least|over|older than) (18|eighteen)|18 years of age|age of 18/i],
   ['clearance', /security clearance|\bclearance\b|\bts\/sci\b|top secret/i],
@@ -100,6 +103,7 @@ export const FACT_MEANINGS: Record<Exclude<Fact, 'other'>, string> = {
   physical: 'physical ability (lifting, standing)', schedule: 'shifts, hours, weekends, travel, days available, full/part time',
   referral: 'was referred / who referred them', prior_application: 'applied or interviewed here before', relatives: 'relatives or relationships at the employer',
   restrictions: 'non-compete, non-solicit or employment contract', employment_record: 'was fired, discharged or asked to resign',
+  work_history: 'a field of their employment history: current / most recent / second employer, title, or the dates there',
 };
 
 /**
@@ -110,7 +114,7 @@ export function needsTopic(field: FillField): boolean {
   const label = field.label || '';
   if (field.type === 'file' || field.type === 'hidden' || labelKey(label).length < 8) {return false;}
   if (factOf(field)) {return false;}
-  return ![PROFILE_FIELD, DEFAULT_FIELD, HOW_HEARD, OPT_IN, ABOUT_THE_JOB, FOLLOW_UP].some(re => re.test(label)) && !isEssay(field);
+  return !isProfileField(field) && ![DEFAULT_FIELD, HOW_HEARD, OPT_IN, ABOUT_THE_JOB, FOLLOW_UP].some(re => re.test(label)) && !isEssay(field);
 }
 
 /** The candidate's saved answers (Settings → Application answers), keyed as stored. */
@@ -139,18 +143,26 @@ const FOLLOW_UP = /^\s*(\(?if (yes|no|so|applicable|not|you (answered|selected|c
 const HOW_HEARD = /how did you (hear|find|learn)|how'?d you (hear|find)|where did you (hear|find|see|learn)|how did this (job|role|position) come|^(application )?source$/i;
 const ESSAY = /^\s*why\b|\bwhy (are|do|did|would) you\b|\bdescribe\b|\btell us\b|\bshare (a|an|with|your|how|what|about)\b|\bwalk us through\b|\bwhat (excites|interests|draws|attracts|motivates|makes)\b|\banything else\b|\badditional information\b|\bcover letter\b|\bexplain\b|\bhow (do|would) you approach\b|\bgive an example\b|\bexample of\b/i;
 
+/** A contact or location field: a short label naming it ("Email", "LinkedIn profile link"), not a question that mentions it. */
+const isProfileField = (field: FillField) => {
+  const label = (field.label || field.name || '').trim();
+  return label.length <= 45 && PROFILE_FIELD.test(label) && !/\?/.test(label);
+};
+
 function sourceOf(field: FillField, action: FillAction): FillSource {
   if (action.action === 'upload_resume') {return 'resume';}
   const text = `${field.label || ''} ${field.name || ''}`;
   if (DEFAULT_FIELD.test(text)) {return 'default';}
-  if (PROFILE_FIELD.test(text)) {return 'profile';}
+  if (isProfileField(field)) {return 'profile';}
   return 'resume';
 }
 
 /** Open-ended questions whose answer is written text, not a fact: the AI's text is a draft. */
 function isEssay(field: FillField): boolean {
   if (field.options?.length) {return false;}
-  return ESSAY.test(field.label || '') || (field.type === 'textarea' && !PROFILE_FIELD.test(field.label || ''));
+  const label = field.label || '';
+  if (/^\s*(resume|cv|cover letter)\b/i.test(label)) {return false;}   // a paste-your-resume box, not a question
+  return ESSAY.test(label) || (field.type === 'textarea' && !isProfileField(field));
 }
 
 // A lone y/n counts only as the whole answer: "N/A - Local to Denver" is not a "no".
@@ -200,8 +212,13 @@ function employersAsked(label: string, jobCompany?: string | null): string[] {
  * experience"), which the resume's dated roles answer as a whole.
  */
 const GENERIC_SUBJECT = /^(professional|relevant|related|work|working|total|overall|industry|full[- ]time|paid|post[- ]graduate|prior|previous|similar|direct|hands[- ]on|practical|real[- ]world|this|the|of|your|any)( (professional|relevant|related|work|working|full[- ]time|paid|industry|hands[- ]on|direct))*$/i;
+/** "How many years for each skill below" or a grid row: one answer per item, the candidate's. */
+export const PER_ITEM_YEARS = /(skills?|tools?|areas?|items?|technologies|platforms) (below|listed|above)|each of the following|the following (skills|areas|tools)|for each\b/i;
+
 export function yearsSubject(label: string): string | null {
   const l = label.replace(/\s+/g, ' ');
+  const qualified = l.match(/experience (?:do you have )?(?:exclusively|specifically|directly|solely|only) ([^?,.;()]{2,60})/i);
+  if (qualified) {return qualified[1].replace(/\b(do you have|in total)\b.*$/i, '').trim();}
   const m = l.match(/years? of (?:professional |relevant |hands[- ]on |direct )?(?:experience )?(?:with|in|using|working with|as an?|as) ([^?,.;()]{2,50})/i)
     || l.match(/years? of ([^?,.;()]{2,40}?) experience/i)
     || l.match(/experience (?:do you have )?(?:with|in|using|as an?|as) ([^?,.;()]{2,50})/i);
@@ -218,6 +235,7 @@ const yearsThreshold = (label: string): number | null => {
 
 /** A years question answered from dated roles, as a number, a yes/no against a threshold, or an option. */
 function yearsAnswer(field: FillField, ctx: TruthContext): Pick<FillAction, 'action' | 'value' | 'evidence'> | null {
+  if (PER_ITEM_YEARS.test(field.label || '')) {return null;}
   const subject = yearsSubject(field.label || '');
   let years: number | null;
   let evidence: string;
@@ -273,8 +291,20 @@ function residenceAnswer(field: FillField, ctx: TruthContext): Pick<FillAction, 
   if (!loc) {return null;}
   const evidence = `Your profile location is ${loc}`;
   if (!field.options?.length) {return { action: 'type', value: loc, evidence };}
-  if (!looksYesNo(field) || !ctx.places) {return null;}
+  if (!ctx.places) {return null;}
   const me = resolveLocation(loc, ctx.places);
+  const inUS = me.states.length > 0;
+  // "Country you live in" with a list: the United States option for a US location.
+  if (!looksYesNo(field)) {
+    const us = inUS ? field.options.find(o => /^(the )?(united states( of america)?|usa|u\.s\.a?\.?|us)$/i.test(o.trim())) : undefined;
+    return us ? { action: field.type === 'select' ? 'select' : 'click_then_type', value: us, evidence } : null;
+  }
+  // "Do you live in one of the 48 contiguous United States or in Alaska?": the whole country.
+  const label0 = field.label || '';
+  if (/\b(united states|u\.s\.a?\.?|usa)\b/i.test(label0) && inUS && !resolveLocation(label0.replace(/\b(united states|u\.s\.a?\.?|usa)\b/gi, ' '), ctx.places).places.length) {
+    const outside = /contiguous|lower 48|continental/i.test(label0) && me.states.some(st => st === 'AK' || st === 'HI') && !new RegExp(me.states.map(st => (st === 'AK' ? 'alaska' : 'hawaii')).join('|'), 'i').test(label0);
+    return { ...yesNoAction(field, !outside), evidence };
+  }
   // The place phrase, not the whole question: the resolver counts a place only when it makes up
   // its part ("Are you currently located in Seattle" is not one).
   const label = field.label || '';
@@ -321,7 +351,11 @@ function howHeardAnswer(field: FillField): Pick<FillAction, 'action' | 'value' |
   const evidence = 'You found this job on Recrutas, a job board';
   const opts = field.options || [];
   if (!opts.length) {return { action: 'type', value: 'Recrutas (job board)', evidence };}
-  const pick = opts.find(o => /recrutas/i.test(o)) || opts.find(o => /job (board|site|search)|online (job|posting|board)|internet|online/i.test(o))
+  // A general job board, never a narrower one that isn't true ("College Job Boards").
+  const narrow = /college|universit|campus|school|career fair|military|veteran|diversity|government|niche|industry/i;
+  const pick = opts.find(o => /recrutas/i.test(o))
+    || opts.find(o => /job (board|site|search)|online (job|posting|board)|job posting/i.test(o) && !narrow.test(o))
+    || opts.find(o => /^(internet|online|web)\b/i.test(o.trim()) && !narrow.test(o))
     || opts.find(o => /^other\b/i.test(o.trim()));
   return pick ? { action: field.type === 'select' || field.type === 'radio' ? 'select' : 'click_then_type', value: pick, evidence }
     : { action: 'skip', value: undefined, evidence };
@@ -369,6 +403,12 @@ function computed(field: FillField, fact: Fact, ctx: TruthContext): Pick<FillAct
     case 'residence': return tag(residenceAnswer(field, ctx), 'profile');
     case 'time_zone': return tag(timeZoneAnswer(field, ctx), 'profile');
     case 'education_level': return tag(educationAnswer(field, ctx), 'resume');
+    case 'work_history': {
+      const w = workHistoryValue(ctx.resume, field.label || '');
+      if (!w) {return null;}
+      const pick = field.options?.length ? field.options.find(o => norm(o) === norm(w.value)) : w.value;
+      return pick ? { action: field.options?.length ? 'click_then_type' : 'type', value: pick, evidence: w.evidence, source: 'resume' } : null;
+    }
     default: return null;
   }
 }
