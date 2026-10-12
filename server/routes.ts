@@ -754,7 +754,11 @@ export async function registerRoutes(app: Express): Promise<Express> {
     const location = req.query.location ? String(req.query.location).slice(0, 200) : undefined;
     const rawWorkType = req.query.workType ? String(req.query.workType) : undefined;
     const workType = rawWorkType && ['remote', 'hybrid', 'onsite'].includes(rawWorkType) ? rawWorkType : undefined;
-    const jobs = await storage.getAggregatorFallbackJobs(skills, { jobTitle, location, workType }, 30, vectorStr);
+    const titles = (Array.isArray(profile?.resumeParsingData?.positions) ? profile.resumeParsingData.positions : [])
+      .map((p: any) => (typeof p?.title === 'string' ? p.title.trim() : '')).filter((t: string) => t.length > 2);
+    const jobs = await storage.getAggregatorFallbackJobs(skills, { jobTitle, location, workType }, 30, vectorStr, {
+      experienceLevel: profile?.experienceLevel ?? null, titles, location: profile?.location ?? null, workType: profile?.workType ?? null,
+    });
     res.set('Cache-Control', 'private, max-age=300');
     res.json({ jobs });
   }));
