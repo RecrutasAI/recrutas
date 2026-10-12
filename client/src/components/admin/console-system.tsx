@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Loader2, Pin } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { adminFetch } from '@/lib/admin-fetch';
-import { JobRow, SignalRow, useConsoleActions, useOverview } from './console-today';
+import { ADMIN_DIALOG, JobRow, SignalRow, useConsoleActions, useOverview } from './console-today';
 import { ErrorsCard, PipelinesCard, SpeedCard } from './console-performance';
 import { VIZ_TOKENS } from './charts';
 
@@ -56,21 +56,24 @@ function ChangeDialog({ setting, onClose, onSaved }: { setting: SettingRow; onCl
 
   return (
     <Dialog open onOpenChange={o => !o && onClose()}>
-      <DialogContent>
-        <DialogHeader>
+      <DialogContent className={ADMIN_DIALOG}>
+        <DialogHeader className="pr-12 text-left">
           <DialogTitle>{setting.title}</DialogTitle>
           <DialogDescription>{setting.help}</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           {typeof setting.value === 'boolean' && (
             <div className="flex items-center justify-between">
-              <Label htmlFor="setting-value">Turn {value ? 'on' : 'off'}</Label>
-              <Switch id="setting-value" checked={!!value} onCheckedChange={setValue} />
+              <Label htmlFor="setting-value">Now {describe(setting.key, setting.value)}; change to</Label>
+              <div className="flex items-center gap-2">
+                <span className="w-7 text-sm font-semibold">{value ? 'On' : 'Off'}</span>
+                <Switch id="setting-value" checked={!!value} onCheckedChange={setValue} />
+              </div>
             </div>
           )}
           {typeof setting.value === 'number' && (
             <div className="space-y-1">
-              <Label htmlFor="setting-value">New value</Label>
+              <Label htmlFor="setting-value">New value (now {describe(setting.key, setting.value)})</Label>
               <Input id="setting-value" type="number" value={value} onChange={e => setValue(Number(e.target.value))} />
             </div>
           )}

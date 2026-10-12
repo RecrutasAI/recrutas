@@ -98,8 +98,8 @@ function ReasonDialog({ pending, onClose }: { pending: Pending; onClose: () => v
   }
   return (
     <Dialog open onOpenChange={o => !o && onClose()}>
-      <DialogContent>
-        <DialogHeader>
+      <DialogContent className={ADMIN_DIALOG}>
+        <DialogHeader className="pr-12 text-left">
           <DialogTitle>{pending.title}</DialogTitle>
           <DialogDescription>{pending.description}</DialogDescription>
         </DialogHeader>
@@ -117,6 +117,9 @@ function ReasonDialog({ pending, onClose }: { pending: Pending; onClose: () => v
     </Dialog>
   );
 }
+
+/** The shared dialog is unpadded (each modal pads itself); admin dialogs keep a margin on phones. */
+export const ADMIN_DIALOG = 'w-[calc(100%-2rem)] max-w-md rounded-2xl p-6';
 
 /** Actions open a confirm dialog; returns the triggers and the dialog to render. */
 export function useConsoleActions(onChanged: () => void) {
