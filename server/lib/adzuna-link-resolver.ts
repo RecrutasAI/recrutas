@@ -293,6 +293,25 @@ function board(raw: Array<AtsJob>, complete = true): AtsBoard {
 
 const badShape: AtsBoard = { ok: false, reason: 'unexpected payload shape' };
 
+type AshbyPlace = { location?: string; address?: { postalAddress?: { addressCountry?: string } } };
+
+/**
+ * Every place an Ashby job lists, with its country when the text doesn't say it: "India | Pune"
+ * stays as is; "Pune" with addressCountry India becomes "Pune, India", so the US-only feed can
+ * tell. Ashby has no `locationName`: reading it left all 17,025 live Ashby jobs (2026-10-12)
+ * without a location, which let foreign ones past the US filter.
+ */
+export function ashbyLocation(j: AshbyPlace & { secondaryLocations?: AshbyPlace[] }): string | undefined {
+  const one = (p: AshbyPlace): string => {
+    const text = (p.location ?? '').trim();
+    const country = (p.address?.postalAddress?.addressCountry ?? '').trim();
+    if (!country || /^(us|usa|united states( of america)?)$/i.test(country) || text.toLowerCase().includes(country.toLowerCase())) {return text;}
+    return text ? `${text}, ${country}` : country;
+  };
+  const all = [j, ...(j.secondaryLocations ?? [])].map(one).filter(Boolean);
+  return all.length ? [...new Set(all)].join('; ') : undefined;
+}
+
 export async function fetchAtsBoard(atsType: AtsType, atsId: string): Promise<AtsBoard> {
   try {
     if (atsType === 'greenhouse') {
@@ -316,9 +335,9 @@ export async function fetchAtsBoard(atsType: AtsType, atsId: string): Promise<At
     if (atsType === 'ashby') {
       const r = await fetchJsonStrict(`https://api.ashbyhq.com/posting-api/job-board/${atsId}`);
       if (!r.ok) return r;
-      const data = r.data as { jobs?: Array<{ title: string; locationName?: string; jobUrl?: string; descriptionPlain?: string; publishedAt?: string }> } | null;
+      const data = r.data as { jobs?: Array<{ title: string; jobUrl?: string; descriptionPlain?: string; publishedAt?: string } & AshbyPlace & { secondaryLocations?: AshbyPlace[] }> } | null;
       if (!Array.isArray(data?.jobs)) return badShape;
-      return board(data.jobs.map(j => ({ title: j.title, location: j.locationName, url: j.jobUrl ?? '', description: j.descriptionPlain ?? '', postedAt: atsDate(j.publishedAt) })));
+      return board(data.jobs.map(j => ({ title: j.title, location: ashbyLocation(j), url: j.jobUrl ?? '', description: j.descriptionPlain ?? '', postedAt: atsDate(j.publishedAt) })));
     }
     if (atsType === 'workable') {
       // Workable's public widget endpoint returns the account doc with a
