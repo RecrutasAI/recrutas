@@ -109,6 +109,16 @@ async function supabaseUp(): Promise<boolean | null> {
   return auth && storage;
 }
 
+/** Our backup sign-in server answers on its public address and copied accounts < 30 min ago. */
+async function backupAuthReady(): Promise<boolean | null> {
+  const stamp = '/opt/recrutas/auth/last-sync';
+  if (!fs.existsSync(stamp)) {return null;}
+  const fresh = Date.now() - fs.statSync(stamp).mtimeMs < 30 * 60_000;
+  const url = (process.env.BACKUP_AUTH_URL || 'https://auth.recrutas.ai').replace(/\/$/, '');
+  const up = await fetch(`${url}/auth/v1/health`, { signal: AbortSignal.timeout(8000) }).then(r => r.ok).catch(() => false);
+  return fresh && up;
+}
+
 async function main(): Promise<void> {
   const startedAt = new Date();
   // Count connections as the superuser first: it works even when the app user is locked out.
@@ -139,13 +149,14 @@ async function main(): Promise<void> {
   const setBy: SetBy = {};
   for (const s of current) { (settings as any)[s.key] = s.value; setBy[s.key] = s.updatedBy; }
 
-  const [feed, conns, backlog, supabase] = await Promise.all([
+  const [feed, conns, backlog, supabase, backupAuth] = await Promise.all([
     db.execute(sql`
       SELECT count(*)::int AS n, percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95
       FROM request_metrics WHERE endpoint = '/api/ai-matches' AND created_at > NOW() - INTERVAL '15 minutes'`).then(r => rows(r)[0]),
     db.execute(sql`SELECT count(*)::int AS n FROM pg_stat_activity`).then(r => rows(r)[0]),
     db.execute(sql`SELECT count(*)::int AS n, EXTRACT(EPOCH FROM (NOW() - min(created_at))) / 60 AS oldest_min FROM job_postings WHERE status = 'active' AND vector_embedding IS NULL`).then(r => rows(r)[0]).catch(() => null),
     supabaseUp(),
+    backupAuthReady(),
   ]);
   const input: AutopilotInput = {
     feedP95Ms: feed?.p95 === null || feed?.p95 === undefined ? null : Number(feed.p95),
@@ -158,6 +169,7 @@ async function main(): Promise<void> {
     embeddingBacklog: backlog ? Number(backlog.n) : null,
     embeddingOldestMin: backlog?.oldest_min === null || backlog?.oldest_min === undefined ? null : Number(backlog.oldest_min),
     supabaseUp: supabase,
+    backupAuthReady: backupAuth,
   };
 
   const reaped = reapIfNeeded(input.dbConnections, true);
@@ -178,7 +190,7 @@ async function main(): Promise<void> {
   for (const a of decision.alerts) {alert(a.key, a.subject, a.body);}
   if (!DRY) {writeState(decision.state);}
 
-  const summary = `load ${input.load1.toFixed(2)}/${input.cpus} · RAM ${Math.round(input.memAvailableMb)} MB · conns ${input.dbConnections} · disk ${input.diskPct}% · feed p95 ${input.feedP95Ms ?? 'n/a'} ms (${input.feedSamples}) · supabase ${input.supabaseUp === null ? 'n/a' : input.supabaseUp ? 'up' : 'DOWN'}`;
+  const summary = `load ${input.load1.toFixed(2)}/${input.cpus} · RAM ${Math.round(input.memAvailableMb)} MB · conns ${input.dbConnections} · disk ${input.diskPct}% · feed p95 ${input.feedP95Ms ?? 'n/a'} ms (${input.feedSamples}) · supabase ${input.supabaseUp === null ? 'n/a' : input.supabaseUp ? 'up' : 'DOWN'} · backup sign-in ${input.backupAuthReady === null ? 'n/a' : input.backupAuthReady ? 'ready' : 'NOT ready'}`;
   console.log(`[autopilot] ${summary}${applied.length ? ` · applied ${applied.join(', ')}` : ''}${refused.length ? ` · refused ${refused.join(', ')}` : ''}`);
   // A heartbeat every 15 minutes, and a row whenever it acted, so the admin console can show it's alive.
   if (!DRY && (applied.length || refused.length || decision.alerts.length || startedAt.getUTCMinutes() % 15 === 0)) {

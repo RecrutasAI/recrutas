@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { decideAutopilot, BUSY_NOTICE, SUPABASE_NOTICE, isMissingTable, shouldReap, REAP_SQL, type AutopilotInput } from '../server/services/autopilot.service';
+import { decideAutopilot, BUSY_NOTICE, SUPABASE_NOTICE, FAILOVER_NOTICE, isMissingTable, shouldReap, REAP_SQL, type AutopilotInput } from '../server/services/autopilot.service';
 import { SETTING_DEFAULTS, type Settings } from '../server/services/runtime-settings.service';
 
 const calm: AutopilotInput = { feedP95Ms: 400, feedSamples: 40, load1: 0.6, cpus: 2, memAvailableMb: 900, dbConnections: 7, diskPct: 53 };
@@ -111,6 +111,35 @@ describe('decideAutopilot', () => {
     const s = decideAutopilot({ ...calm, supabaseUp: false }, S({ noticeBanner: SUPABASE_NOTICE }), { noticeBanner: 'autopilot' },
       { healthySince: { conns: t0.toISOString() }, supabaseDownSince: t0.toISOString() }, at(20));
     expect(keys(s).noticeBanner).toBeUndefined();
+  });
+
+  it('moves sign-in to the backup after Supabase is down 5 min, only when the backup is ready', () => {
+    const down = { ...calm, supabaseUp: false, backupAuthReady: true };
+    const since = { healthySince: {}, supabaseDownSince: t0.toISOString() };
+    expect(keys(decideAutopilot(down, S(), {}, since, at(4))).authProvider).toBeUndefined();
+    expect(keys(decideAutopilot(down, S(), {}, since, at(5)))).toEqual({ authProvider: 'recrutas', noticeBanner: FAILOVER_NOTICE });
+    // Backup not ready: no switch, just the "sign-in unavailable" banner.
+    expect(keys(decideAutopilot({ ...down, backupAuthReady: false }, S(), {}, since, at(5)))).toEqual({ noticeBanner: SUPABASE_NOTICE });
+    // Replaces its own Supabase banner, never an admin's.
+    expect(keys(decideAutopilot(down, S({ noticeBanner: SUPABASE_NOTICE }), { noticeBanner: 'autopilot' }, since, at(5))).noticeBanner).toEqual(FAILOVER_NOTICE);
+    const admin = { text: 'Maintenance tonight', level: 'info' as const };
+    expect(keys(decideAutopilot(down, S({ noticeBanner: admin }), { noticeBanner: 'abas@recrutas.ai' }, since, at(5)))).toEqual({ authProvider: 'recrutas' });
+  });
+
+  it('never switches sign-in back by itself, but emails when Supabase is back', () => {
+    const on = S({ authProvider: 'recrutas', noticeBanner: FAILOVER_NOTICE });
+    const d = decideAutopilot({ ...calm, supabaseUp: true, backupAuthReady: true }, on, { authProvider: 'autopilot', noticeBanner: 'autopilot' },
+      { healthySince: {}, supabaseUpSince: t0.toISOString() }, at(10));
+    expect(keys(d).authProvider).toBeUndefined();
+    expect(keys(d).noticeBanner).toBeUndefined();
+    expect(d.alerts.map(a => a.key)).toContain('autopilot-supabase-back');
+  });
+
+  it('respects a pinned or admin-chosen sign-in server (setSetting refuses pinned; decide never reverts)', () => {
+    const d = decideAutopilot({ ...calm, supabaseUp: false, backupAuthReady: true }, S({ authProvider: 'recrutas' }), { authProvider: 'abas@recrutas.ai' },
+      { healthySince: {}, supabaseDownSince: t0.toISOString() }, at(10));
+    expect(keys(d).authProvider).toBeUndefined();
+    expect(d.alerts.map(a => a.key)).not.toContain('autopilot-supabase-down');
   });
 
   it('never undoes a switch an admin set', () => {

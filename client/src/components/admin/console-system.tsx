@@ -77,6 +77,17 @@ function ChangeDialog({ setting, onClose, onSaved }: { setting: SettingRow; onCl
               <Input id="setting-value" type="number" value={value} onChange={e => setValue(Number(e.target.value))} />
             </div>
           )}
+          {setting.key === 'authProvider' && (
+            <div className="space-y-2">
+              <Label>Sign-in server (now {describe(setting.key, setting.value)})</Label>
+              <div className="flex gap-2">
+                {([['supabase', 'Supabase'], ['recrutas', 'Our backup (VPS)']] as const).map(([v, label]) => (
+                  <Button key={v} type="button" size="sm" variant={value === v ? 'default' : 'outline'} onClick={() => setValue(v)}>{label}</Button>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500">Everyone is signed out once when this changes; passwords keep working. Accounts created on the other server since the last copy won't be there.</p>
+            </div>
+          )}
           {setting.key === 'noticeBanner' && (
             <div className="space-y-2">
               <Label htmlFor="banner-text">Banner text (empty removes it)</Label>

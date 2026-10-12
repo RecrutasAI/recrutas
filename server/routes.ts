@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { activeAuthBaseUrl } from "./lib/auth-provider";
 import { isFallbackKey, readFallbackFile, removeResumeFile, resumeFileInfo, resumeFileUrl, verifyResumeFileLink } from "./lib/resume-files";
 import { eq } from "drizzle-orm";
 import { getTableColumns } from "drizzle-orm/utils";
@@ -1001,7 +1002,8 @@ export async function registerRoutes(app: Express): Promise<Express> {
         return res.status(400).json({ message: 'refreshToken is required' });
       }
 
-      const supabaseUrl  = process.env.SUPABASE_URL;
+      // Renew with whichever sign-in server is active (Supabase, or our backup after a switch).
+      const supabaseUrl  = await activeAuthBaseUrl();
       const supabaseAnon = process.env.SUPABASE_ANON_KEY;
       if (!supabaseUrl || !supabaseAnon) {
         return res.status(503).json({ message: 'Auth service not configured' });

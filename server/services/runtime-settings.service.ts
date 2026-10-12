@@ -25,6 +25,7 @@ export const SETTING_SCHEMAS = {
   noticeBanner: z.object({ text: z.string().trim().min(1).max(200), level: z.enum(['info', 'warning']) }).nullable(),
   autopilot: z.boolean(),
   feedGateSlots: z.number().int().min(1).max(50),
+  authProvider: z.enum(['supabase', 'recrutas']),
 } as const;
 
 export type SettingKey = keyof typeof SETTING_SCHEMAS;
@@ -38,6 +39,7 @@ export const SETTING_DEFAULTS: Settings = {
   noticeBanner: null,
   autopilot: true,
   feedGateSlots: 4,
+  authProvider: 'supabase',
 };
 
 /** Plain-language labels the console shows next to each switch. */
@@ -48,6 +50,7 @@ export const SETTING_LABELS: Record<SettingKey, { title: string; help: string }>
   pauseNonEssentialCrons: { title: 'Pause background jobs', help: 'Pauses discovery, external scrapes, ghost detection and match warming to free CPU for users.' },
   noticeBanner: { title: 'Site notice banner', help: 'A short message shown at the top of the site for everyone.' },
   feedGateSlots: { title: 'Feeds scored at once', help: 'How many fresh feeds may be scored at the same time across the site. Others get their last feed (or a quick fallback) right away instead of everyone slowing down.' },
+  authProvider: { title: 'Sign-in server', help: "Supabase normally; 'recrutas' is our own backup sign-in server on the VPS (infra/vps/auth). Switching signs everyone out once; passwords keep working." },
   autopilot: { title: 'Autopilot', help: 'Lets the system flip these switches itself when it is under pressure, and back when it recovers.' },
 };
 
