@@ -18,4 +18,12 @@ if (
   window.history.replaceState(null, '', '/reset-password' + window.location.hash)
 }
 
-export const supabase = createClient(supabaseUrl!, supabaseAnonKey!)
+// Sign-in normally runs on Supabase. While it is down, the console can move it to our
+// own backup server (useSiteStatus stores its address here and reloads the page). Both
+// sign tokens with the same secret, so the rest of the app works with either.
+export const AUTH_URL_KEY = 'recrutas-auth-url'
+function storedAuthUrl(): string | null {
+  try { return typeof window !== 'undefined' ? window.localStorage.getItem(AUTH_URL_KEY) : null } catch { return null }
+}
+
+export const supabase = createClient(storedAuthUrl() || supabaseUrl!, supabaseAnonKey!)

@@ -9,6 +9,7 @@ import { adminEmailFromSession, verifyAdminSecret } from '../middleware/security
 import { getOverview } from '../services/admin-console.service';
 import { requestJob, snoozeSignal, clearSnooze, isRunnableJob } from '../services/admin-actions.service';
 import { getGrowth, getGrowthAnalytics, getJobsInsights, getAiInsights } from '../services/admin-insights.service';
+import { BACKUP_AUTH_URL } from '../lib/auth-provider';
 import {
   SETTING_DEFAULTS, SETTING_LABELS, getSettings, isSettingKey, listSettings, recentAudit, setSetting,
 } from '../services/runtime-settings.service';
@@ -22,7 +23,8 @@ export function registerAdminConsoleRoutes(app: Express): void {
   app.get('/api/site/status', asyncHandler(async (_req, res) => {
     const s = await getSettings();
     res.set('Cache-Control', 'public, max-age=30, s-maxage=60');
-    res.json({ notice: s.noticeBanner, signupWaitlist: s.signupWaitlist });
+    // authUrl is set only while sign-in runs on our backup server; browsers switch to it.
+    res.json({ notice: s.noticeBanner, signupWaitlist: s.signupWaitlist, authUrl: s.authProvider === 'recrutas' ? BACKUP_AUTH_URL : null });
   }));
 
   app.get('/api/admin/console/overview', asyncHandler(async (req, res) => {
