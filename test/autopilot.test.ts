@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { decideAutopilot, BUSY_NOTICE, isMissingTable, shouldReap, REAP_SQL, type AutopilotInput } from '../server/services/autopilot.service';
+import { decideAutopilot, BUSY_NOTICE, SUPABASE_NOTICE, isMissingTable, shouldReap, REAP_SQL, type AutopilotInput } from '../server/services/autopilot.service';
 import { SETTING_DEFAULTS, type Settings } from '../server/services/runtime-settings.service';
 
 const calm: AutopilotInput = { feedP95Ms: 400, feedSamples: 40, load1: 0.6, cpus: 2, memAvailableMb: 900, dbConnections: 7, diskPct: 53 };
@@ -88,6 +88,29 @@ describe('decideAutopilot', () => {
     expect(keys(d0).signupWaitlist).toBeUndefined();
     expect(keys(decideAutopilot(calm, on, { signupWaitlist: 'autopilot' }, d0.state, at(15))).signupWaitlist).toBe(false);
     expect(keys(decideAutopilot(calm, on, { signupWaitlist: 'abas@recrutas.ai' }, d0.state, at(15))).signupWaitlist).toBeUndefined();
+  });
+
+  it('posts the sign-in banner after Supabase is down 2 min, and takes it down after 5 min up', () => {
+    const down = { ...calm, supabaseUp: false };
+    const d0 = decideAutopilot(down, S(), {}, { healthySince: {} }, t0);
+    expect(keys(d0)).toEqual({});
+    const d1 = decideAutopilot(down, S(), {}, d0.state, at(2));
+    expect(keys(d1)).toEqual({ noticeBanner: SUPABASE_NOTICE });
+    expect(d1.alerts.map(a => a.key)).toContain('autopilot-supabase-down');
+    const on = S({ noticeBanner: SUPABASE_NOTICE });
+    const u0 = decideAutopilot({ ...calm, supabaseUp: true }, on, { noticeBanner: 'autopilot' }, d1.state, at(3));
+    expect(keys(u0)).toEqual({});
+    expect(keys(decideAutopilot({ ...calm, supabaseUp: true }, on, { noticeBanner: 'autopilot' }, u0.state, at(8)))).toEqual({ noticeBanner: null });
+  });
+
+  it('keeps an admin banner, and each rule only clears its own banner', () => {
+    const admin = { text: 'Maintenance tonight', level: 'info' as const };
+    const d = decideAutopilot({ ...calm, supabaseUp: false }, S({ noticeBanner: admin }), { noticeBanner: 'abas@recrutas.ai' }, { healthySince: {}, supabaseDownSince: t0.toISOString() }, at(5));
+    expect(keys(d).noticeBanner).toBeUndefined();
+    // Connections recovering must not take down the Supabase banner.
+    const s = decideAutopilot({ ...calm, supabaseUp: false }, S({ noticeBanner: SUPABASE_NOTICE }), { noticeBanner: 'autopilot' },
+      { healthySince: { conns: t0.toISOString() }, supabaseDownSince: t0.toISOString() }, at(20));
+    expect(keys(s).noticeBanner).toBeUndefined();
   });
 
   it('never undoes a switch an admin set', () => {

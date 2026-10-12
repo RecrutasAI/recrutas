@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { isFallbackKey, readFallbackFile, removeResumeFile, resumeFileInfo, resumeFileUrl, verifyResumeFileLink } from "./lib/resume-files";
 import { eq } from "drizzle-orm";
 import { getTableColumns } from "drizzle-orm/utils";
 import { inArray } from "drizzle-orm/sql/expressions";
@@ -1661,8 +1662,8 @@ Analyze the form and return the actions JSON to fill every field you can.`;
 
     const resumePath = profile?.resumeUrl as string | undefined;
     if (resumePath && !resumePath.startsWith('http')) {
-      const { error } = await supabaseAdmin.storage.from('resumes').remove([resumePath]);
-      if (error) {console.warn(`[account-delete] resume file not removed for ${userId}:`, error.message);}
+      const error = await removeResumeFile(resumePath).catch((e: Error) => e.message);
+      if (error) {console.warn(`[account-delete] resume file not removed for ${userId}:`, error);}
     }
 
     const { error: authError } = await supabaseAdmin.auth.admin.deleteUser(userId);
@@ -1918,24 +1919,37 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     if (key.startsWith('http')) {
       return res.json({ onFile: true, exists: true, fileName: resumeFileName(name, null), viewUrl: key, downloadUrl: key });
     }
-    const bucket = supabaseAdmin.storage.from('resumes');
-    const { data: info } = await bucket.info(key);
+    const info = await resumeFileInfo(key);
     if (!info) {return res.json({ onFile: true, exists: false });}
-    const anyInfo = info as any;
-    const contentType: string | null = anyInfo.contentType || anyInfo.metadata?.mimetype || null;
-    const fileName = resumeFileName(name, contentType);
-    const [view, download] = await Promise.all([
-      bucket.createSignedUrl(key, 300),
-      bucket.createSignedUrl(key, 300, { download: fileName }),
+    const fileName = resumeFileName(name, info.contentType);
+    const [viewUrl, downloadUrl] = await Promise.all([
+      resumeFileUrl(key, 300).catch(() => null),
+      resumeFileUrl(key, 300, fileName).catch(() => null),
     ]);
     res.setHeader('Cache-Control', 'private, no-store');
     res.json({
-      onFile: true, exists: true, fileName, contentType,
-      size: anyInfo.size ?? anyInfo.metadata?.size ?? null,
-      uploadedAt: anyInfo.createdAt || anyInfo.created_at || null,
-      viewUrl: view.data?.signedUrl || null,
-      downloadUrl: download.data?.signedUrl || null,
+      onFile: true, exists: true, fileName, contentType: info.contentType,
+      size: info.size, uploadedAt: info.createdAt, viewUrl, downloadUrl,
     });
+  }));
+
+  // A resume kept in our Postgres while Supabase Storage was unavailable
+  // (server/lib/resume-files.ts). Reached only through a signed, short-lived link.
+  app.get('/api/resume-files/:key', asyncHandler(async (req: any, res) => {
+    const key = String(req.params.key || '');
+    const expires = Number(req.query.e);
+    const download = typeof req.query.dl === 'string' ? req.query.dl : '';
+    if (!isFallbackKey(key) || !verifyResumeFileLink(key, expires, download, String(req.query.s || ''))) {
+      return res.status(403).json({ message: 'This link is invalid or has expired.' });
+    }
+    const file = await readFallbackFile(key);
+    if (!file) {return res.status(404).json({ message: 'Resume not found.' });}
+    res.setHeader('Content-Type', file.contentType || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Content-Disposition', download
+      ? `attachment; filename="${download.replace(/["\\\r\n]/g, '')}"`
+      : 'inline');
+    res.send(file.content);
   }));
 
   // Get signed URL for resume (secure access)

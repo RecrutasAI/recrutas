@@ -97,6 +97,18 @@ async function startConsoleRequests(): Promise<void> {
   }
 }
 
+/** Supabase sign-in and the resume bucket both answer. A network error counts as down. */
+async function supabaseUp(): Promise<boolean | null> {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const anon = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !anon || !service) {return null;}
+  const ok = (p: string, key: string) => fetch(`${url}${p}`, { headers: { apikey: key, Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(8000) })
+    .then(r => r.ok).catch(() => false);
+  const [auth, storage] = await Promise.all([ok('/auth/v1/health', anon), ok('/storage/v1/bucket/resumes', service)]);
+  return auth && storage;
+}
+
 async function main(): Promise<void> {
   const startedAt = new Date();
   // Count connections as the superuser first: it works even when the app user is locked out.
@@ -127,12 +139,13 @@ async function main(): Promise<void> {
   const setBy: SetBy = {};
   for (const s of current) { (settings as any)[s.key] = s.value; setBy[s.key] = s.updatedBy; }
 
-  const [feed, conns, backlog] = await Promise.all([
+  const [feed, conns, backlog, supabase] = await Promise.all([
     db.execute(sql`
       SELECT count(*)::int AS n, percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95
       FROM request_metrics WHERE endpoint = '/api/ai-matches' AND created_at > NOW() - INTERVAL '15 minutes'`).then(r => rows(r)[0]),
     db.execute(sql`SELECT count(*)::int AS n FROM pg_stat_activity`).then(r => rows(r)[0]),
     db.execute(sql`SELECT count(*)::int AS n, EXTRACT(EPOCH FROM (NOW() - min(created_at))) / 60 AS oldest_min FROM job_postings WHERE status = 'active' AND vector_embedding IS NULL`).then(r => rows(r)[0]).catch(() => null),
+    supabaseUp(),
   ]);
   const input: AutopilotInput = {
     feedP95Ms: feed?.p95 === null || feed?.p95 === undefined ? null : Number(feed.p95),
@@ -144,6 +157,7 @@ async function main(): Promise<void> {
     diskPct: diskPct(),
     embeddingBacklog: backlog ? Number(backlog.n) : null,
     embeddingOldestMin: backlog?.oldest_min === null || backlog?.oldest_min === undefined ? null : Number(backlog.oldest_min),
+    supabaseUp: supabase,
   };
 
   const reaped = reapIfNeeded(input.dbConnections, true);
@@ -164,7 +178,7 @@ async function main(): Promise<void> {
   for (const a of decision.alerts) {alert(a.key, a.subject, a.body);}
   if (!DRY) {writeState(decision.state);}
 
-  const summary = `load ${input.load1.toFixed(2)}/${input.cpus} · RAM ${Math.round(input.memAvailableMb)} MB · conns ${input.dbConnections} · disk ${input.diskPct}% · feed p95 ${input.feedP95Ms ?? 'n/a'} ms (${input.feedSamples})`;
+  const summary = `load ${input.load1.toFixed(2)}/${input.cpus} · RAM ${Math.round(input.memAvailableMb)} MB · conns ${input.dbConnections} · disk ${input.diskPct}% · feed p95 ${input.feedP95Ms ?? 'n/a'} ms (${input.feedSamples}) · supabase ${input.supabaseUp === null ? 'n/a' : input.supabaseUp ? 'up' : 'DOWN'}`;
   console.log(`[autopilot] ${summary}${applied.length ? ` · applied ${applied.join(', ')}` : ''}${refused.length ? ` · refused ${refused.join(', ')}` : ''}`);
   // A heartbeat every 15 minutes, and a row whenever it acted, so the admin console can show it's alive.
   if (!DRY && (applied.length || refused.length || decision.alerts.length || startedAt.getUTCMinutes() % 15 === 0)) {

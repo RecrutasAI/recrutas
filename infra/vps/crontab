@@ -20,6 +20,9 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # SmartRecruiters jobs our first-page board read doesn't re-see: ask SmartRecruiters whether
 # each is still active, close the ones the employer took down (3,000 a run, oldest first).
 10 * * * * $RUN check-smartrecruiters-liveness 20 npx tsx scripts/check-smartrecruiters-liveness.ts
+# Resumes saved in our Postgres while Supabase Storage was down go back to Supabase
+# (server/lib/resume-files.ts). Normally nothing to do.
+25 * * * * $RUN move-fallback-resumes 10 npx tsx scripts/move-fallback-resumes.ts
 40 3 * * 0 $RUN compute-location-keys-weekly 30 npx tsx scripts/compute-location-keys.ts --recompute
 
 # Batch Embeddings (JOBS) — every 6h. The local provider (EMBED_PROVIDER=local,
