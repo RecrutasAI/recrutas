@@ -541,7 +541,7 @@ export async function registerRoutes(app: Express): Promise<Express> {
       const result = await Promise.race([
         storage.getJobRecommendations(userId, filters, { page, limit }),
         timeoutPromise,
-      ]) as { jobs: any[]; total: number; page: number; hasMore: boolean };
+      ]) as { jobs: any[]; total: number; page: number; hasMore: boolean; refreshing?: boolean };
 
       finish();
       console.log(`[ai-matches] getJobRecommendations done in ${Date.now() - startedAt}ms (total=${result.total})`);
@@ -576,6 +576,8 @@ export async function registerRoutes(app: Express): Promise<Express> {
         total: result.total,
         page: result.page,
         hasMore: result.hasMore,
+        // Busy: this is the person's last feed or the fallback; the page re-asks shortly.
+        ...(result.refreshing ? { refreshing: true } : {}),
       });
     } catch (error: any) {
       const elapsed = Date.now() - startedAt;

@@ -102,6 +102,8 @@ export async function readFeedCache(
   conn: Conn = db,
   now: Date = new Date(),
   ttlMs: number = feedCacheTtlMs(),
+  /** Under load: any stored feed, however old, beats making the person wait. */
+  allowStale = false,
 ): Promise<any[] | null> {
   const r = await conn.execute(sql`
     SELECT c.jobs, c.computed_at, GREATEST(p.updated_at, p.embedding_updated_at) AS profile_changed_at
@@ -111,7 +113,7 @@ export async function readFeedCache(
   const hit = rows(r)[0];
   if (!hit) {return null;}
   const fresh = isFeedCacheFresh(new Date(hit.computed_at), hit.profile_changed_at ? new Date(hit.profile_changed_at) : null, now, ttlMs);
-  if (!fresh) {return null;}
+  if (!fresh && !allowStale) {return null;}
   const cached: any[] = Array.isArray(hit.jobs) ? hit.jobs : [];
   const ids = cached.map(j => j?.id).filter((id): id is number => typeof id === 'number');
   const live = new Map<number, { description: string | null; requirements: unknown; status: string | null }>();
