@@ -388,7 +388,7 @@ function parseAshbyResponse(data: any, company: CompanyConfig): ScrapedJob[] {
 
   for (const job of jobListings) {
     try {
-      const locationRaw = job.location || 'Remote';
+      const locationRaw = job.location || '';  // never invent "Remote" for a missing location
       jobs.push({
         id: `ashby_${company.ats?.boardId}_${job.id}`,
         title: job.title,

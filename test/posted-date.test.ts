@@ -56,3 +56,15 @@ describe('source posting dates', () => {
     expect(workdayPostedOn(undefined, now)).toBeNull();
   });
 });
+
+import { ashbyLocation } from '../server/lib/adzuna-link-resolver';
+describe('ashbyLocation', () => {
+  it('reads every place with its country when the text lacks it', () => {
+    expect(ashbyLocation({ location: 'India | Pune', address: { postalAddress: { addressCountry: 'India' } } })).toBe('India | Pune');
+    expect(ashbyLocation({ location: 'Pune', address: { postalAddress: { addressCountry: 'India' } } })).toBe('Pune, India');
+    expect(ashbyLocation({ location: 'New York, NY (HQ)', address: { postalAddress: { addressCountry: 'USA' } },
+      secondaryLocations: [{ location: 'Remote (Canada)', address: { postalAddress: { addressCountry: 'Canada' } } }, { location: 'Miami, FL' }] }))
+      .toBe('New York, NY (HQ); Remote (Canada); Miami, FL');
+    expect(ashbyLocation({})).toBeUndefined();
+  });
+});
