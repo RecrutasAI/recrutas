@@ -1645,11 +1645,9 @@ export class DatabaseStorage implements IStorage {
 
       // "0 matches" is the last resort: start strict, then relax the fit signals (title,
       // skills) one at a time. The person's own choices, location and work type, are never
-      // relaxed: a Seattle search never answers with jobs elsewhere. Without a resume vector
+      // relaxed: a location search never answers with jobs elsewhere. Without a resume vector
       // every step keeps a skill or title signal, so it never turns into random jobs.
       const relevance = skillCondition || titleCondition ? or(skillCondition, titleCondition) : null;
-      // The person's own choices, location and work type, are never relaxed: a Seattle search
-      // never answers with jobs elsewhere.
       const steps: (any | null)[][] = [
         [titleCondition, workTypeCondition, locationCondition, skillCondition],
         [relevance, workTypeCondition, locationCondition],
