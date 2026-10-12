@@ -110,7 +110,7 @@ export interface IStorage {
   getJobPostings(recruiterId: string): Promise<JobPosting[]>;
   getJobPosting(id: number): Promise<JobPosting | undefined>;
   getJobRecommendations(candidateId: string, filters?: FeedFilters, pagination?: { page: number; limit: number }, retrieval?: FeedRetrievalOptions): Promise<{ jobs: any[]; total: number; page: number; hasMore: boolean }>;
-  getDiscoveryFeedForCandidate(candidateId: string): Promise<any[]>;
+  getDiscoveryFeedForCandidate(candidateId: string, filters?: FeedFilters): Promise<any[]>;
   updateJobPosting(id: number, talentOwnerId: string, updates: Partial<InsertJobPosting>): Promise<JobPosting>;
   deleteJobPosting(id: number, talentOwnerId: string): Promise<void>;
 
@@ -1820,11 +1820,14 @@ export class DatabaseStorage implements IStorage {
           [...AGGREGATOR_SOURCES].map(s => sql`${s}`), sql`, `
         )})`,
         aggregatorUrlExclusion,
+        reposterExclusion,
         // Require URL to point to a real job post page (platform jobs exempt — no external_url)
         or(
           eq(jobPostings.source, 'platform'),
           jobPostUrlRequirement
         ),
+        // Same US-only rule as the matched feed: this is a fallback, not a way around it.
+        or(eq(jobPostings.source, 'platform'), usOnlySql()),
         // Exclude hidden and applied-to jobs
         ...(excludeIds.length > 0
           ? [sql`${jobPostings.id} NOT IN (${sql.join(excludeIds.map(id => sql`${id}`), sql`, `)})`]
@@ -2265,6 +2268,12 @@ export class DatabaseStorage implements IStorage {
     // the candidate to the external aggregator fallback. Serve the ATS discovery
     // feed instead so a logged-in candidate never sees aggregators while we have
     // real platform/ATS supply to show.
+    // With a filter set, nothing clearing the floor means no direct matches for that filter:
+    // say so (the feed shows "No direct matches in …") rather than fill it with jobs that
+    // scored below the floor.
+    if (finalJobs.length === 0 && extraFilters.length > 0) {
+      return [];
+    }
     if (finalJobs.length === 0) {
       console.log(`[fetchScoredJobs] 0 jobs cleared the 30% floor — falling back to relevant discovery (else empty → aggregator)`);
       return this.getDiscoveryFeed(excludeIds, 'Here are recent roles to explore while we tune your matches', { skills: candidateSkills, roleKeywords: roleTitleKeywords, relevantOnly: true }, extraFilters);
@@ -2523,7 +2532,7 @@ export class DatabaseStorage implements IStorage {
    * candidate with a profile sees relevant ATS roles instead of dropping to the
    * external aggregator fallback.
    */
-  async getDiscoveryFeedForCandidate(candidateId: string): Promise<any[]> {
+  async getDiscoveryFeedForCandidate(candidateId: string, filters?: FeedFilters): Promise<any[]> {
     const [candidate, hiddenIds, appliedIds] = await Promise.all([
       this.getCandidateUser(candidateId),
       this.getHiddenJobIds(candidateId),
@@ -2551,7 +2560,7 @@ export class DatabaseStorage implements IStorage {
     const explanation = (skills.length > 0 || roleKeywords.length > 0)
       ? 'Showing relevant roles while we finish ranking your matches'
       : 'Here are recent roles to explore';
-    return this.getDiscoveryFeed(excludeIds, explanation, { skills, roleKeywords });
+    return this.getDiscoveryFeed(excludeIds, explanation, { skills, roleKeywords }, feedFilterConditions(filters));
   }
 
   /**

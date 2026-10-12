@@ -518,6 +518,17 @@ export async function registerRoutes(app: Express): Promise<Express> {
     const finish = () => clearTimeout(timeoutId);
     const startedAt = Date.now();
 
+    // Read before matching so the timeout fallback below serves the same filters.
+    const filters = {
+      jobTitle: (req.query.jobTitle as string) || undefined,
+      location: (req.query.location as string) || undefined,
+      workType: (req.query.workType as string) || undefined,
+      // Mirrors the feed's "Date posted" options; anything else is ignored.
+      postedWithinDays: POSTED_WITHIN_DAYS.has(Number(req.query.postedWithin))
+        ? Number(req.query.postedWithin)
+        : undefined,
+    };
+
     try {
       const userId = req.user.id;
       const page = Math.max(1, parseInt(req.query.page as string) || 1);
@@ -526,16 +537,6 @@ export async function registerRoutes(app: Express): Promise<Express> {
       // client-side. Cap mirrors that ceiling.
       const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
       console.log(`[ai-matches] user=${userId} page=${page} limit=${limit}`);
-
-      const filters = {
-        jobTitle: (req.query.jobTitle as string) || undefined,
-        location: (req.query.location as string) || undefined,
-        workType: (req.query.workType as string) || undefined,
-        // Mirrors the feed's "Date posted" options; anything else is ignored.
-        postedWithinDays: POSTED_WITHIN_DAYS.has(Number(req.query.postedWithin))
-          ? Number(req.query.postedWithin)
-          : undefined,
-      };
 
       const result = await Promise.race([
         storage.getJobRecommendations(userId, filters, { page, limit }),
@@ -596,7 +597,7 @@ export async function registerRoutes(app: Express): Promise<Express> {
               dTimer = setTimeout(() => rej(new Error('discovery timeout')), DISCOVERY_MS);
             });
             const discovery = await Promise.race([
-              storage.getDiscoveryFeedForCandidate(userId),
+              storage.getDiscoveryFeedForCandidate(userId, filters),
               dTimeout,
             ]) as any[];
             clearTimeout(dTimer!);
