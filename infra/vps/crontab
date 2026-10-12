@@ -17,6 +17,9 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # fills any left without (Fleet ingest at :25, scrapes) and, weekly, re-reads every live job so
 # an edited location or a rebuilt place list reaches old jobs. Writes only rows that change.
 35 * * * * $RUN compute-location-keys 20 npx tsx scripts/compute-location-keys.ts
+# SmartRecruiters jobs our first-page board read doesn't re-see: ask SmartRecruiters whether
+# each is still active, close the ones the employer took down (3,000 a run, oldest first).
+10 * * * * $RUN check-smartrecruiters-liveness 20 npx tsx scripts/check-smartrecruiters-liveness.ts
 40 3 * * 0 $RUN compute-location-keys-weekly 30 npx tsx scripts/compute-location-keys.ts --recompute
 
 # Batch Embeddings (JOBS) — every 6h. The local provider (EMBED_PROVIDER=local,
