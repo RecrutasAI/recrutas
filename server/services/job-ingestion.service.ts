@@ -77,6 +77,8 @@ export interface ExternalJobInput {
   careerPageUrl?: string;
   /** The employer's posting date when the source gives one; omit rather than guess. */
   postedDate?: string | null;
+  /** The work arrangement as the ATS states it; never a guess (see AtsJob.workplace). */
+  workplace?: 'remote' | 'hybrid' | 'onsite';
 }
 
 function getSourceTrustScore(source: string): number {
@@ -184,7 +186,8 @@ function buildJobRow(job: any, systemUserId: string, now: Date, expiresAt: Date 
     // The upstream aggregators' workType is unreliable (loose description
     // scans, hardcoded 'hybrid' defaults). Re-derive it from the canonical
     // location signal so the feed filter is exact.
-    workType: classifyWorkType({
+    // The ATS's own statement when it gives one (ExternalJobInput.workplace), else derived.
+    workType: job.workplace ?? classifyWorkType({
       location: job.location,
       title: job.title,
       description: job.description,
@@ -435,6 +438,33 @@ export class JobIngestionService {
             WHERE jp.external_id = v.key AND jp.source = v.source
               AND jp.external_url IS DISTINCT FROM v.url
               AND NOT EXISTS (SELECT 1 FROM job_postings x WHERE x.external_url = v.url)
+          `);
+        }
+
+        // Follow the employer's edits: a posting's title, location and work arrangement can change
+        // after we first saved it ("Engineer - US - Remote" became an on-site San Francisco role,
+        // 2026-10-12), and nothing used to update them. Only ATS reads (the employer's own
+        // board), only rows that differ, and an empty incoming location never wipes a stored one.
+        // A changed location clears the place keys so compute-location-keys re-resolves them.
+        const edits = toUpdate
+          .filter(j => (j.source ?? '').startsWith('ATS:') && (j.title ?? '').trim())
+          .map(j => {
+            const location = (j.location ?? '').trim() || null;
+            return sql`(${j.effectiveExternalId}, ${j.source ?? 'unknown'}, ${j.title.trim()}, ${location},
+              ${j.workplace ?? classifyWorkType({ location: j.location, title: j.title, description: j.description })})`;
+          });
+        if (edits.length > 0) {
+          await db.execute(sql`
+            UPDATE job_postings AS jp SET
+              title = v.title,
+              location = coalesce(v.location, jp.location),
+              work_type = v.work_type,
+              location_keys = CASE WHEN coalesce(v.location, jp.location) IS DISTINCT FROM jp.location THEN NULL ELSE jp.location_keys END,
+              updated_at = NOW()
+            FROM (VALUES ${sql.join(edits, sql`, `)}) AS v(key, source, title, location, work_type)
+            WHERE jp.external_id = v.key AND jp.source = v.source
+              AND (jp.title, coalesce(v.location, jp.location), jp.work_type)
+                IS DISTINCT FROM (v.title, jp.location, v.work_type)
           `);
         }
 

@@ -68,3 +68,15 @@ describe('ashbyLocation', () => {
     expect(ashbyLocation({})).toBeUndefined();
   });
 });
+
+import { workplaceOf } from '../server/lib/adzuna-link-resolver';
+describe('workplaceOf', () => {
+  it('maps each ATS spelling of the work arrangement', () => {
+    expect(workplaceOf('OnSite')).toBe('onsite');
+    expect(workplaceOf('on-site')).toBe('onsite');
+    expect(workplaceOf('Hybrid')).toBe('hybrid');
+    expect(workplaceOf('remote')).toBe('remote');
+    expect(workplaceOf('unspecified')).toBeUndefined();
+    expect(workplaceOf(undefined)).toBeUndefined();
+  });
+});

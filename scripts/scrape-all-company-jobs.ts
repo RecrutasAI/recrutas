@@ -109,7 +109,8 @@ async function main(): Promise<PipelineSummary> {
             description: j.description || '',
             requirements: [],
             skills: [],
-            workType: 'hybrid',
+            workType: j.workplace ?? 'hybrid',  // ingestion re-derives it when the ATS doesn't say
+            workplace: j.workplace,
             source: `ATS:${r.value.atsType}`,
             // Vendor job id, not the URL: a board moving to a custom domain
             // rewrites every URL, which used to re-insert every job.
