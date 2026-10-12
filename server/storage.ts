@@ -471,6 +471,15 @@ const JOB_BOARD_HOSTS = [
 ];
 
 const REPOSTER_COMPANIES = THIRD_PARTY_COMPANIES;
+/**
+ * The fit a job needs to be shown at all, direct or third-party. job-scorer caps a job whose
+ * title doesn't fit the person's past roles below this, so a front-desk agent isn't offered
+ * "Network Administrator" and a professor isn't offered "Golang Kubernetes Engineer".
+ */
+export const MIN_MATCH_SCORE = 30;
+const THIRD_PARTY_MIN_SCORE = MIN_MATCH_SCORE;
+/** At most this many third-party jobs from one company. */
+const THIRD_PARTY_PER_COMPANY = 3;
 // SQL fragment: keep reposter-owned boards out of the direct feed.
 const reposterExclusion = sql`(
   ${jobPostings.company} IS NULL
@@ -1508,6 +1517,8 @@ export class DatabaseStorage implements IStorage {
     filters: { jobTitle?: string; location?: string; workType?: string } = {},
     limit: number = 10,
     vectorStr?: string,
+    /** The person, so third-party jobs are scored exactly as the main feed scores direct ones. */
+    candidate?: { experienceLevel?: string | null; titles?: string[]; location?: string | null; workType?: string | null },
   ): Promise<JobPosting[]> {
     try {
       // No skill, title or resume signal → nothing to relevance-match against. Return
@@ -1624,19 +1635,19 @@ export class DatabaseStorage implements IStorage {
                 ? sql`${skillMatchExpr} DESC, ${jobPostings.createdAt} DESC`
                 : sql`${jobPostings.createdAt} DESC`,
           )
-          .limit(limit * 3);  // room for the repeats dropped below
+          .limit(Math.max(limit * 5, 150));  // a pool to score: the closest vectors aren't always the best fits
       };
 
       // "0 matches" is the last resort: start strict, then relax one filter at a time.
       // Without a resume vector every step keeps a skill or title signal, so it never
       // turns into random jobs.
       const relevance = skillCondition || titleCondition ? or(skillCondition, titleCondition) : null;
+      // The person's own choices, location and work type, are never relaxed: a Seattle search
+      // never answers with jobs elsewhere.
       const steps: (any | null)[][] = [
         [titleCondition, workTypeCondition, locationCondition, skillCondition],
-        [titleCondition, workTypeCondition, skillCondition],
-        [titleCondition, skillCondition],
-        [relevance],
-        ...(dist ? [[]] : []),
+        [relevance, workTypeCondition, locationCondition],
+        ...(dist ? [[workTypeCondition, locationCondition]] : []),
       ];
       // Fill up to `limit` from the strictest step down: strict matches first, then the
       // relaxed ones. Aggregators list one posting under several links (and spell its
@@ -1651,17 +1662,36 @@ export class DatabaseStorage implements IStorage {
           seen.add(key);
           rows.push(row);
         }
-        if (rows.length >= limit) {break;}
+        if (rows.length >= Math.max(limit * 5, 150)) {break;}  // enough to score; the fit floor below cuts it to `limit`
       }
-      rows = rows.slice(0, limit);
-
-      return rows.map(({ job, distance }) => ({
-        ...job,
-        thirdPartyKind: thirdPartyKind(job),
-        // Same 0-100 scale the feed shows for semantic fit.
-        matchScore: distance == null ? undefined
-          : Math.round(100 * Math.max(0, Math.min(1, ((1 - Number(distance)) - 0.3) / 0.5))),
-      })) as any;
+      // Score every job the way the main feed scores direct ones (skills, role and title fit,
+      // experience level, resume similarity: job-scorer.ts), keep only real fits, and give no
+      // single company more than a few places (one re-poster filled whole lists, 2026-10-12).
+      const embedding = vectorStr ? (JSON.parse(vectorStr) as number[]) : undefined;
+      const perCompany = new Map<string, number>();
+      return rows
+        .map(({ job, distance }) => {
+          const score = scoreJob(skills, candidate?.experienceLevel, { ...job, skills: Array.isArray(job.skills) ? job.skills : [] } as any,
+            embedding, candidate?.titles ?? [], { location: candidate?.location ?? undefined, workType: candidate?.workType ?? undefined },
+            distance == null ? undefined : Number(distance));
+          return { job, score };
+        })
+        .filter(({ score }) => score.matchScore >= THIRD_PARTY_MIN_SCORE)
+        .sort((a, b) => b.score.matchScore - a.score.matchScore)
+        .filter(({ job }) => {
+          const co = String(job.company ?? '').trim().toLowerCase();
+          const n = (perCompany.get(co) ?? 0) + 1;
+          perCompany.set(co, n);
+          return n <= THIRD_PARTY_PER_COMPANY;
+        })
+        .slice(0, limit)
+        .map(({ job, score }) => ({
+          ...job,
+          thirdPartyKind: thirdPartyKind(job),
+          matchScore: score.matchScore,
+          skillMatches: score.skillMatches,
+          aiExplanation: score.aiExplanation,
+        })) as any;
     } catch (error) {
       console.error('Error fetching aggregator fallback jobs:', error);
       return [];
@@ -2099,7 +2129,7 @@ export class DatabaseStorage implements IStorage {
       const LEVELS = ['entry', 'mid', 'senior', 'lead', 'executive'];
 
       let finalJobs = recommendations
-        .filter(job => job.matchScore >= 30) // 30% minimum — prevents irrelevant jobs
+        .filter(job => job.matchScore >= MIN_MATCH_SCORE)
         .map(job => {
           let prefBoost = 0;
 
