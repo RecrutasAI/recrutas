@@ -1,0 +1,39 @@
+name: Fleet run trigger
+
+# Starts the day's Fleet run (RecrutasAI/jobs-fleet, fleet-run.yml) when none has started.
+# The 11:17 UTC schedule in jobs-fleet has never fired: every run up to 2026-10-12 was started
+# by hand. Schedules here do fire, but GitHub skips most of them (the hourly Watchdog ran 3
+# times a day on 2026-10-11/12), so this tries every hour and does nothing once today's run
+# exists. On failure GitHub emails the repo owner, like the Watchdog.
+#
+# FLEET_DISPATCH_TOKEN: fine-grained token, RecrutasAI/jobs-fleet only, Actions read and write.
+
+on:
+  schedule:
+    - cron: '47 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: fleet-run-trigger
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Start today's Fleet run if none has started
+        env:
+          GH_TOKEN: ${{ secrets.FLEET_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          today="$(date -u +%F)"
+          runs="$(gh api "repos/RecrutasAI/jobs-fleet/actions/workflows/fleet-run.yml/runs?created=%3E%3D$today&per_page=1" --jq .total_count)"
+          if [ "$runs" -gt 0 ]; then
+            echo "Fleet run already started today ($runs since $today 00:00 UTC); nothing to do"
+            exit 0
+          fi
+          gh workflow run fleet-run.yml -R RecrutasAI/jobs-fleet --ref main
+          echo "No Fleet run today: started one"
