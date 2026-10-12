@@ -30,7 +30,7 @@ export const stateKey = (st: string): string => `state|${st}`;
 /** Other names posts use for a city, by "name|ST" (normalized). Only unambiguous ones: "LA" is also Louisiana. */
 export const PLACE_ALIASES: Record<string, string[]> = {
   'new york|NY': ['nyc', 'new york city', 'manhattan', 'brooklyn', 'queens', 'bronx', 'staten island'],
-  'washington|DC': ['dc', 'd c', 'washington dc', 'district of columbia'],
+  'washington|DC': ['dc', 'd c', 'washington dc', 'washington d c', 'district of columbia'],
   'san francisco|CA': ['sf', 'sf bay area'],
 };
 
@@ -151,6 +151,11 @@ export function resolveLocation(location: string | null | undefined, idx: PlaceI
     // ("New York" is New York City; "Florida" alone is the state, not Florida, NY).
     if (!next) {return si === 0 && STATE_NAME_TO_CODE.get(segs[si].join(' ')) === st;}
     if (next[0] && next[0].length === 2 && next[0].toUpperCase() === st) {return true;}
+    // The next part is another name of the same city ("Washington, D.C.", "Washington, D.C. Metro
+    // Area": "D.C." is Washington, DC).
+    if (idx.aliases.get(next.filter(t => !FILLER.has(t)).join(' ')) === `${segs[si].join(' ')}|${st}`) {return true;}
+    // The city written twice, the second time confirmed ("Washington, Washington, D.C.").
+    if (next.join(' ') === segs[si].join(' ') && nextPartConfirms(si + 1, next.length, st)) {return true;}
     const name = normPlace(US_STATES[st] ?? '');
     return !!name && next.slice(0, name.split(' ').length).join(' ') === name;
   };
@@ -213,7 +218,12 @@ export function resolveLocation(location: string | null | undefined, idx: PlaceI
           const wholePart = seg.every((t, j) => (j >= i && j < i + k) || isFiller(t));
           // A state code written in the same part, before the name ("US-NV-Las Vegas"), decides it.
           const ownCodes = seg.slice(0, i).filter(t => t.length === 2 && !!US_STATES[t.toUpperCase()]).map(t => t.toUpperCase());
+          // The next part is another name of this very place ("Washington, D.C."): that place,
+          // whatever other states the location names ("Maryland; Virginia; Washington, D.C.").
+          const sameAfter = i + k === seg.length && segs[si + 1]
+            ? idx.aliases.get(segs[si + 1].filter(t => !FILLER.has(t)).join(' ')) : undefined;
           if (nextIsPartOfCity(si, i + k)) {st = undefined;}
+          else if (sameAfter?.startsWith(`${gram}|`) && candidates.has(sameAfter.split('|')[1])) {st = sameAfter.split('|')[1];}
           // Words that are usually not places ("Home Office", "Remote") count only with a state
           // code right after them.
           else if (NOT_A_PLACE.has(gram)) {st = after && !after.byName && candidates.has(after.code) ? after.code : undefined;}
