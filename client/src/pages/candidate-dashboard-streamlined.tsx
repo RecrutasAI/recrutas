@@ -67,6 +67,8 @@ import { AccountSettings } from "@/components/account-settings";
 import { ApplicationAnswers } from "@/components/application-answers";
 import { useCarryDemoAnswers } from "@/lib/demo-answers";
 import { AiConnectorSettings } from "@/components/ai-connector-settings";
+import RedditIcon from '@/components/RedditIcon';
+import { REDDIT_COMMUNITY_URL } from '@/lib/community';
 
 interface DashboardStats {
   newMatches: number;
@@ -354,13 +356,13 @@ export default function CandidateStreamlinedDashboard() {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent className="w-56 rounded-xl p-1.5 shadow-lg border-slate-200 dark:border-slate-700" align="end" sideOffset={8} forceMount>
                   <DropdownMenuLabel className="font-normal px-3 py-2">
-                    <div className="flex flex-col gap-0.5">
-                      <p className="text-sm font-medium text-gray-900 dark:text-white">
+                    <div className="flex flex-col gap-0.5 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
                         {(user as any)?.firstName && (user as any)?.lastName
                           ? `${(user as any).firstName} ${(user as any).lastName}`
                           : displayName}
                       </p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">{user?.email || 'Candidate'}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 truncate" title={user?.email || undefined}>{user?.email || 'Candidate'}</p>
                     </div>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator className="mx-1" />
@@ -371,6 +373,12 @@ export default function CandidateStreamlinedDashboard() {
                   <DropdownMenuItem onClick={() => setSettingsModalOpen(true)} className="rounded-lg px-3 py-2 cursor-pointer">
                     <Settings className="mr-2 h-4 w-4" />
                     Settings
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild className="rounded-lg px-3 py-2 cursor-pointer">
+                    <a href={REDDIT_COMMUNITY_URL} target="_blank" rel="noopener noreferrer">
+                      <RedditIcon className="mr-2 h-4 w-4" />
+                      Community (Reddit)
+                    </a>
                   </DropdownMenuItem>
                   <DropdownMenuSeparator className="mx-1" />
                   <DropdownMenuItem onClick={handleSignOut} className="rounded-lg px-3 py-2 cursor-pointer text-red-600 dark:text-red-400 focus:text-red-600 focus:bg-red-50 dark:focus:bg-red-950/30">
