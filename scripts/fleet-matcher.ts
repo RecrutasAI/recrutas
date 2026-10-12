@@ -21,6 +21,7 @@ import { recordPipelineRun } from '../server/services/pipeline-run.service';
 import { getDirectUsJobLinks } from '../server/storage';
 import { AGGREGATOR_SOURCES, THIRD_PARTY_COMPANIES } from '../server/lib/third-party';
 import { linkKey } from '../server/lib/canonical-url';
+import { vendorJobId } from '../server/lib/ats-job-key';
 
 /** Employers we can't name: Oracle sites known only by a code. Shared with the matcher's catalog count. */
 export const UNNAMED_EMPLOYER = /saasfaprod|oraclecloud\.com|\(CX_\d+\)/i;
@@ -33,6 +34,17 @@ function need(name: string): string {
   const v = process.env[name];
   if (!v) {throw new Error(`${name} is not set`);}
   return v;
+}
+
+/**
+ * How the matcher looks up a job's posting date in the Fleet: by the ATS's own job id when the
+ * link carries one ("smartrecruiters:744000154370085", the same id the Fleet reads), since the two
+ * catalogs can link the same posting differently; otherwise by link fingerprint.
+ */
+export function dateLookupKey(source: string, url: string): { kind: 'job' | 'link'; key: string } {
+  const vendor = source.replace(/^ATS:/i, '').toLowerCase();
+  const id = vendorJobId(source, url);
+  return id ? { kind: 'job', key: `${vendor}:${id}` } : { kind: 'link', key: linkKey(url) };
 }
 
 export function pseudonym(userId: string, key: string): string {
@@ -88,6 +100,11 @@ async function exportInbox(): Promise<string> {
   // matcher applies to Fleet jobs so both sides count the same way. Plain JSON text: the dataset's
   // simple upload rejects binary files.
   const links = await getDirectUsJobLinks();
+  // Our live jobs with no posting date: the matcher answers with the Fleet's date for each one it
+  // holds (the Fleet reads every board in full), and ingest fills them in.
+  const undated = rows(await db.execute(sql`
+    SELECT source, external_url FROM job_postings WHERE status = 'active' AND posted_at IS NULL AND external_url IS NOT NULL`));
+  const undatedKeys = undated.map(u => dateLookupKey(u.source, u.external_url));
   const catalog = JSON.stringify({
     exported_at: inbox.exported_at,
     link_keys: [...new Set(links.map(l => linkKey(l.url)))],
@@ -95,6 +112,8 @@ async function exportInbox(): Promise<string> {
     third_party_companies: [...THIRD_PARTY_COMPANIES],
     third_party_sources: [...AGGREGATOR_SOURCES],
     unnamed_employer: UNNAMED_EMPLOYER.source,
+    undated_job_keys: [...new Set(undatedKeys.filter(k => k.kind === 'job').map(k => k.key))],
+    undated_link_keys: [...new Set(undatedKeys.filter(k => k.kind === 'link').map(k => k.key))],
   });
   await upload([
     { path: 'inbox/candidates.json', content: JSON.stringify(inbox) },
@@ -102,7 +121,7 @@ async function exportInbox(): Promise<string> {
   ], `Inbox: ${inbox.candidates.length} users, ${inbox.held.length} shown Fleet jobs, ${links.length} direct links`);
   const squashed = new Date().getUTCHours() === 1;
   if (squashed) {await squashHistory();}
-  return `${squashed ? 'history squashed, ' : ''}exported ${inbox.candidates.length} users, ${inbox.held.length} shown Fleet jobs, ${links.length} direct links (${Math.round(catalog.length / 1024)} KB)`;
+  return `${squashed ? 'history squashed, ' : ''}exported ${inbox.candidates.length} users, ${inbox.held.length} shown Fleet jobs, ${links.length} direct links, ${undated.length} undated jobs (${Math.round(catalog.length / 1024)} KB)`;
 }
 
 interface FleetJob {
@@ -147,6 +166,8 @@ async function ingestOutbox(): Promise<string> {
   if (!raw) {return 'no outbox yet';}
   const out = JSON.parse(gunzipSync(raw).toString('utf8')) as {
     generated_at: string; jobs: FleetJob[]; closed: string[];
+    /** The Fleet's posting date for our undated jobs, by link fingerprint. */
+    dates?: Record<string, string>;
     stats?: { catalog?: { jobs: number; companies: number } };
   };
   // Runs hourly because GitHub starts the matcher late or not at all; only a new outbox is processed.
@@ -160,6 +181,17 @@ async function ingestOutbox(): Promise<string> {
     await db.execute(sql`
       INSERT INTO catalog_stats (id, jobs, companies, computed_at) VALUES (1, ${cat.jobs}, ${cat.companies}, ${out.generated_at})
       ON CONFLICT (id) DO UPDATE SET jobs = EXCLUDED.jobs, companies = EXCLUDED.companies, computed_at = EXCLUDED.computed_at`);
+  }
+  // Posting dates the Fleet knows for our undated jobs. Fills only empty dates, through the same
+  // guard as every other date (realPostedAt: no defaulted "now", no future, day-only at noon UTC).
+  let fleetDated = 0;
+  if (out.dates && Object.keys(out.dates).length) {
+    const undated = rows(await db.execute(sql`
+      SELECT source, external_url FROM job_postings WHERE status = 'active' AND posted_at IS NULL AND external_url IS NOT NULL`));
+    const found = undated
+      .map(u => ({ externalUrl: u.external_url as string, postedDate: out.dates![dateLookupKey(u.source, u.external_url).key] }))
+      .filter(x => x.postedDate);
+    fleetDated = await backfillPostedAt(found);
   }
   const all = out.jobs.map(toIngestion);
   const unnamed = all.filter(x => x === null).length;
@@ -216,7 +248,7 @@ async function ingestOutbox(): Promise<string> {
     INSERT INTO fleet_ingest_state (id, outbox_generated_at, ingested_at) VALUES (1, ${out.generated_at}, NOW())
     ON CONFLICT (id) DO UPDATE SET outbox_generated_at = EXCLUDED.outbox_generated_at, ingested_at = NOW()`);
   return `outbox ${out.generated_at}: ${out.jobs.length} matched jobs → ${unnamed} skipped (employer not named), ${existing.size} already in Recrutas (kept ours), ${totals.inserted} new, ${totals.duplicates} duplicates, ` +
-    `${totals.skippedNonUS} non-US, ${totals.skippedBadUrl} bad links, ${totals.errors} errors; ${vectors} vectors attached; ${renamed} renamed; ${dated} posting dates added; ${closed} closed`;
+    `${totals.skippedNonUS} non-US, ${totals.skippedBadUrl} bad links, ${totals.errors} errors; ${vectors} vectors attached; ${renamed} renamed; ${dated} posting dates added; ${fleetDated} dates from the Fleet for our own jobs; ${closed} closed`;
 }
 
 const step = process.argv[2];
