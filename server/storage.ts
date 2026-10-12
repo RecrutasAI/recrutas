@@ -62,6 +62,7 @@ import { isRecentlyVerifiedLive, LIVE_BADGE_MAX_AGE_HOURS } from "../shared/live
 import { db } from "./db";
 import { feedCacheConfig, readFeedCache, writeFeedCache } from './services/feed-cache.service';
 import { tryFeedSlot, waitForFeedSlot } from './services/feed-gate.service';
+import { storeResumeFile, resumeFileUrl } from './lib/resume-files';
 
 /** How long someone with no stored feed waits for a scoring slot before getting the fallback feed. */
 const FEED_SLOT_WAIT_MS = 6000;
@@ -712,52 +713,18 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
+  // Supabase Storage first, our Postgres if Supabase can't take it (server/lib/resume-files.ts).
   async uploadResume(fileBuffer: Buffer, fileType: string): Promise<string> {
-    try {
-      const bucket = 'resumes';
-      const fileName = `resume-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
-      const { data, error } = await supabaseAdmin.storage
-        .from(bucket)
-        .upload(fileName, fileBuffer, {
-          contentType: fileType,
-          upsert: true,
-        });
-
-      if (error) {
-        console.error('Error uploading to Supabase Storage:', error);
-        throw new Error('Failed to upload resume to storage.');
-      }
-
-      // Return the file path instead of public URL - we'll generate signed URLs on demand
-      return fileName;
-    } catch (error) {
-      console.error('Error in uploadResume:', error);
-      throw error;
-    }
+    return storeResumeFile(fileBuffer, fileType);
   }
 
-  // Generate a signed URL for accessing resumes (expires in 1 hour)
+  // A signed link to a stored resume (expires in 1 hour), wherever the file is kept.
   async getResumeSignedUrl(resumePath: string): Promise<string> {
-    try {
-      // If the path is already a full URL (legacy), return it as-is
-      if (resumePath.startsWith('http://') || resumePath.startsWith('https://')) {
-        return resumePath;
-      }
-
-      const { data, error } = await supabaseAdmin.storage
-        .from('resumes')
-        .createSignedUrl(resumePath, 3600); // 1 hour expiry
-
-      if (error) {
-        console.error('Error creating signed URL:', error);
-        throw new Error('Failed to generate resume URL.');
-      }
-
-      return data.signedUrl;
-    } catch (error) {
-      console.error('Error in getResumeSignedUrl:', error);
-      throw error;
+    // If the path is already a full URL (legacy), return it as-is
+    if (resumePath.startsWith('http://') || resumePath.startsWith('https://')) {
+      return resumePath;
     }
+    return resumeFileUrl(resumePath, 3600);
   }
 
   async updateUserInfo(userId: string, userData: Partial<UpsertUser>): Promise<any> {

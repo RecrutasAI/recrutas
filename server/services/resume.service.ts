@@ -225,8 +225,9 @@ export class ResumeService {
         if (existingProfile?.resumeUrl) {
           const oldPath = (existingProfile.resumeUrl as string);
           if (!oldPath.startsWith('http')) {
-            const { supabaseAdmin } = await import('../lib/supabase-admin.js');
-            await supabaseAdmin.storage.from('resumes').remove([oldPath]);
+            const { removeResumeFile } = await import('../lib/resume-files.js');
+            const err = await removeResumeFile(oldPath);
+            if (err) {throw new Error(err);}
             console.log(`[ResumeService] Deleted old resume: ${oldPath}`);
           }
         }

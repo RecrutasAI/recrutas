@@ -1043,6 +1043,14 @@ export const candidateFeedCache = pgTable("candidate_feed_cache", {
   idxComputedAt: index("candidate_feed_cache_computed_at_idx").on(table.computedAt),
 }));
 
+// Resumes kept in Postgres while Supabase Storage is unavailable (server/lib/resume-files.ts).
+// migrations/add-resume-file-fallback.sql. `content` is BYTEA; Drizzle only reads it through raw SQL.
+export const resumeFileFallback = pgTable("resume_file_fallback", {
+  key: text("key").primaryKey(),
+  contentType: text("content_type"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // Scoring slots shared by every instance (server/services/feed-gate.service.ts).
 // migrations/add-feed-gate-slots.sql
 export const feedGateSlots = pgTable("feed_gate_slots", {

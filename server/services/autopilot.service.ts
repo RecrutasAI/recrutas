@@ -10,6 +10,8 @@
  *   DB connections > 40                        → pause background jobs + busy banner    connections < 25
  *   feed p95 > 2 s for 15 min with the cache   → sign-up waitlist (last step; existing  feed p95 < 1 s and load < 1.0×cores
  *     already at 6 h (users actually slow)        users unaffected)
+ *   Supabase (sign-in, resume files) down 2 min → "sign-in unavailable" banner + alert Supabase up for 5 min
+ *     (resume uploads already fall back to our Postgres: server/lib/resume-files.ts)
  *   disk > 85%, a new job unmatched > 14 h     → alert only
  *
  * decideAutopilot() is pure (unit-tested); scripts/autopilot.ts gathers the
@@ -29,6 +31,8 @@ export interface AutopilotInput {
   embeddingBacklog?: number | null;
   /** Minutes the oldest of them has waited. Batches run every 6 h, so only age means trouble. */
   embeddingOldestMin?: number | null;
+  /** Supabase sign-in and storage both answered; null when not checked. */
+  supabaseUp?: boolean | null;
 }
 
 /** Who last set each switch (from runtime_settings.updated_by), so Autopilot only undoes its own changes. */
@@ -38,7 +42,9 @@ export interface AutopilotState {
   /** When each rule last became healthy (ISO), cleared while under pressure. */
   healthySince: Partial<Record<RuleKey, string>>;
   /** Since when people have been seeing a slow feed (ISO), cleared once it isn't. */
-  feedSlowSince?: string;
+  feedSlowSince?: string;  /** Since when Supabase has been down / up (ISO); one of them is set once it has been checked. */
+  supabaseDownSince?: string;
+  supabaseUpSince?: string;
 }
 
 export type RuleKey = 'feed' | 'cpuRam' | 'conns';
@@ -47,6 +53,11 @@ export interface Change { key: keyof Settings; value: unknown; reason: string }
 export interface Decision { changes: Change[]; alerts: { key: string; subject: string; body: string }[]; state: AutopilotState }
 
 export const HOLD_MS = 15 * 60_000;
+/** Supabase must be down this long before the banner (one failed check can be a blip)… */
+export const SUPABASE_DOWN_MS = 2 * 60_000;
+/** …and up this long before it comes down. */
+export const SUPABASE_UP_MS = 5 * 60_000;
+export const SUPABASE_NOTICE = { text: "Signing in is temporarily unavailable. If you're already signed in, your feed keeps working.", level: 'warning' as const };
 export const BUSY_NOTICE = { text: "We're busier than usual right now. Pages may take a little longer to load.", level: 'warning' as const };
 const NORMAL_TTL_MINUTES = 120;
 /** Alert when the oldest unmatched job is older than this (two missed 6-hourly batches). */
@@ -78,6 +89,10 @@ export function decideAutopilot(i: AutopilotInput, settings: Settings, setBy: Se
   // without anyone waiting, and that must never close sign-ups.
   const feedSlowSince = feedSlow ? (prev.feedSlowSince ?? now.toISOString()) : undefined;
   const slowTooLong = !!feedSlowSince && now.getTime() - Date.parse(feedSlowSince) >= HOLD_MS;
+  const supabaseDownSince = i.supabaseUp === false ? (prev.supabaseDownSince ?? now.toISOString()) : undefined;
+  const supabaseUpSince = i.supabaseUp === true ? (prev.supabaseUpSince ?? now.toISOString()) : undefined;
+  const supabaseDownLong = !!supabaseDownSince && now.getTime() - Date.parse(supabaseDownSince) >= SUPABASE_DOWN_MS;
+  const supabaseUpLong = !!supabaseUpSince && now.getTime() - Date.parse(supabaseUpSince) >= SUPABASE_UP_MS;
   const recovered = (r: RuleKey) => !!healthySince[r] && now.getTime() - Date.parse(healthySince[r]!) >= HOLD_MS;
   const mine = (k: keyof Settings) => setBy[k] === 'autopilot';
 
@@ -118,8 +133,14 @@ export function decideAutopilot(i: AutopilotInput, settings: Settings, setBy: Se
     }
     if (pressure.conns) {
       if (settings.noticeBanner === null) {set('noticeBanner', BUSY_NOTICE, `Autopilot: ${why}`);}
-    } else if (recovered('conns') && mine('noticeBanner') && settings.noticeBanner !== null) {
+    } else if (recovered('conns') && mine('noticeBanner') && settings.noticeBanner?.text === BUSY_NOTICE.text) {
       set('noticeBanner', null, 'Autopilot: connections healthy for 15 min');
+    }
+    // Supabase down: say so instead of letting sign-in fail without explanation.
+    if (supabaseDownLong) {
+      if (settings.noticeBanner === null) {set('noticeBanner', SUPABASE_NOTICE, 'Autopilot: Supabase (sign-in) not answering for 2 min');}
+    } else if (supabaseUpLong && mine('noticeBanner') && settings.noticeBanner?.text === SUPABASE_NOTICE.text) {
+      set('noticeBanner', null, 'Autopilot: Supabase answering again for 5 min');
     }
   }
 
@@ -132,6 +153,9 @@ export function decideAutopilot(i: AutopilotInput, settings: Settings, setBy: Se
     const h = ((i.embeddingOldestMin ?? 0) / 60).toFixed(1);
     alerts.push({ key: 'autopilot-embedding-backlog', subject: `[recrutas] new jobs unmatched for ${h} h (${i.embeddingBacklog} waiting)`, body: `${i.embeddingBacklog} live jobs have no matching data yet and the oldest has waited ${h} hours: at least two 6-hourly batches were missed, so these jobs are not reaching candidates. Admin console → Today → "Match new jobs now" runs a batch; its result shows there.` });
   }
+  if (supabaseDownLong) {
+    alerts.push({ key: 'autopilot-supabase-down', subject: '[recrutas] Supabase not answering: sign-in is down', body: `Supabase sign-in or storage has not answered since ${supabaseDownSince}. People already signed in keep their feed until their session needs renewing (up to an hour); new sign-ins fail. Resume uploads are being kept in our Postgres and move back on their own (move-fallback-resumes). Check status.supabase.com and the project's usage page (a free-plan restriction returns 402).` });
+  }
   if (changes.length) {
     alerts.push({
       key: `autopilot-${changes.map(c => `${c.key}=${JSON.stringify(c.value)}`).join(',')}`,
@@ -141,7 +165,15 @@ export function decideAutopilot(i: AutopilotInput, settings: Settings, setBy: Se
         + '\n\nPin a switch in the admin console (System & scaling) to stop Autopilot changing it.',
     });
   }
-  return { changes, alerts, state: { healthySince, ...(feedSlowSince ? { feedSlowSince } : {}) } };
+  return {
+    changes, alerts,
+    state: {
+      healthySince,
+      ...(feedSlowSince ? { feedSlowSince } : {}),
+      ...(supabaseDownSince ? { supabaseDownSince } : {}),
+      ...(supabaseUpSince ? { supabaseUpSince } : {}),
+    },
+  };
 }
 
 /**
