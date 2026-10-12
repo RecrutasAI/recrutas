@@ -21,6 +21,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { buildRecrutasMcpServer } from "./mcp/recrutas-mcp";
 
 import { storage } from "./storage";
+import { EXPERIENCE_LEVELS, type ExperienceLevel } from "../shared/job-level";
 import { isAuthenticated } from "./middleware/auth";
 import { companyJobsAggregator } from "./company-jobs-aggregator";
 import { universalJobScraper } from "./universal-job-scraper";
@@ -744,9 +745,9 @@ export async function registerRoutes(app: Express): Promise<Express> {
     }
   }));
 
-  // Third-party listings for a signed-in person with no direct matches: staffing agencies and
-  // job boards mixed, ranked by their resume vector, relaxing filters before ever returning
-  // nothing. Each job says which kind of third party it is; the feed labels them.
+  // Third-party listings for a signed-in person whose feed has no direct jobs under their filters:
+  // staffing agencies and job boards mixed, ranked by their resume vector, under the same
+  // filters (never relaxed). Each job says which kind of third party it is; the feed labels them.
   app.get('/api/third-party-matches', isAuthenticated, asyncHandler(async (req: any, res) => {
     const profile: any = await storage.getCandidateUser(req.user.id);
     const skills = parseSkillsInput(profile?.skills ?? []).slice(0, 20);
@@ -755,14 +756,19 @@ export async function registerRoutes(app: Express): Promise<Express> {
       const v = profile?.vectorEmbedding ? JSON.parse(profile.vectorEmbedding) : null;
       if (Array.isArray(v) && v.length > 0) {vectorStr = `[${v.join(',')}]`;}
     } catch { /* malformed: rank by skills */ }
-    const jobTitle = req.query.jobTitle ? String(req.query.jobTitle).slice(0, 200) : undefined;
-    const location = req.query.location ? String(req.query.location).slice(0, 200) : undefined;
-    const rawWorkType = req.query.workType ? String(req.query.workType) : undefined;
-    const workType = rawWorkType && ['remote', 'hybrid', 'onsite'].includes(rawWorkType) ? rawWorkType : undefined;
+    // The feed's filters, all applied: these jobs fill a feed the filters left empty.
+    const q = (k: string, max = 200): string | undefined => (req.query[k] ? String(req.query[k]).slice(0, max) : undefined);
+    const workType = ['remote', 'hybrid', 'onsite'].includes(q('workType') ?? '') ? q('workType') : undefined;
+    const postedWithinDays = POSTED_WITHIN_DAYS.has(Number(req.query.postedWithin)) ? Number(req.query.postedWithin) : undefined;
+    const experienceLevel = (EXPERIENCE_LEVELS as readonly string[]).includes(q('level') ?? '') ? q('level') as ExperienceLevel : undefined;
+    const verdict = ['apply', 'stretch', 'skip'].includes(q('verdict') ?? '') ? q('verdict') as 'apply' | 'stretch' | 'skip' : undefined;
     const titles = (Array.isArray(profile?.resumeParsingData?.positions) ? profile.resumeParsingData.positions : [])
       .map((p: any) => (typeof p?.title === 'string' ? p.title.trim() : '')).filter((t: string) => t.length > 2);
-    const jobs = await storage.getAggregatorFallbackJobs(skills, { jobTitle, location, workType }, 30, vectorStr, {
-      experienceLevel: profile?.experienceLevel ?? null, titles, location: profile?.location ?? null, workType: profile?.workType ?? null,
+    const jobs = await storage.getAggregatorFallbackJobs(skills, {
+      search: q('search'), location: q('location'), homeLocation: profile?.location ?? undefined,
+      workType, postedWithinDays, experienceLevel, verdict,
+    }, 30, vectorStr, {
+      id: req.user.id, experienceLevel: profile?.experienceLevel ?? null, titles, location: profile?.location ?? null, workType: profile?.workType ?? null,
     });
     res.set('Cache-Control', 'private, max-age=300');
     res.json({ jobs });

@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
@@ -15,6 +15,7 @@ import { track } from "@/lib/analytics";
 import { formatCheckedAgo } from "@shared/liveness";
 import { locationMatches, parseLocationFilter } from "@shared/location-filter";
 import { pickedKey } from "@shared/places";
+import { levelMatches, type ExperienceLevel } from "@shared/job-level";
 import { LocationPicker, placeLabel } from "@/components/location-picker";
 
 function isCareerPageLink(url: string | undefined, careerPageUrl: string | undefined): boolean {
@@ -81,17 +82,6 @@ function getUrlLabel(url: string | undefined, careerPageUrl: string | undefined)
 }
 
 
-
-type ExperienceLevel = 'entry' | 'mid' | 'senior' | 'lead' | 'executive';
-
-function inferJobLevel(title: string): ExperienceLevel {
-  const t = (title || '').toLowerCase();
-  if (/director|vp|vice president|head of|chief|cto|ceo/i.test(t)) return 'executive';
-  if (/lead|manager|principal/i.test(t)) return 'lead';
-  if (/senior|sr\.|staff/i.test(t)) return 'senior';
-  if (/junior|entry|intern|associate|new grad/i.test(t)) return 'entry';
-  return 'mid';
-}
 
 const EXPERIENCE_LEVEL_LABELS: Record<ExperienceLevel, string> = {
   entry: 'Entry Level',
@@ -293,80 +283,86 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
   // Client-side filtering — instant, no network calls
   const parsedLocation = useMemo(() => parseLocationFilter(locationFilter), [locationFilter]);
   const locationKey = useMemo(() => pickedKey(locationFilter), [locationFilter]);
-  const filteredMatches = useMemo(() => {
-    if (!allMatches) return undefined;
+  // The feed's filters as one test, for direct jobs and third-party jobs alike.
+  const passesFilters = useCallback((job: any, verdict?: JobVerdict): boolean => {
     const term = searchTerm.toLowerCase().trim();
+    if (term && !(job.title || '').toLowerCase().includes(term) && !(job.company || '').toLowerCase().includes(term) && !(job.description || '').toLowerCase().includes(term)) return false;
+    // A picked place matches the places the job's location resolves to (the same keys the
+    // server filters on); a job saved before it had keys falls back to the text match.
+    if (locationFilter !== 'all') {
+      const keys: string[] | null | undefined = job.locationKeys;
+      const ok = locationKey && Array.isArray(keys) ? keys.includes(locationKey) : locationMatches(job.location, parsedLocation);
+      if (!ok) return false;
+    }
+    // Work type is exact now that `workType` is reliably classified at ingest
+    // (location-dominant) — Remote means remote, not remote-or-hybrid.
+    if (workTypeFilter !== 'all' && (job.workType || '').toLowerCase() !== workTypeFilter.toLowerCase()) return false;
+    if (companyFilter !== 'all' && job.company !== companyFilter) return false;
+    if (verdictFilter !== 'all' && verdict?.label !== verdictFilter) return false;
+    if (experienceLevelFilter !== 'all' && !levelMatches(job.title, experienceLevelFilter as ExperienceLevel)) return false;
     const dateOption = DATE_FILTER_OPTIONS.find(o => o.value === datePostedFilter);
-    const dateCutoff = dateOption ? Date.now() - dateOption.days * 24 * 60 * 60 * 1000 : null;
-    return allMatches.filter(m => {
-      if (term && !m.job.title.toLowerCase().includes(term) && !m.job.company.toLowerCase().includes(term) && !(m.job.description || '').toLowerCase().includes(term)) return false;
-      // A picked place matches the places the job's location resolves to (the same keys the
-      // server filters on); a job saved before it had keys falls back to the text match.
-      if (locationFilter !== 'all') {
-        const keys: string[] | null | undefined = (m.job as any).locationKeys;
-        const ok = locationKey && Array.isArray(keys) ? keys.includes(locationKey) : locationMatches(m.job.location, parsedLocation);
-        if (!ok) return false;
-      }
-      // Work type is exact now that `workType` is reliably classified at ingest
-      // (location-dominant) — Remote means remote, not remote-or-hybrid.
-      if (workTypeFilter !== 'all' && (m.job.workType || '').toLowerCase() !== workTypeFilter.toLowerCase()) return false;
-      if (companyFilter !== 'all' && m.job.company !== companyFilter) return false;
-      if (verdictFilter !== 'all' && m.verdict?.label !== verdictFilter) return false;
-      if (experienceLevelFilter !== 'all') {
-        const level = inferJobLevel(m.job.title);
-        // When filtering for entry level, also include mid (many entry jobs lack "junior" in title)
-        if (experienceLevelFilter === 'entry') {
-          if (level !== 'entry' && level !== 'mid') return false;
-        } else {
-          if (level !== experienceLevelFilter) return false;
-        }
-      }
-      if (dateCutoff !== null) {
-        // Only the employer's own posting date counts; a job without one can't be shown as recent.
-        const when = m.job.postedDate;
-        if (!when) return false;
-        const posted = new Date(when).getTime();
-        if (isNaN(posted) || posted < dateCutoff) return false;
-      }
-      return true;
-    });
-  }, [allMatches, searchTerm, locationFilter, parsedLocation, locationKey, workTypeFilter, companyFilter, experienceLevelFilter, datePostedFilter, verdictFilter]);
+    if (dateOption) {
+      // Only the employer's own posting date counts; a job without one can't be shown as recent.
+      const when = job.postedDate ?? job.postedAt;
+      if (!when) return false;
+      const posted = new Date(when).getTime();
+      if (isNaN(posted) || posted < Date.now() - dateOption.days * 24 * 60 * 60 * 1000) return false;
+    }
+    return true;
+  }, [searchTerm, locationFilter, parsedLocation, locationKey, workTypeFilter, companyFilter, experienceLevelFilter, datePostedFilter, verdictFilter]);
+
+  const filteredMatches = useMemo(
+    () => allMatches?.filter(m => passesFilters(m.job, m.verdict)),
+    [allMatches, passesFilters],
+  );
 
   // Render the full filtered set at once. All matches are already fetched in a
   // single request, so there is no network cost to showing them; rendering them
   // all avoids the scroll-reveal machinery (and its bugs) entirely.
   const visibleMatches = filteredMatches;
 
-  // Staffing agencies and job boards, mixed and ranked by the person's resume (server side);
-  // the server relaxes title and skills (never the location) before returning nothing.
-  // Third-party listings only when the person has NO direct matches at all. A filter that hides
-  // every direct match says so and offers to clear it; it never swaps in third-party jobs.
-  // Filters run on the server too (location, work type, date), so an empty list under a filter
-  // says nothing about whether the person has direct matches: only an unfiltered empty feed does.
+  // Staffing agencies and job boards, mixed and ranked by the person's resume (server side).
+  // They fill a feed with no direct jobs: none at all, or none under the person's filters, and
+  // then they're filtered the same way (the server never relaxes a filter). They never mix into a
+  // feed that has direct jobs. Not under a company filter: its list is direct employers only.
   const anyFilterSet = locationFilter !== 'all' || workTypeFilter !== 'all' || companyFilter !== 'all'
     || experienceLevelFilter !== 'all' || datePostedFilter !== 'all' || verdictFilter !== 'all' || searchTerm.trim().length > 0;
-  const noVisibleMatches = !isLoading && !isFetching && !anyFilterSet && Array.isArray(allMatches) && allMatches.length === 0;
+  const needThirdParty = !isLoading && !isFetching && companyFilter === 'all'
+    && Array.isArray(filteredMatches) && filteredMatches.length === 0;
   const candidateSkills: string[] = useMemo(() => {
     const skills = cachedProfile?.skills;
     return Array.isArray(skills) ? skills.slice(0, 20) : [];
   }, [cachedProfile?.skills]);
-  const fallbackLocation = locationFilter !== 'all' ? locationFilter : (cachedProfile?.location || '');
-  const fallbackWorkType = workTypeFilter !== 'all' ? workTypeFilter : '';
-  const fallbackJobTitle = searchTerm.trim();
+  // Typing in search shouldn't send a request per key.
+  const [serverSearch, setServerSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setServerSearch(searchTerm.trim()), 400);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
   const { data: fallbackData } = useQuery<{ jobs: any[] }>({
-    queryKey: ['/api/third-party-matches', candidateSkills.join(','), fallbackJobTitle, fallbackLocation, fallbackWorkType],
+    queryKey: ['/api/third-party-matches', candidateSkills.join(','), serverSearch, serverLocation, serverWorkType,
+      postedWithinDays ?? 'all', experienceLevelFilter, verdictFilter],
     queryFn: async () => {
       const params = new URLSearchParams();
-      if (fallbackJobTitle) params.set('jobTitle', fallbackJobTitle);
-      if (fallbackLocation) params.set('location', fallbackLocation);
-      if (fallbackWorkType) params.set('workType', fallbackWorkType);
+      if (serverSearch) params.set('search', serverSearch);
+      if (serverLocation) params.set('location', serverLocation);
+      if (serverWorkType) params.set('workType', serverWorkType);
+      if (postedWithinDays) params.set('postedWithin', String(postedWithinDays));
+      if (experienceLevelFilter !== 'all') params.set('level', experienceLevelFilter);
+      if (verdictFilter !== 'all') params.set('verdict', verdictFilter);
       const response = await apiRequest("GET", `/api/third-party-matches?${params.toString()}`);
       return response.json();
     },
-    enabled: noVisibleMatches,
+    // Only once the search box has settled: asking mid-typing sends the request without the term.
+    enabled: needThirdParty && serverSearch === searchTerm.trim(),
     staleTime: 5 * 60 * 1000,
   });
-  const fallbackJobs = fallbackData?.jobs ?? [];
+  // The filters again on what came back, so a filter changed while the request was out (or a
+  // search still being typed) can never show a job outside it.
+  const fallbackJobs = useMemo(
+    () => (needThirdParty ? (fallbackData?.jobs ?? []).filter(job => passesFilters(job, job.verdict)) : []),
+    [needThirdParty, fallbackData, passesFilters],
+  );
 
   const { data: userJobActions } = useQuery({
     queryKey: ['/api/candidate/job-actions'],
@@ -556,8 +552,7 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
     (datePostedFilter !== 'all' ? 1 : 0) +
     (verdictFilter !== 'all' ? 1 : 0);
   const hasAnyFilter = activeFilterCount > 0 || searchTerm.length > 0;
-  // Filters (here or on the server) left nothing: say so and offer to clear them. Third-party
-  // listings never stand in for a filtered-out feed.
+  // Filters (here or on the server) left no direct jobs: say so and offer to clear them.
   const overFiltered = (!filteredMatches || filteredMatches.length === 0) && anyFilterSet;
 
   return (
@@ -694,14 +689,18 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
             </div>
             <div className="min-w-0 flex-1">
               <h3 className="text-sm sm:text-base font-semibold text-gray-900 dark:text-white">
-                {overFiltered
+                {overFiltered && fallbackJobs.length > 0
+                  ? "No direct jobs fit your filters. Here are third-party listings that do."
+                  : overFiltered
                   ? (locationFilter !== 'all' ? `No direct matches in ${placeLabel(locationFilter)}` : "No direct matches fit your filters")
                   : fallbackJobs.length > 0
                     ? "No direct matches yet. Here are third-party listings."
                     : "Hang tight. New matches arrive daily."}
               </h3>
               <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-0.5">
-                {overFiltered
+                {overFiltered && fallbackJobs.length > 0
+                  ? "These come from staffing agencies and job boards, not the employer directly, so you'll apply through them. Clear filters to see your direct matches."
+                  : overFiltered
                   ? (locationFilter !== 'all'
                       ? "None of the jobs matched to your resume are there right now. Try a nearby city, the whole state, or clear the location."
                       : "None of the jobs matched to your resume fit these filters. Try widening or clearing them.")
@@ -713,8 +712,8 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
             <div className="flex flex-col sm:flex-row gap-2 shrink-0">
               {overFiltered ? (
                 <Button variant="outline" size="sm" onClick={clearFilters} className="text-xs">
-                  <RotateCcw className="h-3.5 w-3.5 sm:mr-1" />
-                  <span className="hidden sm:inline">Clear filters</span>
+                  <RotateCcw className="h-3.5 w-3.5 mr-1" />
+                  Clear filters
                 </Button>
               ) : (
                 <>

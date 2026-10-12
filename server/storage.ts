@@ -75,6 +75,7 @@ import { jobPostUrlSqlCondition } from "./lib/job-post-url";
 import { parseLocationFilter, locationPatterns } from "../shared/location-filter";
 import { pickedKey } from "../shared/places";
 import { AGGREGATOR_SOURCES, THIRD_PARTY_COMPANIES, thirdPartyKind } from './lib/third-party';
+import { levelMatches, type ExperienceLevel } from '../shared/job-level';
 import { supabaseAdmin } from "./lib/supabase-admin";
 import { extractHardRequirements, verdictFor, yearsFromPositions, type CandidateFacts, type HardRequirements } from './lib/hard-requirements';
 import { normalizeSkills, parseSkillsInput } from "./skill-normalizer";
@@ -278,6 +279,21 @@ const FEED_FRESH_HOURS = 72;
 export interface FeedRetrievalOptions {
   laneLimits?: Partial<Record<keyof typeof FEED_LANE_LIMITS, number>>;
   freshHours?: number;
+}
+
+/** The feed's filters as third-party jobs take them (getAggregatorFallbackJobs). */
+export interface ThirdPartyFilters {
+  /** Relevance signal (public fallback): relaxed when nothing matches it. */
+  jobTitle?: string;
+  /** A place the person picked: matched exactly, never relaxed. */
+  location?: string;
+  /** The person's own location, used only when no place is picked (with remote jobs). */
+  homeLocation?: string;
+  workType?: string;
+  search?: string;
+  postedWithinDays?: number;
+  experienceLevel?: ExperienceLevel;
+  verdict?: 'apply' | 'stretch' | 'skip';
 }
 
 export interface FeedFilters {
@@ -1507,22 +1523,22 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  // Empty-state fallback: aggregator-sourced jobs (Adzuna, JSearch, Indeed, etc.)
-  // surfaced ONLY when the main feed returns zero matches. Caller must badge these
-  // clearly as leaving the platform — the URL points to the aggregator, not the employer.
+  // Third-party jobs (job boards and staffing agencies) for a feed with no direct jobs: shown
+  // whenever the person's filters leave zero direct matches, filtered the same way. Caller must
+  // label them: the link goes to the agency or board, not the employer.
   async getAggregatorFallbackJobs(
     skills: string[] = [],
-    filters: { jobTitle?: string; location?: string; workType?: string } = {},
+    filters: ThirdPartyFilters = {},
     limit: number = 10,
     vectorStr?: string,
     /** The person, so third-party jobs are scored exactly as the main feed scores direct ones. */
-    candidate?: { experienceLevel?: string | null; titles?: string[]; location?: string | null; workType?: string | null },
+    candidate?: { id?: string; experienceLevel?: string | null; titles?: string[]; location?: string | null; workType?: string | null },
   ): Promise<JobPosting[]> {
     try {
       // No skill, title or resume signal → nothing to relevance-match against. Return
       // empty rather than padding the empty state with recency-only noise (which
       // is just random aggregator jobs the candidate has no demonstrated fit for).
-      if (skills.length === 0 && !filters.jobTitle?.trim() && !vectorStr) {
+      if (skills.length === 0 && !filters.jobTitle?.trim() && !filters.search?.trim() && !vectorStr) {
         return [];
       }
 
@@ -1587,14 +1603,34 @@ export class DatabaseStorage implements IStorage {
         ? eq(jobPostings.workType, filters.workType)
         : null;
 
-      // Match on the city portion only ("Seattle, WA" → "%seattle%") so stored
-      // locations like "Seattle, WA, USA" or "Seattle Metro Area" still match.
-      // Falls back to remote roles regardless.
+      // A place the person picked is matched exactly as the direct feed matches it (no remote
+      // jobs added). With no location filter, their home location or remote jobs.
       const locationCondition = (() => {
-        const match = locationSql(sql`${jobPostings.location}`, sql`${jobPostings.locationKeys}`, filters.location);
-        if (!match) return null;
-        return or(match, sql`LOWER(${jobPostings.location}) LIKE '%remote%'`);
+        if (filters.location?.trim()) {
+          return locationSql(sql`${jobPostings.location}`, sql`${jobPostings.locationKeys}`, filters.location) ?? null;
+        }
+        const home = locationSql(sql`${jobPostings.location}`, sql`${jobPostings.locationKeys}`, filters.homeLocation);
+        if (!home) return null;
+        return or(home, sql`LOWER(${jobPostings.location}) LIKE '%remote%'`);
       })();
+
+      // The feed's search box: the whole term in the title, company or description, as the
+      // direct feed filters it (ai-job-feed.tsx).
+      const searchCondition = filters.search?.trim()
+        ? (() => {
+            const pattern = '%' + escapeLike(filters.search.trim().toLowerCase()) + '%';
+            return or(
+              sql`LOWER(${jobPostings.title}) LIKE ${pattern}`,
+              sql`LOWER(${jobPostings.company}) LIKE ${pattern}`,
+              sql`LOWER(coalesce(${jobPostings.description}, '')) LIKE ${pattern}`,
+            )!;
+          })()
+        : null;
+
+      // "Date posted": only the employer's own posting date counts, as in feedFilterConditions.
+      const postedCondition = filters.postedWithinDays
+        ? sql`${jobPostings.postedAt} > ${new Date(Date.now() - filters.postedWithinDays * 24 * 60 * 60 * 1000).toISOString()}`
+        : null;
 
       const skillCondition = skills.length > 0
         ? or(...skills.map(skill =>
@@ -1608,11 +1644,14 @@ export class DatabaseStorage implements IStorage {
       // With a resume vector, rank by it (exact distance: the third-party pool is small);
       // otherwise by skill overlap, then recency.
       const dist = vectorStr ? sql`(${jobPostings.embedding} <=> ${vectorStr}::vector)` : null;
+      // Every column but the vector: the distance is computed in SQL, and pulling 384 numbers for
+      // each of up to ~450 pool rows was most of the query's time.
+      const { embedding: _vectorColumn, ...poolColumns } = getTableColumns(jobPostings);
       const runQuery = async (extras: (any | null)[]) => {
         const conditions = [...baseConditions(), ...extras.filter(Boolean)];
         if (dist) {conditions.push(sql`${jobPostings.embedding} IS NOT NULL`);}
         return db
-          .select({ job: jobPostings, distance: dist ?? sql<null>`NULL` })
+          .select({ job: poolColumns, distance: dist ?? sql<null>`NULL` })
           .from(jobPostings)
           .where(and(...conditions))
           .orderBy(
@@ -1629,14 +1668,16 @@ export class DatabaseStorage implements IStorage {
       };
 
       // "0 matches" is the last resort: start strict, then relax the fit signals (title,
-      // skills) one at a time. The person's own choices, location and work type, are never
-      // relaxed: a location search never answers with jobs elsewhere. Without a resume vector
-      // every step keeps a skill or title signal, so it never turns into random jobs.
+      // skills) one at a time. The person's filters (location, work type, search, date posted)
+      // are never relaxed: a filtered feed never answers with jobs outside its filters. Without a
+      // resume vector every step keeps a skill, title or search signal, so it never turns into
+      // random jobs.
       const relevance = skillCondition || titleCondition ? or(skillCondition, titleCondition) : null;
+      const chosen = [workTypeCondition, locationCondition, searchCondition, postedCondition];
       const steps: (any | null)[][] = [
-        [titleCondition, workTypeCondition, locationCondition, skillCondition],
-        [relevance, workTypeCondition, locationCondition],
-        ...(dist ? [[workTypeCondition, locationCondition]] : []),
+        [titleCondition, skillCondition, ...chosen],
+        [relevance, ...chosen],
+        ...(dist || searchCondition ? [chosen] : []),
       ];
       // Fill up to `limit` from the strictest step down: strict matches first, then the
       // relaxed ones. Aggregators list one posting under several links (and spell its
@@ -1646,6 +1687,7 @@ export class DatabaseStorage implements IStorage {
       for (const step of steps) {
         if (!dist && step.every(c => !c)) {continue;}
         for (const row of await runQuery(step)) {
+          if (filters.experienceLevel && !levelMatches(row.job.title, filters.experienceLevel)) {continue;}
           const key = [row.job.title, row.job.company].map(v => String(v ?? '').trim().toLowerCase()).join('|');
           if (seen.has(key)) {continue;}
           seen.add(key);
@@ -1657,30 +1699,33 @@ export class DatabaseStorage implements IStorage {
       // experience level, resume similarity: job-scorer.ts), keep only real fits, and give no
       // single company more than a few places (one re-poster filled whole lists, 2026-10-12).
       const embedding = vectorStr ? (JSON.parse(vectorStr) as number[]) : undefined;
-      const perCompany = new Map<string, number>();
-      return rows
+      const fits = rows
         .map(({ job, distance }) => {
           const score = scoreJob(skills, candidate?.experienceLevel, { ...job, skills: Array.isArray(job.skills) ? job.skills : [] } as any,
             embedding, candidate?.titles ?? [], { location: candidate?.location ?? undefined, workType: candidate?.workType ?? undefined },
             distance == null ? undefined : Number(distance));
-          return { job, score };
+          return {
+            ...job,
+            thirdPartyKind: thirdPartyKind(job),
+            matchScore: score.matchScore,
+            skillMatches: score.skillMatches,
+            aiExplanation: score.aiExplanation,
+          };
         })
-        .filter(({ score }) => score.matchScore >= THIRD_PARTY_MIN_SCORE)
-        .sort((a, b) => b.score.matchScore - a.score.matchScore)
-        .filter(({ job }) => {
+        .filter(job => job.matchScore >= THIRD_PARTY_MIN_SCORE)
+        .sort((a, b) => b.matchScore - a.matchScore);
+      // Apply / Stretch / Skip as on direct jobs, so the verdict filter means the same here.
+      const judged: any[] = candidate?.id ? await this.attachVerdicts(candidate.id, fits) : fits;
+      const perCompany = new Map<string, number>();
+      return judged
+        .filter(job => !filters.verdict || job.verdict?.label === filters.verdict)
+        .filter(job => {
           const co = String(job.company ?? '').trim().toLowerCase();
           const n = (perCompany.get(co) ?? 0) + 1;
           perCompany.set(co, n);
           return n <= THIRD_PARTY_PER_COMPANY;
         })
-        .slice(0, limit)
-        .map(({ job, score }) => ({
-          ...job,
-          thirdPartyKind: thirdPartyKind(job),
-          matchScore: score.matchScore,
-          skillMatches: score.skillMatches,
-          aiExplanation: score.aiExplanation,
-        })) as any;
+        .slice(0, limit) as any;
     } catch (error) {
       console.error('Error fetching aggregator fallback jobs:', error);
       return [];
@@ -2490,7 +2535,8 @@ export class DatabaseStorage implements IStorage {
     if (jobs.length === 0) {return jobs;}
     try {
       const startedAt = Date.now();
-      const ids = jobs.map(j => j.id).filter((id: unknown) => typeof id === 'number');
+      // Descriptions are read only for jobs that came without one (the feed doesn't load them).
+      const ids = jobs.filter(j => typeof j.description !== 'string').map(j => j.id).filter((id: unknown) => typeof id === 'number');
       const [candidate, descRows] = await Promise.all([
         this.getCandidateUser(candidateId),
         ids.length ? db.select({ id: jobPostings.id, description: jobPostings.description })
