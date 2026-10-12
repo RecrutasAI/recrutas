@@ -592,6 +592,31 @@ END`;
 // Internal (source = 'platform') jobs have no external_url and must be
 // allowed through separately at each call site.
 // Built from server/lib/job-post-url.ts, the same rule ingestion applies.
+/**
+ * The US-only rule for every feed, in one place (it was copied three times). A job is out when
+ * its location names another country, or when its TITLE does and the title doesn't also name the
+ * US: "Technical Support Engineer, Canada" with location "Remote" was in the US feed (3,655 live
+ * jobs name a foreign country or region in the title, 2026-10-12). "New Mexico" is a US state.
+ * An empty location stays in (most are remote or unstated US roles).
+ */
+const FOREIGN_IN_TITLE_REGEX = '\\m(canada|canadian|uk|united kingdom|england|scotland|emea|apac|latam|europe|european|india|mexico|brazil|philippines|germany|australia|ireland|poland|spain|france|netherlands|singapore|japan|israel|argentina|colombia|costa rica)\\M';
+const US_IN_TITLE_REGEX = '\\m(us|usa|u\\.s|united states|americas|north america)\\M';
+export function usOnlySql(): SQL {
+  const title = sql`regexp_replace(lower(coalesce(${jobPostings.title}, '')), 'new mexico', ' ', 'g')`;
+  return and(
+    or(
+      sql`${jobPostings.location} IS NULL`,
+      sql`TRIM(${jobPostings.location}) = ''`,
+      and(
+        sql`NOT (${jobPostings.location} ~* ${NON_US_LOCATION_REGEX})`,
+        sql`NOT (regexp_replace(LOWER(${jobPostings.location}), 'new mexico', '', 'g') ~* ${MEXICO_COUNTRY_REGEX})`,
+        sql`NOT (${jobPostings.location} ~* ${', ?(' + CA_PROVINCE_CODES_RE_PART + ')( |,|$)'})`,
+      ),
+    ),
+    sql`NOT (${title} ~ ${FOREIGN_IN_TITLE_REGEX} AND NOT (${title} ~ ${US_IN_TITLE_REGEX}))`,
+  )!;
+}
+
 const jobPostUrlRequirement = sql.raw(jobPostUrlSqlCondition('"job_postings"."external_url"'));
 
 /**
@@ -606,10 +631,7 @@ export async function getDirectUsJobLinks(): Promise<Array<{ url: string; compan
     WHERE ${jobPostings.status} = 'active' AND ${jobPostings.externalUrl} IS NOT NULL
       AND ${jobPostings.source} NOT IN (${sql.join([...AGGREGATOR_SOURCES].map(s => sql`${s}`), sql`, `)})
       AND ${reposterExclusion} AND ${jobPostUrlRequirement}
-      AND (${jobPostings.location} IS NULL OR TRIM(${jobPostings.location}) = '' OR (
-        NOT (${jobPostings.location} ~* ${NON_US_LOCATION_REGEX})
-        AND NOT (regexp_replace(LOWER(${jobPostings.location}), 'new mexico', '', 'g') ~* ${MEXICO_COUNTRY_REGEX})
-        AND NOT (${jobPostings.location} ~* ${', ?(' + CA_PROVINCE_CODES_RE_PART + ')( |,|$)'})))`);
+      AND ${usOnlySql()}`);
   return (r?.rows ?? r) as Array<{ url: string; company: string }>;
 }
 
@@ -1577,16 +1599,8 @@ export class DatabaseStorage implements IStorage {
           sql`${jobPostings.expiresAt} > NOW()`
         ),
         sql`${jobPostings.createdAt} > ${cutoffDateStr}`,
-        // US only, as in the main feed: empty/remote stay in, explicit non-US drops.
-        or(
-          sql`${jobPostings.location} IS NULL`,
-          sql`TRIM(${jobPostings.location}) = ''`,
-          and(
-            sql`NOT (${jobPostings.location} ~* ${NON_US_LOCATION_REGEX})`,
-            sql`NOT (regexp_replace(LOWER(${jobPostings.location}), 'new mexico', '', 'g') ~* ${MEXICO_COUNTRY_REGEX})`,
-            sql`NOT (${jobPostings.location} ~* ${', ?(' + CA_PROVINCE_CODES_RE_PART + ')( |,|$)'})`,
-          ),
-        ),
+        // US only, as in the main feed.
+        usOnlySql(),
       ];
 
       const titleCondition = (() => {
@@ -2008,16 +2022,7 @@ export class DatabaseStorage implements IStorage {
       // only rows whose location explicitly matches the non-US regex are dropped.
       // The "new mexico" replace prevents the bare-"mexico" check from flagging
       // the US state.
-      or(
-        eq(jobPostings.source, 'platform'),
-        sql`${jobPostings.location} IS NULL`,
-        sql`TRIM(${jobPostings.location}) = ''`,
-        and(
-          sql`NOT (${jobPostings.location} ~* ${NON_US_LOCATION_REGEX})`,
-          sql`NOT (regexp_replace(LOWER(${jobPostings.location}), 'new mexico', '', 'g') ~* ${MEXICO_COUNTRY_REGEX})`,
-          sql`NOT (${jobPostings.location} ~* ${', ?(' + CA_PROVINCE_CODES_RE_PART + ')( |,|$)'})`,
-        ),
-      ),
+      or(eq(jobPostings.source, 'platform'), usOnlySql()),
       ...(excludeIds.length > 0
         ? [sql`${jobPostings.id} NOT IN (${sql.join(excludeIds.map(id => sql`${id}`), sql`, `)})`]
         : []),
@@ -2203,6 +2208,20 @@ export class DatabaseStorage implements IStorage {
           if (usA !== usB) return usA - usB;
           return b.compositeScore - a.compositeScore;
         })
+        // One card per role: the same title at the same company is the same job to a candidate
+        // when both copies are remote (an employer posting one remote role per city) or share a
+        // location. Different on-site cities stay separate (they are different openings). Runs
+        // before the cap, so a dropped copy frees a place; the best-ranked copy is kept.
+        .filter((() => {
+          const seenRoles = new Set<string>();
+          return (job: any) => {
+            const where = (job.workType ?? '').toLowerCase() === 'remote' ? 'remote' : String(job.location ?? '').trim().toLowerCase();
+            const key = `${String(job.company ?? '').trim().toLowerCase()}|${String(job.title ?? '').trim().toLowerCase()}|${where}`;
+            if (seenRoles.has(key)) {return false;}
+            seenRoles.add(key);
+            return true;
+          };
+        })())
         .slice(0, 100); // Hard cap: never return more than 100 jobs
     console.timeEnd('score-jobs');
 
