@@ -41,3 +41,14 @@ describe('fleet matcher (server side)', () => {
     expect(toIngestion({ ...job, company_name: 'Fa Ertb Saasfaprod1' })).toBeNull();
   });
 });
+
+describe('dateLookupKey', () => {
+  it('uses the ATS job id when the link has one, the link fingerprint otherwise', async () => {
+    const { dateLookupKey } = await import('../scripts/fleet-matcher');
+    const { linkKey } = await import('../server/lib/canonical-url');
+    expect(dateLookupKey('ATS:smartrecruiters', 'https://jobs.smartrecruiters.com/accorhotel/744000154370085'))
+      .toEqual({ kind: 'job', key: 'smartrecruiters:744000154370085' });
+    expect(dateLookupKey('greenhouse', 'https://stripe.com/jobs/search?gh_jid=8172487')).toEqual({ kind: 'job', key: 'greenhouse:8172487' });
+    expect(dateLookupKey('ATS:jazzhr', 'https://x.applytojob.com/apply/1')).toEqual({ kind: 'link', key: linkKey('https://x.applytojob.com/apply/1') });
+  });
+});
