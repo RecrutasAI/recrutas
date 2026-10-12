@@ -20,9 +20,11 @@
     return chrome.runtime.sendMessage(msg);
   }
 
-  // Prevent double-injection on SPAs
+  // Prevent double-injection on SPAs. A second injection (the popup's "Fill this page" or the
+  // keyboard shortcut, on a page the extension already loaded) runs the first copy's fill:
+  // calling this copy's triggerFill here threw, because its `let isFilling` below isn't set yet.
   if (window.__recruitasInjected) {
-    triggerFill();
+    window.__recruitasFill?.();
     return;
   }
   window.__recruitasInjected = true;
@@ -565,13 +567,16 @@
   const AFFIRM_RE = /^\s*(yes|yeah|i\s+agree|agree|i\s+acknowledge|acknowledge|i\s+understand|understand|i\s+certify|certify|i\s+accept|accept|confirm(?:ed)?|affirm(?:ative)?|true)\b/i;
 
   // One attempt at opening the dropdown and committing the option for `wanted`.
-  async function attemptDropdown(el, container, searchInput, wanted, isDecline, isAffirm) {
+  async function attemptDropdown(el, container, searchInput, wanted, isDecline, isAffirm, strict) {
     const txt = o => (o.textContent || '').trim().toLowerCase();
     // When the desired value is a word (e.g. "United States"), never accept a bare
     // dial-code option ("+1") — that's the phone widget leaking in.
     const wantNumeric = isDialCode(wanted);
     const matchInMenu = () => {
       const opts = visibleOptionNodes().filter(o => wantNumeric || !isDialCode(txt(o)));
+      // Strict (the server asked for it): the option is the value or starts with it, so
+      // "job board" picks "Job Boards" but never "College Job Boards".
+      if (strict) return opts.find(o => txt(o) === wanted) || opts.find(o => txt(o).startsWith(wanted)) || null;
       return opts.find(o => txt(o) === wanted)
         || opts.find(o => txt(o) && (txt(o).includes(wanted) || wanted.includes(txt(o))))
         || (isDecline ? opts.find(o => DECLINE_RE.test(txt(o))) : null)
@@ -631,13 +636,15 @@
       typeFilter(searchInput, wanted);
       opt = await waitFor(matchInMenu, 1200, 120);
     }
-    if (opt) {
-      clickOption(opt);
-    } else {
-      sendKey(searchInput, 'ArrowDown', 40);
-      await sleep(100);
-      sendKey(searchInput, 'Enter', 13);
+    // Only an option that matches is ever chosen. Committing the highlighted option when
+    // nothing matched picked an unrelated answer ("Career/ College Fair" for "how did you
+    // hear", 2026-10-12): an empty field the candidate fills beats a wrong one.
+    if (!opt) {
+      sendKey(searchInput, 'Escape', 27);
+      typeFilter(searchInput, '');
+      return false;
     }
+    clickOption(opt);
     if (await waitFor(committed, 800, 100)) return true;
 
     // Reset before the caller retries: close the menu and clear leftover text.
@@ -650,7 +657,7 @@
   // react-select is keyboard-driven and renders at variable latency in headless, so
   // we poll for the menu/commit and retry the whole sequence. Returns true only on a
   // committed value chip (search text alone is NOT success — it clears on blur).
-  async function selectDropdownOption(el, value) {
+  async function selectDropdownOption(el, value, strict = false) {
     const container = dropdownContainer(el);
     const wanted = value.trim().toLowerCase();
     const isDecline = DECLINE_RE.test(wanted);
@@ -660,7 +667,7 @@
     for (let attempt = 0; attempt < 2; attempt++) {
       if (attempt > 0) await sleep(250);
       if (committedValue(container, el)) return true;
-      if (await attemptDropdown(el, container, searchInput, wanted, isDecline, isAffirm)) return true;
+      if (await attemptDropdown(el, container, searchInput, wanted, isDecline, isAffirm, strict)) return true;
     }
     return false;
   }
@@ -668,7 +675,7 @@
   // ACTION: click_then_type. A multi-select value is sent as a pipe-delimited list
   // ("New York | Remote") so we can select each option without colliding with the
   // commas inside "City, State" option labels.
-  async function executeClickThenType(el, value) {
+  async function executeClickThenType(el, value, strict = false) {
     const parts = value.includes('|')
       ? value.split('|').map(s => s.trim()).filter(Boolean)
       : [value];
@@ -677,7 +684,7 @@
     try {
       for (const part of parts) {
         const ok = await withTimeout(
-          selectDropdownOption(el, part),
+          selectDropdownOption(el, part, strict),
           7000,
           'Dropdown selection timed out'
         );
@@ -859,7 +866,7 @@
         // model's action, honouring the same time budget as click_then_type.
         if (elIsCombobox) {
           if (Date.now() > dropdownDeadline) { success = false; break; }
-          success = await executeClickThenType(el, action.value || '');
+          success = await executeClickThenType(el, action.value || '', !!action.strict);
           continue;
         }
 
@@ -878,7 +885,7 @@
               console.debug(`[Recrutas] Dropdown budget exhausted, skipping: ${action.fieldId}`);
               success = false;
             } else {
-              success = await executeClickThenType(el, action.value || '');
+              success = await executeClickThenType(el, action.value || '', !!action.strict);
             }
             break;
           case 'check':
@@ -927,7 +934,7 @@
 
   // ── Where each answer came from ────────────────────────────────────────────
 
-  const SOURCE_LABEL = { profile: 'Profile', resume: 'Resume', answer: 'Your answer', default: 'Default' };
+  const SOURCE_LABEL = { profile: 'Profile', resume: 'Resume', answer: 'Your answer', default: 'Default', draft: 'Draft — review' };
 
   // A small tag after each filled field saying where its value came from, so the
   // candidate can check it before submitting. Evidence (e.g. "About 6 years of
@@ -954,6 +961,16 @@
     document.getElementById('recrutas-needs')?.remove();
     document.querySelectorAll('.recrutas-needs-field').forEach(e => e.classList.remove('recrutas-needs-field'));
     if (!needsYou.length) return;
+    // Every element is watched for an answer to remember; the panel lists each question once
+    // (a form can render one question as two elements).
+    for (const n of needsYou) offerToRemember(n);
+    const seenLabels = new Set();
+    needsYou = needsYou.filter(n => {
+      const k = String(n.label || n.fieldId).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      if (seenLabels.has(k)) return false;
+      seenLabels.add(k);
+      return true;
+    });
 
     const panel = document.createElement('div');
     panel.id = 'recrutas-needs';
@@ -966,7 +983,7 @@
     const title = document.createElement('strong');
     title.textContent = `${needsYou.length} question${needsYou.length === 1 ? ' needs' : 's need'} you`;
     const intro = document.createElement('p');
-    intro.textContent = "We only fill what we know. Answer these on this form.";
+    intro.textContent = "We only fill what we know. Answer these on this form; for the ones that come up on every form, we'll offer to remember your answer.";
     const list = document.createElement('ul');
     for (const n of needsYou) {
       const el = findElement(n.fieldId);
@@ -991,6 +1008,82 @@
     document.body.appendChild(panel);
   }
 
+  // ── Remember an answer typed on the form ──────────────────────────────────
+  // When the candidate answers a "needs you" question that comes up on every form (a saved
+  // fact like sponsorship, or a short question they may see word for word again), a small
+  // button next to the field offers to use that answer on every form. Nothing is saved
+  // unless they click it.
+
+  const YES_RE = /^\s*(yes|true|i am|i do|i will|i have)\b|^\s*y\s*$/i;
+  const NO_RE = /^\s*(no|false|i am not|i do not|i don'?t|i will not|i won'?t)\b|^\s*n\s*$/i;
+  const YES_NO_KEYS = new Set(['workAuthorizedUS', 'needsSponsorship', 'usCitizen', 'over18', 'willingToRelocate', 'driversLicense', 'backgroundCheck']);
+  const TEXT_MAX = { noticePeriod: 60, desiredSalary: 60, languages: 120 };
+  const CLEARANCES = [['ts_sci', /ts\s*\/?\s*sci/i], ['top_secret', /top secret/i], ['secret', /\bsecret\b/i], ['public_trust', /public trust/i], ['none', /^\s*(none|no|n\/a)\b/i]];
+
+  /** What the candidate picked or typed in a field, as shown. */
+  function answerIn(el) {
+    if (!el) return '';
+    if (el.tagName === 'SELECT') return el.selectedOptions?.[0]?.textContent?.trim() || '';
+    const box = el.closest('.select__container, .select-shell, [class*="select__control"], [role="radiogroup"], fieldset');
+    const single = box?.querySelector('[class*="single-value"], [class*="singleValue"]');
+    if (single?.textContent?.trim()) return single.textContent.trim();
+    const radio = box?.querySelector('input[type="radio"]:checked');
+    if (radio) return (radio.closest('label')?.textContent || document.querySelector(`label[for="${CSS.escape(radio.id)}"]`)?.textContent || radio.value || '').trim();
+    return (el.value || '').trim();
+  }
+
+  /** The answer as it's saved: yes/no for yes/no facts, a clearance level, or the words. */
+  function toSaved(n, raw) {
+    if (!raw) return null;
+    if (n.saveAs) {
+      if (YES_NO_KEYS.has(n.saveAs)) return YES_RE.test(raw) ? { [n.saveAs]: 'yes' } : NO_RE.test(raw) ? { [n.saveAs]: 'no' } : null;
+      if (n.saveAs === 'securityClearance') {
+        const hit = CLEARANCES.find(([, re]) => re.test(raw));
+        return hit ? { securityClearance: hit[0] } : null;
+      }
+      return raw.length <= (TEXT_MAX[n.saveAs] || 60) ? { [n.saveAs]: raw } : null;
+    }
+    if (n.saveKey && raw.length <= 200) return { custom: { [n.saveKey]: raw } };
+    return null;
+  }
+
+  function offerToRemember(n) {
+    if (!n.saveAs && !n.saveKey) return;
+    const el = findElement(n.fieldId);
+    if (!el) return;
+    const anchor = el.closest('.select__container, .select-shell, [class*="select__control"], [role="radiogroup"], fieldset') || el;
+    let button = null;
+    const check = () => setTimeout(() => {
+      const changes = toSaved(n, answerIn(el));
+      if (!changes) { button?.remove(); button = null; return; }
+      if (!button) {
+        button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'recrutas-remember';
+        anchor.insertAdjacentElement('afterend', button);
+        button.addEventListener('click', async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const now = toSaved(n, answerIn(el));
+          if (!now) return;
+          button.disabled = true;
+          button.textContent = 'Saving…';
+          try {
+            const res = await sendMessage({ type: 'SAVE_ANSWER', changes: now });
+            if (!res?.success) throw new Error(res?.error || 'Save failed');
+            button.textContent = 'Saved for every form ✓';
+          } catch (err) {
+            button.disabled = false;
+            button.textContent = "Couldn't save — try again";
+          }
+        });
+      }
+      if (!button.disabled) button.textContent = 'Use this answer on every form';
+    }, 150);
+    // Typed, picked from a native select, chosen in a custom dropdown or a radio group.
+    for (const ev of ['change', 'focusout', 'click', 'keyup']) anchor.addEventListener(ev, check, true);
+  }
+
   // ── Main fill trigger ──────────────────────────────────────────────────────
 
   // Re-entry guard: the button is wired via BOTH a direct listener and a
@@ -998,6 +1091,7 @@
   // handler below), so a single click can reach triggerFill twice. This flag
   // collapses that to one run.
   let isFilling = false;
+  window.__recruitasFill = () => triggerFill();
 
   async function triggerFill() {
     if (isFilling) return;

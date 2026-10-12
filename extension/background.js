@@ -346,6 +346,25 @@ async function reportApplication(report) {
   return res.json();
 }
 
+// An answer the candidate typed on a form and chose to use on every form: one saved fact
+// ({ needsSponsorship: 'no' }) or one kept question ({ custom: { '<wording>': 'answer' } }).
+// The server merges it with the answers already saved.
+async function saveAnswer(changes) {
+  const accessToken = await getValidToken();
+  const baseUrl = await getRecruitasUrl();
+  const res = await fetch(`${baseUrl}/api/candidate/application-answers`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify(changes),
+  });
+  if (res.status === 401) {
+    await logout();
+    throw new Error('Session expired. Please sign in again.');
+  }
+  if (!res.ok) throw new Error(`Save failed (${res.status})`);
+  return res.json();
+}
+
 async function applicationStatus(url) {
   const accessToken = await getValidToken();
   const baseUrl = await getRecruitasUrl();
@@ -507,6 +526,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           company: message.company,
           autoFilled: !!message.autoFilled,
         });
+        return { success: true, ...result };
+      }
+
+      case 'SAVE_ANSWER': {
+        const result = await saveAnswer(message.changes || {});
         return { success: true, ...result };
       }
 

@@ -144,6 +144,8 @@ describe('how did you hear about us: the truth is Recrutas, a job board', () => 
     expect(one(q('How did you hear about us?', { options: ['Company Website', 'Job Board', 'Referral'] }), ctx(), { action: 'select', value: 'Company Website' }).actions[0])
       .toMatchObject({ value: 'Job Board', source: 'default' });
     expect(one(q('How did you hear about this opportunity?', { type: 'text', options: undefined }), ctx()).actions[0].value).toBe('Recrutas (job board)');
+    // A dropdown that hasn't listed its options yet: the usual option wording, for an exact match only.
+    expect(one(q('How did you hear about this opportunity?', { options: undefined }), ctx()).actions[0]).toMatchObject({ action: 'click_then_type', value: 'Job board', strict: true });
   });
 });
 
@@ -298,5 +300,17 @@ describe('found filling three real forms (DH Pace, Boldly, Pacific Legal, 2026-1
     expect(e?.level).toBe("Master's degree");
     expect(e?.evidence).toMatch(/M\.S\., Computer Science/);
     expect(e?.evidence).not.toMatch(/TEST USER/);
+  });
+});
+
+describe('found running the extension on a live form (DH Pace, 2026-10-12)', () => {
+  it('"employed with X before" names the employer, even when the page gave no company', () => {
+    const f = q('Have you ever been employed with DH Pace before?');
+    expect(one(f, ctx({}, { companies: ['Walmart, Inc.'] })).actions[0]).toMatchObject({ value: 'No', evidence: "DH Pace isn't among the employers on your resume" });
+  });
+  it('keeps every element of a question rendered twice, for the extension to watch', () => {
+    const a = q('Do you currently hold a valid driver’s license?');
+    const b = { ...a, id: 'dup' };
+    expect(enforceTruth([], [a, b], ctx()).needsYou.map(n => n.fieldId)).toEqual([a.id, 'dup']);
   });
 });
