@@ -298,9 +298,6 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
     const dateCutoff = dateOption ? Date.now() - dateOption.days * 24 * 60 * 60 * 1000 : null;
     return allMatches.filter(m => {
       if (term && !m.job.title.toLowerCase().includes(term) && !m.job.company.toLowerCase().includes(term) && !(m.job.description || '').toLowerCase().includes(term)) return false;
-      // City search: substring, case-insensitive — so "new york" matches
-      // "New York, NY", "New York, New York", etc. (exact-match made cities
-      // nearly impossible to find unless you picked an exact stored string).
       // A picked place matches the places the job's location resolves to (the same keys the
       // server filters on); a job saved before it had keys falls back to the text match.
       if (locationFilter !== 'all') {
@@ -630,7 +627,7 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
 
           {/* Location: every US place, applied only when one is picked (shared/places.ts). */}
           <LocationPicker
-            className="w-full sm:w-[200px]"
+            className="col-span-2 w-full sm:w-[200px]"
             value={locationFilter === 'all' ? '' : locationFilter}
             onChange={(v) => setLocationFilter(v === '' ? 'all' : v)}
           />
@@ -648,19 +645,6 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
             </SelectContent>
           </Select>
 
-          <Select value={companyFilter} onValueChange={setCompanyFilter}>
-            <SelectTrigger className="w-full sm:w-[190px]" aria-label="Company">
-              <Building className="h-4 w-4 mr-2 shrink-0" />
-              <SelectValue placeholder="Company" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Companies</SelectItem>
-              {companies.map(company => (
-                <SelectItem key={company} value={company}>{company}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
           <Select value={experienceLevelFilter} onValueChange={setExperienceLevelFilter}>
             <SelectTrigger className="w-full sm:w-[150px]">
               <Layers className="h-4 w-4 mr-2 shrink-0" />
@@ -670,6 +654,19 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
               <SelectItem value="all">All Levels</SelectItem>
               {(Object.keys(EXPERIENCE_LEVEL_LABELS) as ExperienceLevel[]).map(level => (
                 <SelectItem key={level} value={level}>{EXPERIENCE_LEVEL_LABELS[level]}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={companyFilter} onValueChange={setCompanyFilter}>
+            <SelectTrigger className="col-span-2 sm:col-span-1 w-full sm:w-[190px]" aria-label="Company">
+              <Building className="h-4 w-4 mr-2 shrink-0" />
+              <SelectValue placeholder="Company" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Companies</SelectItem>
+              {companies.map(company => (
+                <SelectItem key={company} value={company}>{company}</SelectItem>
               ))}
             </SelectContent>
           </Select>
