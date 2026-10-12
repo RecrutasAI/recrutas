@@ -29,6 +29,22 @@ describe('resolveLocation', () => {
       expect(places(loc), loc).toEqual(['washington|DC']);
     }
     expect(places('St. Louis, MO')).toEqual(['st louis|MO']);
+    // D.C. is not Washington state, however it's written (650 live jobs were tagged WA, 2026-10-12).
+    for (const loc of ['Washington, D.C.', 'Washington D.C.', 'Washington D.C', 'Washington, D.C', 'Washington, Washington, D.C.',
+      'Washington, D.C., United States', 'Washington, D.C. United States', 'Washington D.C., District of Columbia, United States',
+      'Remote - Washington D.C.', 'Washington, D.C. Metro Area', 'Washington, D.C., US', 'Maryland; Virginia; Washington, D.C.',
+      'Remote, Maryland; Remote, Virginia; Remote, Washington D.C.', 'New York, N.Y. or Washington, D.C.']) {
+      const r = resolveLocation(loc, idx);
+      expect(r.places, loc).toContain('washington|DC');
+      expect(r.states, loc).not.toContain('WA');
+    }
+    // ...while a real Washington-state place next to D.C. still counts.
+    for (const loc of ['Bellevue, Washington; Chicago, Illinois; Washington, DC', 'San Francisco, CA | Seattle, WA | New York City, NY | Washington, DC',
+      'Colorado, United States; Illinois, United States; Maryland, United States; Washington, District of Columbia, United States; Washington, United States']) {
+      const r = resolveLocation(loc, idx);
+      expect(r.places, loc).toContain('washington|DC');
+      expect(r.states, loc).toContain('WA');
+    }
     expect(places('Saint Louis, MO, United States')).toEqual(['st louis|MO']);
     expect(places('109 - Fort Worth, TX 76177')).toEqual(['ft worth|TX']);
   });
