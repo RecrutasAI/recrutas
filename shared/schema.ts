@@ -1043,6 +1043,14 @@ export const candidateFeedCache = pgTable("candidate_feed_cache", {
   idxComputedAt: index("candidate_feed_cache_computed_at_idx").on(table.computedAt),
 }));
 
+// Scoring slots shared by every instance (server/services/feed-gate.service.ts).
+// migrations/add-feed-gate-slots.sql
+export const feedGateSlots = pgTable("feed_gate_slots", {
+  slot: integer("slot").primaryKey(),
+  holder: text("holder"),
+  leasedUntil: timestamp("leased_until", { withTimezone: true }).notNull().default(new Date(0)),
+});
+
 export const matchSignals = pgTable("match_signals", {
   id: serial("id").primaryKey(),
   candidateId: varchar("candidate_id", { length: 255 }).notNull(),

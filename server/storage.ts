@@ -61,6 +61,10 @@ import {
 import { isRecentlyVerifiedLive, LIVE_BADGE_MAX_AGE_HOURS } from "../shared/liveness.js";
 import { db } from "./db";
 import { feedCacheConfig, readFeedCache, writeFeedCache } from './services/feed-cache.service';
+import { tryFeedSlot, waitForFeedSlot } from './services/feed-gate.service';
+
+/** How long someone with no stored feed waits for a scoring slot before getting the fallback feed. */
+const FEED_SLOT_WAIT_MS = 6000;
 import { eq, desc, asc, and, or } from "drizzle-orm";
 import { getTableColumns } from "drizzle-orm/utils";
 import { sql, isNotNull, type SQL } from "drizzle-orm/sql";
@@ -109,7 +113,7 @@ export interface IStorage {
   createJobPosting(job: InsertJobPosting): Promise<JobPosting>;
   getJobPostings(recruiterId: string): Promise<JobPosting[]>;
   getJobPosting(id: number): Promise<JobPosting | undefined>;
-  getJobRecommendations(candidateId: string, filters?: FeedFilters, pagination?: { page: number; limit: number }, retrieval?: FeedRetrievalOptions): Promise<{ jobs: any[]; total: number; page: number; hasMore: boolean }>;
+  getJobRecommendations(candidateId: string, filters?: FeedFilters, pagination?: { page: number; limit: number }, retrieval?: FeedRetrievalOptions): Promise<{ jobs: any[]; total: number; page: number; hasMore: boolean; refreshing?: boolean }>;
   getDiscoveryFeedForCandidate(candidateId: string, filters?: FeedFilters): Promise<any[]>;
   updateJobPosting(id: number, talentOwnerId: string, updates: Partial<InsertJobPosting>): Promise<JobPosting>;
   deleteJobPosting(id: number, talentOwnerId: string): Promise<void>;
@@ -2442,7 +2446,7 @@ export class DatabaseStorage implements IStorage {
     filters?: FeedFilters,
     pagination?: { page: number; limit: number },
     retrieval?: FeedRetrievalOptions,
-  ): Promise<{ jobs: any[]; total: number; page: number; hasMore: boolean }> {
+  ): Promise<{ jobs: any[]; total: number; page: number; hasMore: boolean; refreshing?: boolean }> {
     try {
       // Callers with their own retrieval settings (MCP, weekly summary) always score live.
       const cache = retrieval ? { enabled: false, ttlMs: 0 } : await feedCacheConfig();
@@ -2457,11 +2461,37 @@ export class DatabaseStorage implements IStorage {
           recommendations = null;
         }
       }
+      // Scoring is gated (feed-gate.service): over the cap, serve this person's last feed for
+      // these filters at once, else wait briefly for a slot, else the quick fallback feed.
+      let refreshing = false;
       if (!recommendations) {
-        recommendations = await this.fetchScoredJobs(candidateId, filters, retrieval);
-        if (useCache && recommendations) {
-          await writeFeedCache(candidateId, filters, recommendations)
-            .catch(err => console.warn(`[feed-cache] write failed: ${(err as Error).message}`));
+        let slot = await tryFeedSlot();
+        if (!slot) {
+          const last = await readFeedCache(candidateId, filters, new Set(await this.getExcludedJobIds(candidateId)), undefined, undefined, cache.ttlMs, true)
+            .catch(() => null);
+          if (last?.length) {
+            recommendations = last;
+            refreshing = true;
+            console.log(`[feed-gate] busy: served last feed user=${candidateId}`);
+          } else {
+            slot = await waitForFeedSlot(FEED_SLOT_WAIT_MS);
+            if (!slot) {
+              recommendations = await this.getDiscoveryFeedForCandidate(candidateId, filters);
+              refreshing = true;
+              console.log(`[feed-gate] busy: served fallback feed user=${candidateId}`);
+            }
+          }
+        }
+        if (slot) {
+          try {
+            recommendations = await this.fetchScoredJobs(candidateId, filters, retrieval);
+          } finally {
+            await slot.release();
+          }
+          if (useCache && recommendations) {
+            await writeFeedCache(candidateId, filters, recommendations)
+              .catch(err => console.warn(`[feed-cache] write failed: ${(err as Error).message}`));
+          }
         }
       }
       if (!recommendations || recommendations.length === 0) {
@@ -2475,7 +2505,7 @@ export class DatabaseStorage implements IStorage {
       const jobs = await this.attachVerdicts(candidateId, recommendations.slice(offset, offset + limit));
 
       console.log(`Returning page ${page}: ${jobs.length} of ${total} job recommendations`);
-      return { jobs, total, page, hasMore: offset + limit < total };
+      return { jobs, total, page, hasMore: offset + limit < total, ...(refreshing ? { refreshing } : {}) };
     } catch (error) {
       console.error('Error fetching job recommendations:', error);
       throw error;

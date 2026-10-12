@@ -8,6 +8,8 @@
  *   feed p95 > 2 s (≥5 requests) or load > 1.5×cores → feed cache on, lifetime → 6 h     feed p95 < 1 s and load < 1.0×cores
  *   load > 1.5×cores or RAM free < 200 MB      → pause background jobs                  load < 1.0×cores and RAM > 400 MB
  *   DB connections > 40                        → pause background jobs + busy banner    connections < 25
+ *   feed p95 > 2 s for 15 min with the cache   → sign-up waitlist (last step; existing  feed p95 < 1 s and load < 1.0×cores
+ *     already at 6 h (users actually slow)        users unaffected)
  *   disk > 85%, a new job unmatched > 14 h     → alert only
  *
  * decideAutopilot() is pure (unit-tested); scripts/autopilot.ts gathers the
@@ -35,6 +37,8 @@ export type SetBy = Partial<Record<keyof Settings, string | null>>;
 export interface AutopilotState {
   /** When each rule last became healthy (ISO), cleared while under pressure. */
   healthySince: Partial<Record<RuleKey, string>>;
+  /** Since when people have been seeing a slow feed (ISO), cleared once it isn't. */
+  feedSlowSince?: string;
 }
 
 export type RuleKey = 'feed' | 'cpuRam' | 'conns';
@@ -70,6 +74,10 @@ export function decideAutopilot(i: AutopilotInput, settings: Settings, setBy: Se
   for (const r of Object.keys(pressure) as RuleKey[]) {
     if (healthyNow[r] && !pressure[r]) {healthySince[r] = prev.healthySince[r] ?? now.toISOString();}
   }
+  // Only real slowness counts here, not CPU alone: background work can load the box
+  // without anyone waiting, and that must never close sign-ups.
+  const feedSlowSince = feedSlow ? (prev.feedSlowSince ?? now.toISOString()) : undefined;
+  const slowTooLong = !!feedSlowSince && now.getTime() - Date.parse(feedSlowSince) >= HOLD_MS;
   const recovered = (r: RuleKey) => !!healthySince[r] && now.getTime() - Date.parse(healthySince[r]!) >= HOLD_MS;
   const mine = (k: keyof Settings) => setBy[k] === 'autopilot';
 
@@ -95,6 +103,13 @@ export function decideAutopilot(i: AutopilotInput, settings: Settings, setBy: Se
       if (mine('feedCache') && settings.feedCache) {set('feedCache', false, 'Autopilot: feed fast again for 15 min');}
     }
 
+    // Last step: the cache is already stretched and people are still waiting → new sign-ups
+    // join the waitlist so everyone already here keeps a working site.
+    if (slowTooLong && settings.feedCache && settings.feedCacheTtlMinutes >= PRESSURE_TTL_MINUTES) {
+      set('signupWaitlist', true, `Autopilot: feed slow for 15 min with the cache at 6 h (${why})`);
+    } else if (recovered('feed') && mine('signupWaitlist') && settings.signupWaitlist) {
+      set('signupWaitlist', false, 'Autopilot: feed fast again for 15 min');
+    }
     // Rules: CPU/RAM or connections under pressure → pause background jobs; connections also get the banner.
     if (pressure.cpuRam || pressure.conns) {
       set('pauseNonEssentialCrons', true, `Autopilot: ${why}`);
@@ -126,7 +141,7 @@ export function decideAutopilot(i: AutopilotInput, settings: Settings, setBy: Se
         + '\n\nPin a switch in the admin console (System & scaling) to stop Autopilot changing it.',
     });
   }
-  return { changes, alerts, state: { healthySince } };
+  return { changes, alerts, state: { healthySince, ...(feedSlowSince ? { feedSlowSince } : {}) } };
 }
 
 /**

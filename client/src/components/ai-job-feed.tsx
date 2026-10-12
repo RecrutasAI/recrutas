@@ -203,6 +203,8 @@ interface PaginatedResponse {
   total: number;
   page: number;
   hasMore: boolean;
+  /** The site was busy: this is the last feed or a quick fallback; ask again shortly. */
+  refreshing?: boolean;
 }
 
 // The matcher hard-caps recommendations at 100, so the entire feed fits in one
@@ -276,7 +278,7 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
     },
     // Keep the current list on screen while a filter change refetches.
     placeholderData: (previous) => previous,
-    refetchInterval: 300000,
+    refetchInterval: (query) => (query.state.data?.refreshing ? 20000 : 300000),
   });
 
   const totalMatches = data?.total ?? 0;
@@ -786,6 +788,7 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
             <span>
               {filteredMatches.length} {filteredMatches.length === 1 ? 'match' : 'matches'}
               {filteredMatches.length !== totalMatches ? ` (filtered from ${totalMatches})` : ''}
+              {data?.refreshing && <span data-testid="feed-refreshing"> · Busy right now: updating your matches shortly</span>}
             </span>
             <Button
               variant="outline"

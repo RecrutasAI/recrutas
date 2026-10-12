@@ -59,6 +59,37 @@ describe('decideAutopilot', () => {
     expect(keys(decideAutopilot(calm, under, mine, state, at(26)))).toEqual({ pauseNonEssentialCrons: false });
   });
 
+  it('turns on the sign-up waitlist only after people have seen a slow feed for 15 min with the cache stretched', () => {
+    const slow = { ...calm, feedP95Ms: 3500 };
+    const stretched = S({ feedCacheTtlMinutes: 360 });
+    const d0 = decideAutopilot(slow, stretched, {}, { healthySince: {} }, t0);
+    expect(keys(d0)).toEqual({});
+    const d1 = decideAutopilot(slow, stretched, {}, d0.state, at(14));
+    expect(keys(d1)).toEqual({});
+    const d2 = decideAutopilot(slow, stretched, {}, d1.state, at(15));
+    expect(keys(d2)).toEqual({ signupWaitlist: true });
+    // Cache not stretched yet: that step comes first.
+    expect(keys(decideAutopilot(slow, S(), {}, d1.state, at(15)))).toEqual({ feedCacheTtlMinutes: 360 });
+  });
+
+  it('never closes sign-ups for CPU load alone (background work, nobody waiting)', () => {
+    const busy = { ...calm, load1: 4 };
+    let state = { healthySince: {} } as any;
+    for (const m of [0, 10, 20, 40]) {
+      const d = decideAutopilot(busy, S({ feedCacheTtlMinutes: 360 }), {}, state, at(m));
+      expect(keys(d).signupWaitlist).toBeUndefined();
+      state = d.state;
+    }
+  });
+
+  it('reopens sign-ups after 15 fast minutes, but only if Autopilot closed them', () => {
+    const on = S({ feedCacheTtlMinutes: 360, signupWaitlist: true });
+    const d0 = decideAutopilot(calm, on, { signupWaitlist: 'autopilot' }, { healthySince: {} }, t0);
+    expect(keys(d0).signupWaitlist).toBeUndefined();
+    expect(keys(decideAutopilot(calm, on, { signupWaitlist: 'autopilot' }, d0.state, at(15))).signupWaitlist).toBe(false);
+    expect(keys(decideAutopilot(calm, on, { signupWaitlist: 'abas@recrutas.ai' }, d0.state, at(15))).signupWaitlist).toBeUndefined();
+  });
+
   it('never undoes a switch an admin set', () => {
     const under = S({ pauseNonEssentialCrons: true, noticeBanner: { text: 'Maintenance tonight', level: 'info' } });
     const byAdmin = { pauseNonEssentialCrons: 'founder@recrutas.ai', noticeBanner: 'founder@recrutas.ai' };
