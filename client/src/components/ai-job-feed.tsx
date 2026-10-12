@@ -860,7 +860,10 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
                                 Has Exam
                               </Badge>
                             )}
-                            <span className="text-xs text-gray-500 hidden sm:inline">Match: {match.matchScore}</span>
+                            {/* Fallback "roles to explore" are not scored: no score rather than a made-up 0%. */}
+                            {parseInt(match.matchScore, 10) > 0 && (
+                              <span className="text-xs text-gray-500 hidden sm:inline">Match: {match.matchScore}</span>
+                            )}
                           </div>
                           <h3 className="font-semibold text-base sm:text-lg leading-tight">
                             <span className="line-clamp-2 sm:line-clamp-1">{match.job.title}</span>
