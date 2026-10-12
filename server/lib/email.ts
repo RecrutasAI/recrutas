@@ -216,6 +216,42 @@ function emailBase(body: string, footerNote = "You're receiving this as a Recrut
 
 // ── Employer welcome ──────────────────────────────────────────────────────────
 
+// ── Candidate: welcome ─────────────────────────────────────────────────────────
+// Only what is live today (phase 1); employer chat, exams and response promises
+// are not promised here until they are open.
+
+const CHROME_EXTENSION_URL = 'https://chromewebstore.google.com/detail/recrutas-auto-fill/elkkoaiedhfaefokoilmffmooiengdij';
+const FIREFOX_EXTENSION_URL = 'https://addons.mozilla.org/en-US/firefox/addon/recrutas-auto-fill/';
+const REDDIT_COMMUNITY_URL = 'https://www.reddit.com/r/recrutas/';
+
+export function candidateWelcomeEmail(firstName?: string): string {
+  const greeting = firstName ? `Hi ${escapeHtml(firstName)},` : 'Hi,';
+  const card = (title: string, body: string) => `
+    <div style="border:1px solid #e5e7eb;border-radius:10px;padding:20px 24px;margin-bottom:12px;">
+      <p style="margin:0 0 4px;font-size:15px;font-weight:700;color:#111827;">${title}</p>
+      <p style="margin:0;font-size:14px;color:#6b7280;line-height:1.5;">${body}</p>
+    </div>`;
+  return emailBase(`
+    <p style="margin:0 0 6px;font-size:22px;font-weight:700;color:#111827;">${greeting}</p>
+    <p style="margin:0 0 24px;font-size:15px;color:#4b5563;line-height:1.6;">
+      Welcome to Recrutas. Upload your resume and we'll match you to open US jobs posted by the companies themselves.
+    </p>
+    ${card('Jobs straight from the company', 'Every job comes from the employer\'s own careers page and links to the real posting. No reposts, no job-board copies, and closed jobs are taken down.')}
+    ${card('An honest read on each job', 'Each match says Apply, Stretch or Skip, based on what the posting requires and what your resume shows, so you spend time where you have a real shot.')}
+    ${card('Apply faster', `The Recrutas Auto-Fill extension fills application forms from your profile, for <a href="${CHROME_EXTENSION_URL}" style="color:#059669;">Chrome</a> and <a href="${FIREFOX_EXTENSION_URL}" style="color:#059669;">Firefox</a>.`)}
+
+    <div style="text-align:center;margin-top:16px;">
+      <a href="https://www.recrutas.ai/candidate-dashboard"
+         style="display:inline-block;background:#059669;color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:8px;font-weight:700;font-size:15px;">
+        See your matches →
+      </a>
+    </div>
+    <p style="margin:24px 0 0;font-size:13px;color:#6b7280;text-align:center;line-height:1.5;">
+      Questions or ideas? Reply to this email, or talk it over with other job seekers on <a href="${REDDIT_COMMUNITY_URL}" style="color:#059669;">r/recrutas</a>.
+    </p>
+  `, "You're receiving this because you created a Recrutas account.");
+}
+
 export function employerWelcomeEmail(firstName?: string): string {
   const greeting = firstName ? `Hi ${firstName},` : 'Hi,';
   return emailBase(`
