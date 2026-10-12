@@ -3,7 +3,12 @@
  * years of experience); everything else is tagged with its source.
  */
 import { describe, it, expect } from 'vitest';
-import { enforceTruth, factOf, type FillField } from '../server/lib/autofill-truth';
+import { enforceTruth, factOf, type FillField, type Stated, type TruthContext } from '../server/lib/autofill-truth';
+import type { ResumeFacts } from '../server/lib/resume-facts';
+
+/** A truth context with only what a test sets. */
+const ctx = (stated: Stated = {}, resume: Partial<ResumeFacts> = {}, more: Partial<TruthContext> = {}): TruthContext =>
+  ({ stated, resume: { positions: [], companies: [], totalYears: null, text: '', ...resume }, ...more });
 
 // Labels from a real Greenhouse form (honeycomb insurance, 2026-10-10) plus common variants.
 const F = {
@@ -52,7 +57,7 @@ describe('enforceTruth', () => {
   ];
 
   it('drops guessed facts and lists them as needs-you when nothing is saved', () => {
-    const { actions, needsYou } = enforceTruth(aiGuesses, fields, {}, { totalYears: null });
+    const { actions, needsYou } = enforceTruth(aiGuesses, fields, ctx());
     const ids = actions.map(a => a.fieldId);
     expect(ids).not.toContain('q_auth');
     expect(ids).not.toContain('q_salary');
@@ -62,31 +67,34 @@ describe('enforceTruth', () => {
   });
 
   it('tags every kept value with where it came from', () => {
-    const { actions } = enforceTruth(aiGuesses, fields, {}, { totalYears: null });
+    const { actions } = enforceTruth(aiGuesses, fields, ctx());
     const src = Object.fromEntries(actions.map(a => [a.fieldId, a.source]));
-    expect(src).toMatchObject({ first_name: 'profile', country: 'profile', q_consent: 'default', gender: 'default', q_why: 'resume', resume: 'resume' });
+    // An essay is the AI's text: a draft to review, not something from the resume.
+    expect(src).toMatchObject({ first_name: 'profile', country: 'profile', q_consent: 'default', gender: 'default', q_why: 'draft', resume: 'resume' });
   });
 
   it('answers facts from saved answers and never flips them', () => {
     const { actions, needsYou } = enforceTruth(
       [...aiGuesses, { fieldId: 'q_visa', action: 'click_then_type', value: 'Yes' }],   // AI said Yes; candidate said no
-      fields, { workAuthorizedUS: 'yes', needsSponsorship: 'no', desiredSalary: '$120,000' }, { totalYears: 6 },
+      fields, ctx({ workAuthorizedUS: 'yes', needsSponsorship: 'no', desiredSalary: '$120,000' }, { totalYears: 6 }),
     );
     const by = Object.fromEntries(actions.map(a => [a.fieldId, a]));
     expect(by.q_auth).toMatchObject({ value: 'Yes', source: 'answer' });
     expect(by.q_visa).toMatchObject({ value: 'No', source: 'answer' });
     expect(by.q_salary).toMatchObject({ value: '$120,000', source: 'answer' });   // typed facts use the saved words, not the AI's
-    expect(by.q_years).toMatchObject({ source: 'resume', evidence: 'About 6 years of experience on your resume' });
+    // "2 or more years": answered yes/no against the dated roles' years.
+    expect(by.q_years).toMatchObject({ value: 'Yes', source: 'resume', evidence: 'About 6 years of experience across the dated roles on your resume' });
     expect(needsYou).toEqual([]);
   });
 
   it('turns an AI skip on a fact into needs-you, and keeps other skips', () => {
+    const captcha = { id: 'q_cap', label: 'Verify you are human', type: 'text' };
     const { actions, needsYou } = enforceTruth(
-      [{ fieldId: 'q_visa', action: 'skip', reason: 'needs candidate' }, { fieldId: 'q_why', action: 'skip', reason: 'captcha' }],
-      [F.sponsor, F.why], {}, {},
+      [{ fieldId: 'q_visa', action: 'skip', reason: 'needs candidate' }, { fieldId: 'q_cap', action: 'skip', reason: 'captcha' }],
+      [F.sponsor, captcha], ctx(),
     );
     expect(needsYou.map(n => n.fieldId)).toEqual(['q_visa']);
-    expect(actions.map(a => a.fieldId)).toEqual(['q_why']);
+    expect(actions.map(a => a.fieldId)).toEqual(['q_cap']);
   });
 });
 
@@ -111,21 +119,21 @@ describe('enforceTruth on an Ashby form', () => {
   });
 
   it('never keeps a guessed relocation, and asks about prior employment when the resume has no employers', () => {
-    const { actions, needsYou } = enforceTruth(guesses, fields, {}, {});
+    const { actions, needsYou } = enforceTruth(guesses, fields, ctx());
     expect(actions).toEqual([]);
     expect(needsYou.map(n => n.fact).sort()).toEqual(['prior_employment', 'relocation', 'sponsorship', 'work_auth']);
   });
 
   it('answers prior employment from the resume, with the evidence', () => {
-    const no = enforceTruth(guesses, fields, {}, { companies: ['Stripe', 'Acme Corp'] }, 'Ibotta').actions.find(a => a.fieldId === 'prev');
+    const no = enforceTruth(guesses, fields, ctx({}, { companies: ['Stripe', 'Acme Corp'] }, { jobCompany: 'Ibotta' })).actions.find(a => a.fieldId === 'prev');
     expect(no).toMatchObject({ value: 'No', source: 'resume', evidence: "Ibotta isn't among the employers on your resume" });
-    const yes = enforceTruth(guesses, fields, {}, { companies: ['Ibotta, Inc.'] }).actions.find(a => a.fieldId === 'prev');
+    const yes = enforceTruth(guesses, fields, ctx({}, { companies: ['Ibotta, Inc.'] })).actions.find(a => a.fieldId === 'prev');
     expect(yes).toMatchObject({ value: 'Yes', source: 'resume', evidence: 'Ibotta, Inc. is on your resume' });
   });
 
   it('uses saved answers for authorization, sponsorship and relocation', () => {
     const { actions, needsYou } = enforceTruth(guesses, fields,
-      { workAuthorizedUS: 'yes', needsSponsorship: 'no', willingToRelocate: 'no' }, { companies: ['Stripe'] });
+      ctx({ workAuthorizedUS: 'yes', needsSponsorship: 'no', willingToRelocate: 'no' }, { companies: ['Stripe'] }));
     const by = Object.fromEntries(actions.map(a => [a.fieldId, a.value]));
     expect(by).toEqual({ auth: 'Yes', sp: 'No', prev: 'No', den: 'No' });
     expect(needsYou).toEqual([]);
@@ -139,7 +147,7 @@ describe('enforceTruth when the AI leaves fact questions out', () => {
       { id: 'prev', type: 'radio', label: 'Have you worked for Ibotta previously?', options: ['Yes', 'No'] },
       { id: 'why', type: 'textarea', label: 'Why Ibotta?' },
     ];
-    const { actions, needsYou } = enforceTruth([], fields, {}, { companies: ['Stripe'] });
+    const { actions, needsYou } = enforceTruth([], fields, ctx({}, { companies: ['Stripe'] }));
     expect(needsYou.map(n => n.fieldId)).toEqual(['den']);
     expect(actions).toEqual([{ fieldId: 'prev', action: 'select', value: 'No', source: 'resume', evidence: "Ibotta isn't among the employers on your resume" }]);
   });
@@ -154,7 +162,7 @@ describe('enforceTruth for required questions nothing answered', () => {
       { id: 'cv', type: 'file', label: 'Resume', required: true },
     ];
     const { actions, needsYou } = enforceTruth(
-      [{ fieldId: 'country', action: 'skip' }, { fieldId: 'site', action: 'skip' }], fields, {}, {});
+      [{ fieldId: 'country', action: 'skip' }, { fieldId: 'site', action: 'skip' }], fields, ctx());
     expect(needsYou.map(n => [n.fieldId, n.fact])).toEqual([['country', 'other'], ['city', 'other']]);
     expect(actions.map(a => a.fieldId)).toEqual(['site']);
   });
