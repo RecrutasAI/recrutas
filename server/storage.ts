@@ -1644,11 +1644,14 @@ export class DatabaseStorage implements IStorage {
       // With a resume vector, rank by it (exact distance: the third-party pool is small);
       // otherwise by skill overlap, then recency.
       const dist = vectorStr ? sql`(${jobPostings.embedding} <=> ${vectorStr}::vector)` : null;
+      // Every column but the vector: the distance is computed in SQL, and pulling 384 numbers for
+      // each of up to ~450 pool rows was most of the query's time.
+      const { embedding: _vectorColumn, ...poolColumns } = getTableColumns(jobPostings);
       const runQuery = async (extras: (any | null)[]) => {
         const conditions = [...baseConditions(), ...extras.filter(Boolean)];
         if (dist) {conditions.push(sql`${jobPostings.embedding} IS NOT NULL`);}
         return db
-          .select({ job: jobPostings, distance: dist ?? sql<null>`NULL` })
+          .select({ job: poolColumns, distance: dist ?? sql<null>`NULL` })
           .from(jobPostings)
           .where(and(...conditions))
           .orderBy(
@@ -2532,7 +2535,8 @@ export class DatabaseStorage implements IStorage {
     if (jobs.length === 0) {return jobs;}
     try {
       const startedAt = Date.now();
-      const ids = jobs.map(j => j.id).filter((id: unknown) => typeof id === 'number');
+      // Descriptions are read only for jobs that came without one (the feed doesn't load them).
+      const ids = jobs.filter(j => typeof j.description !== 'string').map(j => j.id).filter((id: unknown) => typeof id === 'number');
       const [candidate, descRows] = await Promise.all([
         this.getCandidateUser(candidateId),
         ids.length ? db.select({ id: jobPostings.id, description: jobPostings.description })

@@ -353,7 +353,8 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
       const response = await apiRequest("GET", `/api/third-party-matches?${params.toString()}`);
       return response.json();
     },
-    enabled: needThirdParty,
+    // Only once the search box has settled: asking mid-typing sends the request without the term.
+    enabled: needThirdParty && serverSearch === searchTerm.trim(),
     staleTime: 5 * 60 * 1000,
   });
   // The filters again on what came back, so a filter changed while the request was out (or a
