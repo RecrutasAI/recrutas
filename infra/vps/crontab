@@ -200,3 +200,7 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # Autopilot: flips the console's protective switches under load and back when
 # recovered (docs/scaling-strategy.md). Never changes infrastructure.
 * * * * * $RUN autopilot 2 npx tsx scripts/autopilot.ts
+
+# Fleet run (RecrutasAI/jobs-fleet): GitHub's 11:17 UTC schedule there has never fired, so
+# half an hour after it, start the day's run if none has started (infra/vps/fleet-run-backup.sh).
+47 11 * * * $RUN fleet-run-backup 5 bash infra/vps/fleet-run-backup.sh
