@@ -1,0 +1,45 @@
+#cloud-config
+# First boot of the Oracle Always Free resume-parsing server (Ampere A1, ARM).
+# Builds llama.cpp for this CPU, downloads Qwen3-4B-Instruct, and runs
+# llama-server on 127.0.0.1 only. Nothing listens publicly: the VPS reaches it
+# through an SSH tunnel (see infra/oracle/README.md).
+#
+# Why Qwen3-4B-Instruct-2507 (Q4_K_M, 2.5 GB): measured 2026-10-03 with the
+# app's real prompt, it parsed both test resumes correctly (titles, employers,
+# education, certifications, valid JSON); Qwen2.5-3B looped on one of them.
+package_update: true
+packages: [build-essential, cmake, git, curl, ca-certificates]
+
+write_files:
+  - path: /etc/systemd/system/llama-server.service
+    content: |
+      [Unit]
+      Description=llama.cpp server (Qwen3-4B) for Recrutas resume parsing
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      User=llm
+      EnvironmentFile=/etc/llama-server.env
+      # -t 2: both OCPUs. -c 8192 covers prompt + JSON answer with headroom.
+      # --parallel 1: one parse at a time; the caller queues.
+      ExecStart=/opt/llm/llama.cpp/build/bin/llama-server -m /opt/llm/models/qwen3-4b.gguf --host 127.0.0.1 --port 8080 -t 2 -c 8192 --parallel 1 --api-key ${LLAMA_API_KEY}
+      Restart=always
+      RestartSec=5
+      MemoryMax=10G
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - useradd --system --create-home --home-dir /opt/llm llm || true
+  - mkdir -p /opt/llm/models
+  - git clone --depth 1 --branch b11381 https://github.com/ggml-org/llama.cpp /opt/llm/llama.cpp
+  - cmake -S /opt/llm/llama.cpp -B /opt/llm/llama.cpp/build -DGGML_NATIVE=ON -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release
+  - cmake --build /opt/llm/llama.cpp/build --target llama-server -j 2
+  - curl -fsSL -o /opt/llm/models/qwen3-4b.gguf https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+  - chown -R llm:llm /opt/llm
+  - sh -c 'umask 077; echo "LLAMA_API_KEY=$(openssl rand -hex 24)" > /etc/llama-server.env'
+  - systemctl daemon-reload
+  - systemctl enable --now llama-server
+  - touch /var/lib/cloud/instance/llm-ready

@@ -1,0 +1,19 @@
+# Keeps asking Oracle for the Always Free A1 server until it lands (infra/oracle/retry.sh).
+# Install: cp infra/oracle/oracle-a1-retry.service /etc/systemd/system/ && systemctl enable --now oracle-a1-retry
+[Unit]
+Description=Retry Oracle Always Free A1 launch until it lands
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/bin/bash /opt/recrutas/app/infra/oracle/retry.sh
+StandardOutput=append:/opt/recrutas/logs/oracle-retry.log
+StandardError=append:/opt/recrutas/logs/oracle-retry.log
+# Exits 0 once the server is up; any crash is retried.
+Restart=on-failure
+RestartSec=300
+MemoryMax=300M
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
