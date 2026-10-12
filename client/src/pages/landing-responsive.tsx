@@ -189,7 +189,7 @@ const EXTENSION_LINKS = [
 const REASONS: { title: string; body: string; tags: string[]; links?: { label: string; href: string }[] }[] = [
   { title: "Matched on what you've done.", body: "Your titles, skills and seniority, not keyword overlap. A senior backend engineer sees senior backend roles.", tags: ["titles", "skills", "seniority"] },
   { title: "Direct from the company.", body: "Pulled from each employer's own hiring system. No reposters, no aggregator spam.", tags: ["greenhouse", "lever", "ashby"] },
-  { title: "Live, and checked.", body: "Every board is re-read every few hours. A job gets the live badge only if we saw it in the last 36 hours.", tags: ["● live · checked"] },
+  { title: "Live, and checked.", body: "Every board is re-read at least every 3 days, the busiest daily. A job gets the live badge only if we saw it in the last 36 hours.", tags: ["● live · checked"] },
   { title: "An honest verdict on every match.", body: "Apply, Stretch or Skip, with the reason: \"requires an active clearance\", \"asks for 7 years, you have 4\". Stop applying to jobs you can't get.", tags: ["apply", "stretch", "skip"] },
   { title: "You'll know what happened.", body: "We watch every job you apply to. Taken down, reposted or still open, you hear about it, with a weekly summary and why you might not be hearing back.", tags: ["taken down", "reposted", "weekly"] },
   { title: "Apply without retyping.", body: "Our browser extension fills application forms from your profile, screening answers included. You review and submit. Chrome and Firefox.", tags: ["greenhouse", "lever", "ashby"], links: EXTENSION_LINKS },
@@ -203,7 +203,7 @@ function WhyRecrutas() {
     <Band inner="px-4 sm:px-10 py-14 sm:py-20">
       <SectionLabel n="02">Why Recrutas</SectionLabel>
       <h2 className="text-3xl sm:text-5xl font-semibold tracking-[-0.035em] max-w-3xl mb-12">
-        Real jobs, made to fit you. No ghosts, no leftovers.
+        No ghost jobs. No leftovers. No guessing.
       </h2>
       <div className={`grid sm:grid-cols-2 lg:grid-cols-3 border-t border-l ${RULE}`}>
         {REASONS.map((r, i) => (

@@ -649,7 +649,7 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
           </Select>
 
           <Select value={companyFilter} onValueChange={setCompanyFilter}>
-            <SelectTrigger className="w-full sm:w-[160px]">
+            <SelectTrigger className="w-full sm:w-[190px]" aria-label="Company">
               <Building className="h-4 w-4 mr-2 shrink-0" />
               <SelectValue placeholder="Company" />
             </SelectTrigger>
@@ -832,12 +832,6 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
                               <Badge className="bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300 text-xs">
                                 <Clock className="h-3 w-3 mr-1" />
                                 New
-                              </Badge>
-                            )}
-                            {match.job.aiCurated && (
-                              <Badge variant="secondary" className="bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-300 text-xs">
-                                <Sparkles className="h-3 w-3 mr-1" />
-                                AI Curated
                               </Badge>
                             )}
                             {/* Requires a recent sighting, not just a clean record.

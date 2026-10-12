@@ -160,8 +160,6 @@ export function SiteShell({ active, children }: { active: SiteSection; children:
               <a href="/privacy" className="hover:text-neutral-900 dark:hover:text-white">Privacy</a>
               <span aria-hidden>/</span>
               <a href="/terms" className="hover:text-neutral-900 dark:hover:text-white">Terms</a>
-              <span aria-hidden>/</span>
-              <button onClick={() => setFeedbackOpen(true)} className="hover:text-neutral-900 dark:hover:text-white">Feedback</button>
             </div>
             <div className="flex items-center">
               {SOCIALS.map(({ label, href, icon: Icon }) => (

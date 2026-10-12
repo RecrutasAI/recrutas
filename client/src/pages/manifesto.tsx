@@ -79,7 +79,7 @@ export default function ManifestoPage() {
             </p>
             <p>
               So we built from the bottom up. Every job comes straight from the employer's own hiring
-              system, and we re-read every board every few hours.<Fn n={5} /> A job carries the live badge
+              system, and we re-read every board at least every three days.<Fn n={5} /> A job carries the live badge
               only if we saw it in the last 36 hours; when a company takes a posting down, we close it too.
               Every match is ranked against your resume and tells you why it fits.
             </p>
