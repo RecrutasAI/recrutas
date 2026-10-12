@@ -1,4 +1,5 @@
 import { Resend } from 'resend';
+import { candidateWelcomeEmail, sendEmail as sendBrandedEmail } from './lib/email';
 
 // Derive frontend URL: explicit env var > Vercel auto-URL > localhost dev fallback
 const FRONTEND_URL = process.env.FRONTEND_URL
@@ -114,60 +115,15 @@ export async function sendPasswordResetEmail(email: string, resetToken: string):
   });
 }
 
+/** The candidate welcome: the shared Recrutas template, describing only what is live (lib/email.ts). */
 export async function sendWelcomeEmail(email: string, firstName?: string): Promise<boolean> {
-  const name = firstName || 'there';
-
-  const htmlContent = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Welcome to Recrutas</title>
-        <style>
-            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background: #000; color: #fff; padding: 20px; text-align: center; }
-            .content { padding: 30px 20px; background: #f9f9f9; }
-            .button { display: inline-block; padding: 12px 30px; background: #000; color: #fff; text-decoration: none; border-radius: 5px; margin: 20px 0; }
-            .footer { text-align: center; padding: 20px; color: #666; font-size: 14px; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header">
-                <h1>Welcome to Recrutas</h1>
-                <p>Your AI-Powered Job Matching Journey Begins</p>
-            </div>
-            <div class="content">
-                <h2>Hi ${name}!</h2>
-                <p>Welcome to Recrutas, the revolutionary job platform that eliminates recruiters through AI-powered matching.</p>
-                <p>🚀 <strong>What makes us different:</strong></p>
-                <ul>
-                    <li>Instant job delivery based on your skills</li>
-                    <li>AI-powered resume analysis</li>
-                    <li>Direct connections with hiring managers</li>
-                    <li>Smart exam screening for qualified candidates</li>
-                    <li>Real-time chat with employers</li>
-                </ul>
-                <p>Get started by completing your profile and discovering your perfect job matches:</p>
-                <a href="${FRONTEND_URL}/candidate-dashboard" class="button">Complete Your Profile</a>
-            </div>
-            <div class="footer">
-                <p>© 2024 Recrutas - Revolutionizing Job Matching</p>
-                <p>Questions? Contact us at support@recrutas.ai</p>
-            </div>
-        </div>
-    </body>
-    </html>
-  `;
-
-  return await sendEmail({
-    to: email,
-    from: 'welcome@recrutas.ai',
-    subject: 'Welcome to Recrutas - Your AI Job Matching Journey Begins!',
-    html: htmlContent,
-  });
+  try {
+    await sendBrandedEmail({ to: email, subject: 'Welcome to Recrutas: your matches are ready', html: candidateWelcomeEmail(firstName) });
+    return true;
+  } catch (error) {
+    console.error('Welcome email error:', error);
+    return false;
+  }
 }
 
 // ============================================
