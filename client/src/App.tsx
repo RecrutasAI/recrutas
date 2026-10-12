@@ -19,7 +19,6 @@ import Chat from "@/pages/chat";
 import NotFound from "@/pages/not-found";
 import SignUpCandidatePage from "@/pages/signup-candidate";
 import SignUpTalentPage from "@/pages/signup-talent";
-import PricingPage from "@/pages/pricing";
 import PrivacyPolicy from "@/pages/privacy";
 import TermsOfService from "@/pages/terms";
 import { TopRightButtons } from '@/components/TopRightButtons';
@@ -94,7 +93,8 @@ function App() {
               zero entries in its lifetime. Production redirects at the edge
               (see vercel.json); this keeps dev and client-side nav consistent. */}
           <Route path="/early-access"><Redirect to="/auth" /></Route>
-          <Route path="/pricing" component={PricingPage} />
+          {/* No paid plans yet: the old pricing page described ones that don't exist. */}
+          <Route path="/pricing"><Redirect to="/" /></Route>
           <Route path="/privacy" component={PrivacyPolicy} />
           <Route path="/terms" component={TermsOfService} />
           <Route component={NotFound} />

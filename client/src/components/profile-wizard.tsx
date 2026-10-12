@@ -17,7 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { 
   Upload, FileText, Globe, Github, Linkedin, User, Sparkles, 
   X, Check, Briefcase, ArrowRight, ArrowLeft, PartyPopper,
-  MapPin, DollarSign, Building, Clock, Award, Trash2 } from "lucide-react";
+  MapPin, DollarSign, Building, Clock, Award } from "lucide-react";
 import { Badge } from "./ui/badge";
 
 interface ExtractedInfo {
@@ -414,7 +414,6 @@ export default function ProfileWizard({ onComplete, skipResumeStep = false }: Pr
           <span className="font-medium text-gray-900 dark:text-white">
             Step {stepIndex + 1} of {visibleSteps.length}
           </span>
-          <span className="text-gray-500">{Math.round(progress)}% complete</span>
         </div>
         <Progress value={progress} className="h-2" />
         
@@ -686,45 +685,6 @@ export default function ProfileWizard({ onComplete, skipResumeStep = false }: Pr
               </div>
             )}
 
-            {/* Existing Skills from Profile */}
-            {(profile as any)?.skills?.length > 0 && (
-              <>
-                <Separator />
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <Label className="font-semibold">Your Saved Skills</Label>
-                    <Button
-                      type="button"
-                      variant="destructive"
-                      size="sm"
-                      className="h-8 px-3 gap-1.5 bg-red-600 text-white hover:bg-red-700 dark:bg-red-600 dark:hover:bg-red-500 shadow-sm"
-                      aria-label="Clear all skills"
-                      onClick={async () => {
-                        if (!confirm('This will clear all your skills and take you back to upload a new resume. Continue?')) return;
-                        try {
-                          await apiRequest('POST', '/api/candidate/profile', { skills: [], experienceLevel: null, experience: null });
-                          setParsedResumeData(null);
-                          setCurrentStep(1);
-                          queryClient.invalidateQueries({ queryKey: ['/api/candidate/profile'] });
-                          queryClient.removeQueries({ queryKey: ['/api/ai-matches'] });
-                          toast({ title: 'Skills & experience cleared', description: 'Upload a new resume to extract fresh skills.' });
-                        } catch {
-                          toast({ title: 'Failed to clear skills', variant: 'destructive' });
-                        }
-                      }}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                      Clear all
-                    </Button>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {(profile as any).skills.map((skill: string, idx: number) => (
-                      <Badge key={idx} variant="outline">{skill}</Badge>
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
           </CardContent>
         )}
 

@@ -238,7 +238,9 @@ export default function ApplicationTracker() {
                           {application.match.matchScore}% match
                         </Badge>
                       )}
-                      {getStatusBadge(application.status)}
+                      {/* The status menu below shows it for jobs applied to on the employer's site. */}
+                      {!(application.job?.externalUrl && application.status !== 'submitting' && application.status !== 'queued')
+                        && getStatusBadge(application.status)}
                     </div>
                   </div>
                 </CardHeader>

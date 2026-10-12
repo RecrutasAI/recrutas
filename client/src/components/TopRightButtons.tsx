@@ -3,7 +3,7 @@ import { useSession } from '@supabase/auth-helpers-react';
 import { SignOutButton } from './SignOutButton';
 import { ThemeToggleButton } from './theme-toggle-button';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, ArrowRight, Home } from 'lucide-react';
+import { Home } from 'lucide-react';
 import { useLocation } from 'wouter';
 import {
   Tooltip,
@@ -43,24 +43,6 @@ export function TopRightButtons() {
   return (
     <TooltipProvider>
       <div className="absolute top-4 right-4 flex items-center gap-1">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" onClick={() => history.back()}>
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>Go Back</TooltipContent>
-        </Tooltip>
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" onClick={() => history.forward()}>
-              <ArrowRight className="h-5 w-5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>Go Forward</TooltipContent>
-        </Tooltip>
-
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant="ghost" size="icon" onClick={handleHomeClick}>

@@ -92,7 +92,7 @@ export default function Chat() {
                 <div className="text-center py-12">
                   <User className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
                   <h3 className="text-lg font-medium text-foreground mb-2">No conversations yet</h3>
-                  <p className="text-muted-foreground">Start chatting with matched candidates or recruiters!</p>
+                  <p className="text-muted-foreground">When an employer on Recrutas replies to your application, the conversation shows up here.</p>
                 </div>
               ) : (
                 <div className="space-y-2">
