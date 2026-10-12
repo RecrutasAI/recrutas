@@ -34,6 +34,9 @@ export const PLACE_ALIASES: Record<string, string[]> = {
   'san francisco|CA': ['sf', 'sf bay area'],
 };
 
+/** Parts of a city that posts write like places (New York's boroughs). */
+export const CITY_PARTS = new Set(['manhattan', 'brooklyn', 'queens', 'bronx', 'staten island']);
+
 /** Place names that usually mean something else in a job location; counted only with their state. */
 export const NOT_A_PLACE = new Set(['remote', 'hybrid', 'onsite', 'on site', 'office', 'home', 'virtual', 'anywhere', 'united',
   'national', 'field', 'multiple', 'various', 'travel', 'flexible', 'usa', 'us', 'america', 'north', 'south', 'east', 'west',
@@ -103,7 +106,8 @@ const FILLER = new Set(['us', 'usa', 'u s', 'united', 'states', 'america', 'of',
 
 /** A location's parts: split at commas, " - ", "|", ";", "/", parentheses and "or"/"and". */
 function parts(raw: string): string[] {
-  return raw.split(/[,;|()/•·\n\t]+|\s+[-–—]\s+|\s+(?:or|and|&)\s+/i).map(p => p.trim()).filter(Boolean);
+  // "or"/"and" join places ("Austin OR Chicago"), but ", OR" after a comma is Oregon.
+  return raw.split(/[,;|()/•·\n\t]+|\s+[-–—]\s+|(?<![,|;])\s+(?:or|and|&)\s+/i).map(p => p.trim()).filter(Boolean);
 }
 
 export function resolveLocation(location: string | null | undefined, idx: PlaceIndex, useShares = true): Resolved {
@@ -153,16 +157,20 @@ export function resolveLocation(location: string | null | undefined, idx: PlaceI
   // The state written right after a place, in the same part ("Seattle WA 98101") or as the next
   // part ("Boston, Massachusetts"): it decides the place's state before anything said elsewhere
   // ("Atlanta, Georgia; Boston, Massachusetts" — Georgia has a Boston too).
-  const stateRightAfter = (si: number, endInSeg: number): string | undefined => {
+  const stateRightAfter = (si: number, endInSeg: number): { code: string; byName: boolean } | undefined => {
     const rest = endInSeg < segs[si].length ? segs[si].slice(endInSeg) : (segs[si + 1] ?? []);
     if (!rest.length) {return undefined;}
-    if (rest[0].length === 2 && US_STATES[rest[0].toUpperCase()]) {return rest[0].toUpperCase();}
+    if (rest[0].length === 2 && US_STATES[rest[0].toUpperCase()]) {return { code: rest[0].toUpperCase(), byName: false };}
     for (const [name, code] of STATE_NAME_TO_CODE) {
       const w = name.split(' ');
-      if (rest.slice(0, w.length).join(' ') === name) {return code;}
+      if (rest.slice(0, w.length).join(' ') === name) {return { code, byName: true };}
     }
     return undefined;
   };
+  // "Ridgewood, Queens", "Williamsburg, Brooklyn": a name followed by a part of a city is a
+  // neighborhood of that city, not a town elsewhere.
+  const nextIsPartOfCity = (si: number, endInSeg: number): boolean =>
+    endInSeg === segs[si].length && !!segs[si + 1] && CITY_PARTS.has(segs[si + 1].join(' '));
   const isFiller = (t: string) => FILLER.has(t) || /^\d+$/.test(t) || (t.length === 2 && !!US_STATES[t.toUpperCase()]);
 
   const remote = /\b(remote|work from home|wfh|anywhere|virtual)\b/i.test(raw);
@@ -171,7 +179,14 @@ export function resolveLocation(location: string | null | undefined, idx: PlaceI
 
   const places = new Set<string>();
   const states = new Set<string>(codes);
+  let prevBareCity = false;
+  const segFound: Array<{ keys: string[]; label: boolean }> = [];   // the part before was a city with no state written after it
   for (const [si, seg] of segs.entries()) {
+    // A part starting with a street number is an address ("900 Winston", "220 Bend"), not a place.
+    if (seg.length > 1 && /^\d+$/.test(seg[0])) {prevBareCity = false; continue;}
+    const bareBefore = prevBareCity;
+    prevBareCity = false;
+    let usedNextState = false;
     const found: string[] = [];
     const covered = new Array(seg.length).fill(false);
     for (let i = 0; i < seg.length; i++) {
@@ -191,9 +206,26 @@ export function resolveLocation(location: string | null | undefined, idx: PlaceI
           const inNamed = [...candidates.keys()].filter(st => named.has(st));
           const after = stateRightAfter(si, i + k);
           let st: string | undefined;
-          if (after && candidates.has(after)) {st = after;}
-          else if (inNamed.length === 1) {st = inNamed[0];}
-          else if (!named.size && !NOT_A_PLACE.has(gram)) {
+          // A state code right after the name decides it: that state, or none (a different place,
+          // or a typo), never a same-name place elsewhere. A state's NAME right after decides it
+          // only when the place is in that state ("Albany, New York"); otherwise it is the next
+          // city of a list ("Seattle, New York").
+          const wholePart = seg.every((t, j) => (j >= i && j < i + k) || isFiller(t));
+          // A state code written in the same part, before the name ("US-NV-Las Vegas"), decides it.
+          const ownCodes = seg.slice(0, i).filter(t => t.length === 2 && !!US_STATES[t.toUpperCase()]).map(t => t.toUpperCase());
+          if (nextIsPartOfCity(si, i + k)) {st = undefined;}
+          // Words that are usually not places ("Home Office", "Remote") count only with a state
+          // code right after them.
+          else if (NOT_A_PLACE.has(gram)) {st = after && !after.byName && candidates.has(after.code) ? after.code : undefined;}
+          else if (ownCodes.length && candidates.has(ownCodes[ownCodes.length - 1])) {st = ownCodes[ownCodes.length - 1];}
+          else if (after && (!after.byName || candidates.has(after.code))) {
+            st = candidates.has(after.code) ? after.code : undefined;
+            if (st && i + k === seg.length) {usedNextState = true;}
+          } else if (inNamed.length === 1) {st = inNamed[0];}
+          // In a list of bare names ("San Francisco, Seattle, New York"), states named for other
+          // places don't rule a name out: a name in one state only is that place, and a shared
+          // name goes to the state that clearly has most of its jobs.
+          else if (inNamed.length === 0 && (wholePart || !named.size)) {
             if (candidates.size === 1) {st = [...candidates.keys()][0];}
             else if (useShares) {
               const total = [...candidates.values()].reduce((a, b) => a + b.jobs, 0);
@@ -206,7 +238,11 @@ export function resolveLocation(location: string | null | undefined, idx: PlaceI
         // A state's full name is a city only when the part after it confirms the city's state
         // ("New York, NY", "New York, New York", "Washington, PA"); anywhere else it is the state,
         // and its words are used up so "York" in "New York" is never read as York.
-        if (isStateName && (!key || !nextPartConfirms(si, i + k, key.split('|')[1]))) {
+        // In a list of bare city names, a state's name standing alone is its own-named city
+        // ("San Francisco, Seattle, New York"), unless it follows a place as that place's state.
+        const listCity = isStateName && !!key && bareBefore && k === seg.length
+          && STATE_NAME_TO_CODE.get(gram) === key.split('|')[1];
+        if (isStateName && !listCity && (!key || !nextPartConfirms(si, i + k, key.split('|')[1]))) {
           states.add(STATE_NAME_TO_CODE.get(gram)!);
           for (let j = i; j < i + k; j++) {covered[j] = true;}
           i += k - 1;
@@ -222,9 +258,16 @@ export function resolveLocation(location: string | null | undefined, idx: PlaceI
     // A place counts only when it makes up its part: "Bay Point Golf Club" is not Golf, FL, and
     // "North Reading" is not Reading.
     const whole = seg.every((t, j) => covered[j] || isFiller(t));
-    if (whole) {
-      for (const key of found) {places.add(key); states.add(key.split('|')[1]);}
-    }
+    if (whole && found.length) {segFound.push({ keys: found, label: found.length > 1 && !seg.some(t => t.length === 2 && !!US_STATES[t.toUpperCase()]) });}
+    // A city with nothing after it naming its state: the next bare name is part of the same list.
+    prevBareCity = whole && found.length > 0 && !usedNextState && !seg.some(t => t.length === 2 && !!US_STATES[t.toUpperCase()]);
+  }
+  // A part that runs two place names together with no state ("Austin Burnet 019 - Austin, TX") is a
+  // store or site label when another part of the location names the place on its own.
+  const hasPlainPart = segFound.some(f => !f.label);
+  for (const f of segFound) {
+    if (f.label && hasPlainPart) {continue;}
+    for (const key of f.keys) {places.add(key); states.add(key.split('|')[1]);}
   }
   return { places: [...places], states: [...states], remote };
 }

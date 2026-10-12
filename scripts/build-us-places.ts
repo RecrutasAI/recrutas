@@ -33,7 +33,12 @@ const SPECIAL: Record<string, string> = {
 };
 function placeName(raw: string): string {
   if (SPECIAL[raw]) {return SPECIAL[raw];}
+  // Merged city-county governments carry the government's legal name: "Lexington-Fayette urban
+  // county", "Macon-Bibb County", "Anaconda-Deer Lodge County". The city is the part before the dash.
+  const merged = /^([^-]+)-.+ (County|urban county)( (unified|consolidated|metropolitan) government)?( \(balance\))?$/.exec(raw);
+  if (merged) {return merged[1].trim();}
   return raw.replace(/\s*\(balance\)$/, '')
+    .replace(/\s+metro township$/i, '')
     .replace(/\s+(city and borough|consolidated government|unified government|metropolitan government|metro government|city|town|village|borough|CDP|municipality|plantation|corporation)$/i, '')
     .trim();
 }

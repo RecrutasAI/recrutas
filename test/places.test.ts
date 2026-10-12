@@ -112,3 +112,59 @@ describe('found in the sample review, round 3', () => {
     expect(places('Ontario, California, United States')).toEqual(['ontario|CA']);
   });
 });
+
+describe('found checking prod, lists of bare city names', () => {
+  it('resolves each city in a list without states', () => {
+    expect(places('San Francisco, Seattle, New York')).toEqual(['new york|NY', 'san francisco|CA', 'seattle|WA']);
+    expect(places('Austin | Chicago | New York City | Salt Lake City | San Francisco')).toEqual(['austin|TX', 'chicago|IL', 'new york|NY', 'salt lake city|UT', 'san francisco|CA']);
+    expect(places('Austin or New York (Hybrid)')).toEqual(['austin|TX', 'new york|NY']);
+    expect(places('NYC, SF, Seattle, US')).toEqual(['new york|NY', 'san francisco|CA', 'seattle|WA']);
+  });
+  it('still reads a state written after a city as that city\'s state', () => {
+    expect(places('Albany, New York')).toEqual(['albany|NY']);
+    expect(places('Seattle, Washington, United States')).toEqual(['seattle|WA']);
+    expect(places('Austinburg, OH, United States')).toEqual(['austinburg|OH']);
+    expect(places('Hialeah, CA')).toEqual([]);   // no Hialeah in California: not the Florida one either
+  });
+});
+
+describe('neighborhoods', () => {
+  it('reads a name before a borough as part of that city', () => {
+    expect(places('Williamsburg, Brooklyn')).toEqual(['new york|NY']);
+    expect(places('Ridgewood, Queens, United States')).toEqual(['new york|NY']);
+  });
+});
+
+describe('found in the sample review, round 4', () => {
+  it('does not read a word inside a longer name as a town elsewhere', () => {
+    expect(places('Lynn Branch - Lynn, MA 01905')).toEqual(['lynn|MA']);
+    expect(places('Montana Billings Sage - Billings, MT 59102')).toEqual(['billings|MT']);
+    expect(places('Atlanta, Georgia, USA | USA-ND-Home Office | USA-KS-Home Office')).toEqual(['atlanta|GA']);
+  });
+  it('reads ", OR" as Oregon and " OR " between names as or', () => {
+    expect(places('St. Louis, MO | Portland, OR | Fort Worth, TX')).toEqual(['ft worth|TX', 'portland|OR', 'st louis|MO']);
+    expect(places('Austin OR Chicago OR Miami')).toEqual(['austin|TX', 'chicago|IL', 'miami|FL']);
+  });
+});
+
+describe('found in the sample review, round 5', () => {
+  it('names merged city-county governments by their city', () => {
+    expect(places('Lexington, Kentucky, United States | Nicholasville, Kentucky, United States')).toEqual(['lexington|KY', 'nicholasville|KY']);
+    expect(places('Macon, GA')).toEqual(['macon|GA']);
+  });
+  it('reads a part that runs two places together as a label when another part names the place', () => {
+    expect(places('Austin Burnet 019 - Austin, TX 78757')).toEqual(['austin|TX']);
+    expect(places('Seattle-Tacoma, WA')).toEqual(['seattle|WA', 'tacoma|WA']);   // the only part: both places
+  });
+});
+
+describe('found in the sample review, round 6', () => {
+  it('reads a part starting with a street number as an address', () => {
+    expect(places('900 Winston - HOUSTON, TX 77009')).toEqual(['houston|TX']);
+    expect(places('120 & 220 Bend, Vineyard, UT')).toEqual(['vineyard|UT']);
+    expect(places('7324 Yohne Road, Fort Wayne, IN, USA')).toEqual(['ft wayne|IN']);
+  });
+  it('takes a state code written before the name in the same part', () => {
+    expect(places('Orlando | US-CA-Van Nuys | US-NV-Las Vegas, FL, US')).toEqual(['las vegas|NV', 'orlando|FL']);
+  });
+});
