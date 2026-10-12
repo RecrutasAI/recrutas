@@ -25,6 +25,10 @@ export interface AtsJob {
   description?: string;
   /** When the employer first published the posting, as the ATS reports it; undefined if it doesn't. */
   postedAt?: string;
+  /** The work arrangement the ATS states itself (Ashby/Lever workplaceType, SmartRecruiters and
+   *  Recruitee flags, Workable telecommuting); undefined when it doesn't say. Wins over guessing
+   *  from text: "Remote" in an old title made an on-site San Francisco job remote. */
+  workplace?: 'remote' | 'hybrid' | 'onsite';
 }
 
 /** An ATS date as ISO, or undefined (see parseSourceDate). */
@@ -293,6 +297,15 @@ function board(raw: Array<AtsJob>, complete = true): AtsBoard {
 
 const badShape: AtsBoard = { ok: false, reason: 'unexpected payload shape' };
 
+/** An ATS's own work-arrangement value ("OnSite", "on-site", "Hybrid", "remote") as ours. */
+export function workplaceOf(v: unknown): 'remote' | 'hybrid' | 'onsite' | undefined {
+  const t = String(v ?? '').toLowerCase().replace(/[^a-z]/g, '');
+  if (t === 'remote') {return 'remote';}
+  if (t === 'hybrid') {return 'hybrid';}
+  if (t === 'onsite' || t === 'inoffice' || t === 'office') {return 'onsite';}
+  return undefined;
+}
+
 type AshbyPlace = { location?: string; address?: { postalAddress?: { addressCountry?: string } } };
 
 /**
@@ -328,16 +341,16 @@ export async function fetchAtsBoard(atsType: AtsType, atsId: string): Promise<At
       // A missing board answers 200 with {ok:false, error}, not an array.
       const r = await fetchJsonStrict(`https://api.lever.co/v0/postings/${atsId}?mode=json`);
       if (!r.ok) return r;
-      const data = r.data as Array<{ text: string; categories?: { location?: string }; hostedUrl?: string; descriptionPlain?: string; createdAt?: number }> | null;
+      const data = r.data as Array<{ text: string; categories?: { location?: string }; hostedUrl?: string; descriptionPlain?: string; createdAt?: number; workplaceType?: string }> | null;
       if (!Array.isArray(data)) return badShape;
-      return board(data.map(j => ({ title: j.text, location: j.categories?.location, url: j.hostedUrl ?? '', description: j.descriptionPlain ?? '', postedAt: atsDate(j.createdAt) })));
+      return board(data.map(j => ({ title: j.text, location: j.categories?.location, url: j.hostedUrl ?? '', description: j.descriptionPlain ?? '', postedAt: atsDate(j.createdAt), workplace: workplaceOf(j.workplaceType) })));
     }
     if (atsType === 'ashby') {
       const r = await fetchJsonStrict(`https://api.ashbyhq.com/posting-api/job-board/${atsId}`);
       if (!r.ok) return r;
-      const data = r.data as { jobs?: Array<{ title: string; jobUrl?: string; descriptionPlain?: string; publishedAt?: string } & AshbyPlace & { secondaryLocations?: AshbyPlace[] }> } | null;
+      const data = r.data as { jobs?: Array<{ title: string; jobUrl?: string; descriptionPlain?: string; publishedAt?: string; workplaceType?: string } & AshbyPlace & { secondaryLocations?: AshbyPlace[] }> } | null;
       if (!Array.isArray(data?.jobs)) return badShape;
-      return board(data.jobs.map(j => ({ title: j.title, location: ashbyLocation(j), url: j.jobUrl ?? '', description: j.descriptionPlain ?? '', postedAt: atsDate(j.publishedAt) })));
+      return board(data.jobs.map(j => ({ title: j.title, location: ashbyLocation(j), url: j.jobUrl ?? '', description: j.descriptionPlain ?? '', postedAt: atsDate(j.publishedAt), workplace: workplaceOf(j.workplaceType) })));
     }
     if (atsType === 'workable') {
       // Workable's public widget endpoint returns the account doc with a
@@ -349,19 +362,20 @@ export async function fetchAtsBoard(atsType: AtsType, atsId: string): Promise<At
       // until we add a per-posting detail fetch. ~4% of ATS supply.
       const r = await fetchJsonStrict(`https://apply.workable.com/api/v1/widget/accounts/${atsId}`);
       if (!r.ok) return r;
-      const data = r.data as { jobs?: Array<{ title?: string; city?: string; state?: string; country?: string; url?: string; published_on?: string }> } | null;
+      const data = r.data as { jobs?: Array<{ title?: string; city?: string; state?: string; country?: string; url?: string; published_on?: string; telecommuting?: boolean }> } | null;
       if (!Array.isArray(data?.jobs)) return badShape;
       return board(data.jobs.map(j => ({
         title: j.title ?? '',
         location: [j.city, j.state, j.country].filter(Boolean).join(', ') || undefined,
         url: j.url ?? '',
         postedAt: atsDate(j.published_on),
+        workplace: j.telecommuting ? 'remote' as const : undefined,
       })));
     }
     if (atsType === 'recruitee') {
       const r = await fetchJsonStrict(`https://${atsId}.recruitee.com/api/offers`);
       if (!r.ok) return r;
-      const data = r.data as { offers?: Array<{ title: string; city?: string; country?: string; slug?: string; description?: string; published_at?: string }> } | null;
+      const data = r.data as { offers?: Array<{ title: string; city?: string; country?: string; slug?: string; description?: string; published_at?: string; remote?: boolean; hybrid?: boolean; on_site?: boolean }> } | null;
       if (!Array.isArray(data?.offers)) return badShape;
       return board(data.offers.map(j => ({
         title: j.title,
@@ -369,6 +383,7 @@ export async function fetchAtsBoard(atsType: AtsType, atsId: string): Promise<At
         url: j.slug ? `https://${atsId}.recruitee.com/o/${j.slug}` : '',
         description: stripHtml(j.description),
         postedAt: atsDate(j.published_at),
+        workplace: j.hybrid ? 'hybrid' as const : j.remote ? 'remote' as const : j.on_site ? 'onsite' as const : undefined,
       })));
     }
     if (atsType === 'smartrecruiters') {
@@ -379,7 +394,7 @@ export async function fetchAtsBoard(atsType: AtsType, atsId: string): Promise<At
       const LIMIT = 100;
       const r = await fetchJsonStrict(`https://api.smartrecruiters.com/v1/companies/${atsId}/postings?limit=${LIMIT}`);
       if (!r.ok) return r;
-      const data = r.data as { totalFound?: number; content?: Array<{ id: string; name: string; releasedDate?: string; location?: { city?: string; region?: string; country?: string; fullLocation?: string } }> } | null;
+      const data = r.data as { totalFound?: number; content?: Array<{ id: string; name: string; releasedDate?: string; location?: { city?: string; region?: string; country?: string; fullLocation?: string; remote?: boolean; hybrid?: boolean } }> } | null;
       if (!Array.isArray(data?.content)) return badShape;
       const complete = typeof data.totalFound === 'number'
         ? data.content.length >= data.totalFound
@@ -391,6 +406,7 @@ export async function fetchAtsBoard(atsType: AtsType, atsId: string): Promise<At
           || undefined,
         url: j.id ? `https://jobs.smartrecruiters.com/${atsId}/${j.id}` : '',
         postedAt: atsDate(j.releasedDate),
+        workplace: j.location?.hybrid ? 'hybrid' as const : j.location?.remote ? 'remote' as const : j.location ? 'onsite' as const : undefined,
       })), complete);
     }
     if (atsType === 'breezy') {
