@@ -42,7 +42,7 @@ async function main(): Promise<PipelineSummary> {
   // --- PHASE 1: Scrape ATS companies ---
   console.log('=== PHASE 1: Scraping ATS Companies ===');
   const atsCompanies = await sql`
-    SELECT "normalizedName", "detectedAts", "atsId"
+    SELECT "normalizedName", "detectedAts", "atsId", name
     FROM discovered_companies
     WHERE status = 'approved'
       AND "detectedAts" IN ('greenhouse', 'lever', 'ashby', 'workable', 'recruitee', 'smartrecruiters', 'breezy')
@@ -81,14 +81,17 @@ async function main(): Promise<PipelineSummary> {
     const results = await Promise.allSettled(
       slice.map(async (entry) => {
         const source = `ATS:${entry.detectedAts}`;
+        // The company's own name as people know it ("Domino's", "Turner & Townsend"); the
+        // lowercase key ("dominos") only identifies the board.
+        const display = String(entry.name ?? '').trim() || entry.normalizedName;
         try {
           const b = await fetchAtsBoard(entry.detectedAts as any, entry.atsId);
           snapshots.push(b.ok
-            ? { source, company: entry.normalizedName, ok: true, complete: b.complete, seenUrls: b.seenUrls }
-            : { source, company: entry.normalizedName, ok: false, complete: false, seenUrls: [] });
-          return b.ok && b.jobs.length > 0 ? { company: entry.normalizedName, atsType: entry.detectedAts, jobs: b.jobs } : null;
+            ? { source, company: display, ok: true, complete: b.complete, seenUrls: b.seenUrls }
+            : { source, company: display, ok: false, complete: false, seenUrls: [] });
+          return b.ok && b.jobs.length > 0 ? { company: display, key: entry.normalizedName, atsType: entry.detectedAts, jobs: b.jobs } : null;
         } catch {
-          snapshots.push({ source, company: entry.normalizedName, ok: false, complete: false, seenUrls: [] });
+          snapshots.push({ source, company: display, ok: false, complete: false, seenUrls: [] });
           return null;
         }
       })
@@ -110,7 +113,8 @@ async function main(): Promise<PipelineSummary> {
             source: `ATS:${r.value.atsType}`,
             // Vendor job id, not the URL: a board moving to a custom domain
             // rewrites every URL, which used to re-insert every job.
-            externalId: atsJobKey(`ATS:${r.value.atsType}`, r.value.company, j.url),
+            // Keyed on the board's key, not the display name: the id must never change.
+            externalId: atsJobKey(`ATS:${r.value.atsType}`, r.value.key, j.url),
             externalUrl: j.url,
             // The ATS's own posting date; none when it doesn't give one (never "now").
             postedDate: j.postedAt ?? null,
