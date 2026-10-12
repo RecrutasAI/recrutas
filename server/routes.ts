@@ -11,6 +11,9 @@ import fs from "fs";
 import { z } from "zod";
 import { phoneFromText } from "./lib/phone";
 import { enforceTruth } from "./lib/autofill-truth";
+import { resumeFacts } from "./lib/resume-facts";
+import { placeIndex } from "./lib/place-index";
+import { topicsFor } from "./services/question-topics.service";
 import { recordReportedApplication, applicationForUrl } from "./services/application-tracking.service";
 import { diagnoseCandidate } from "./services/application-diagnosis.service";
 import { buildWeeklySummary } from "./services/weekly-summary.service";
@@ -1121,6 +1124,8 @@ export async function registerRoutes(app: Express): Promise<Express> {
 
       const parsed = (profile.resumeParsingData as any) || {};
       const personalInfo = parsed.personalInfo || {};
+      // Roles, employers and dated years, from either stored shape (server/lib/resume-facts.ts).
+      const resume = resumeFacts(parsed, profile.resumeText);
 
       // Build profile context
       const profileData: Record<string, string> = {
@@ -1135,11 +1140,11 @@ export async function registerRoutes(app: Express): Promise<Express> {
         github: profile.githubUrl || personalInfo.github || '',
         portfolio: profile.portfolioUrl || profile.personalWebsite || personalInfo.portfolio || '',
         location: profile.location || personalInfo.location || '',
-        currentTitle: parsed.experience?.positions?.[0]?.title || '',
-        currentCompany: parsed.experience?.positions?.[0]?.company || '',
+        currentTitle: resume.positions[0]?.title || '',
+        currentCompany: resume.positions[0]?.company || '',
         school: parsed.education?.[0]?.institution || '',
         degree: parsed.education?.[0]?.degree || '',
-        experienceYears: String(parsed.experience?.totalYears || ''),
+        experienceYears: resume.totalYears != null ? String(resume.totalYears) : '',
         ...Object.fromEntries(Object.entries(((profile as any).jobPreferences?.applicationAnswers || {}) as Record<string, string>)
           .filter(([, v]) => typeof v === 'string' && v).map(([k, v]) => [`stated_${k}`, v])),
       };
@@ -1157,7 +1162,12 @@ export async function registerRoutes(app: Express): Promise<Express> {
         stated.willingToRelocate && `Willing to relocate: ${yn(stated.willingToRelocate)}`,
         stated.noticePeriod && `Notice period / earliest start: ${stated.noticePeriod}`,
         stated.desiredSalary && `Desired salary: ${stated.desiredSalary}`,
+        stated.driversLicense && `Holds a valid driver's license: ${yn(stated.driversLicense)}`,
+        stated.languages && `Languages spoken: ${stated.languages}`,
+        stated.backgroundCheck && `Willing to undergo a background check / drug screen: ${yn(stated.backgroundCheck)}`,
       ].filter(Boolean) as string[];
+      const workHistory = resume.positions.slice(0, 6)
+        .map(p => `- ${p.title}${p.company ? ` at ${p.company}` : ''}${p.duration ? ` (${p.duration})` : ''}`).join('\n');
 
       const resumeContext = profile.resumeText
         ? profile.resumeText.slice(0, 3000)
@@ -1183,6 +1193,7 @@ CURRENT ROLE: ${profileData.currentTitle} at ${profileData.currentCompany}
 EXPERIENCE: ${profileData.experienceYears} years
 EDUCATION: ${profileData.degree} from ${profileData.school}
 SKILLS: ${skillsList}
+${workHistory ? `WORK HISTORY (most recent first):\n${workHistory}\n` : ''}
 ${statedLines.length ? `
 CANDIDATE'S OWN ANSWERS (stated by the candidate; use these exactly, they override any inference):
 ${statedLines.map(l => `- ${l}`).join('\n')}
@@ -1201,6 +1212,7 @@ Return ONLY a valid JSON object with this structure:
 {
   "actions": [
     { "fieldId": "dom_element_id", "action": "type", "value": "text to type" },
+    { "fieldId": "experience_question_id", "action": "select", "value": "Yes", "evidence": "Ran Kubernetes clusters for 40 services" },
     { "fieldId": "select_id", "action": "select", "value": "exact option text" },
     { "fieldId": "custom_dropdown_id", "action": "click_then_type", "value": "search text" },
     { "fieldId": "file_input_id", "action": "upload_resume" },
@@ -1216,8 +1228,10 @@ Rules:
 - Location-derived fields: derive Country / State / City / Address from the candidate's LOCATION. If a Country field exists and the location implies one, fill it.
 - Education fields (school, university, degree, field of study, graduation/end year): fill from the candidate's education data.
 - FACTS ARE NEVER GUESSED. Work authorization, sponsorship, citizenship, age, security clearance, relocation, start date and salary are answered ONLY from the CANDIDATE'S OWN ANSWERS; years of experience ONLY from EXPERIENCE. When the answer isn't there, return action "skip" with reason "needs candidate". Never infer them from location, name, school or anything else.
-- "How did you hear about us" / referral source: answer "Company website" unless a better source is evident.
-- For screening questions: write a professional, specific answer using the candidate's real experience. Keep under 200 words.
+- "How did you hear about us": the candidate found this job on Recrutas, a job board. Pick an option naming Recrutas, else a job board / online option, else "Other".
+- PERSONAL FACTS ARE NEVER GUESSED EITHER: driver's license, languages, background checks, criminal history, ability to lift or stand, shifts/weekends/travel, where the candidate lives beyond their LOCATION, referrals, relatives at the company, previous applications or interviews there. Answer them only from CANDIDATE'S OWN ANSWERS; otherwise return action "skip" with reason "needs candidate". Follow-up questions ("If yes, please explain…") always "skip".
+- NO QUOTE, NO ANSWER: any answer about the candidate taken from the resume (experience, skills, tools, certifications, licenses, employers, titles, schools, degrees, achievements) MUST include "evidence": a short exact quote from RESUME EXCERPT, WORK HISTORY or SKILLS that shows it. Answers without such a quote are discarded. If the resume doesn't say, return action "skip" with reason "needs candidate". Not needed for name/contact/location fields, EEO, consent, "how did you hear" or open-ended drafts.
+- Open-ended questions (why this company, describe a project, tell us about…): write a short draft (under 150 words) using ONLY what the RESUME EXCERPT, WORK HISTORY and SKILLS say. Never claim a skill, employer, result or number that isn't there. The candidate reviews it before submitting.
 - VOLUNTARY self-identification / EEO / demographic fields (Gender, Pronouns, Race, Ethnicity, Hispanic/Latino, Veteran Status, Disability Status): these are almost always dropdowns with a decline choice. Return action "click_then_type" with value "Decline to self-identify" EVEN IF no options are listed (the options are often hidden until the dropdown opens). If options ARE listed with a different decline phrasing ("I don't wish to answer", "Prefer not to answer", "I do not wish to disclose"), use that exact option text instead. Do NOT skip EEO fields.
 - CANDIDATE'S OWN ANSWERS: when a question asks about anything listed there (work authorization, sponsorship, citizenship, age 18+, security clearance, relocation, notice period / start date, salary), answer from it exactly, picking the option text that means the same thing.
 - MULTI-SELECT fields (marked "MULTI-SELECT" — the candidate may pick several options, e.g. "In what cities are you available to work?"): return a SINGLE action whose value is a PIPE-delimited list of every applicable option, e.g. value: "New York | Remote". Derive choices from the candidate's location and the job's location(s); include "Remote" when offered and appropriate. Use " | " ONLY to separate distinct options — never inside one option's text (e.g. keep "New York, NY" intact).
@@ -1241,7 +1255,7 @@ ${fieldDescriptions}
 
 Analyze the form and return the actions JSON to fill every field you can.`;
 
-      let actions: Array<{ fieldId: string; action: string; value?: string; reason?: string }> = [];
+      let actions: Array<{ fieldId: string; action: string; value?: string; reason?: string; evidence?: string }> = [];
 
       try {
         let aiResponse: string;
@@ -1310,9 +1324,14 @@ Analyze the form and return the actions JSON to fill every field you can.`;
 
       // Facts are never guessed: drop any fact without a saved answer (or resume evidence for
       // years of experience), tag every value with its source, and list what needs the candidate.
-      const resumeCompanies = ((parsed.experience?.positions || []) as Array<{ company?: string }>).map(p => p.company || '');
       const jobCompany = (String(jobContext || '').split('\n')[0].match(/ at (.+)$/) || [])[1] || null;
-      const truth = enforceTruth(actions, fields, stated, { totalYears: parsed.experience?.totalYears, companies: resumeCompanies }, jobCompany);
+      // Wordings the fixed rules miss, from the shared map (classified once, by AI, for everyone).
+      const topics = await topicsFor(fields);
+      const truth = enforceTruth(actions, fields, {
+        topics,
+        stated, resume, location: profileData.location, jobCompany, places: placeIndex(),
+        skills: Array.isArray(profile.skills) ? (profile.skills as string[]) : [],
+      });
       actions = truth.actions;
 
       // Include resume URL for upload_resume actions (best-effort: a signed-URL
@@ -1866,12 +1885,32 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     willingToRelocate: yesNo,
     noticePeriod: z.string().trim().max(60).optional(),
     desiredSalary: z.string().trim().max(60).optional(),
+    driversLicense: yesNo,
+    languages: z.string().trim().max(120).optional(),
+    backgroundCheck: yesNo,
   }).strict();
 
   app.get('/api/candidate/application-answers', isAuthenticated, asyncHandler(async (req: any, res) => {
     const [profile, user] = await Promise.all([storage.getCandidateUser(req.user.id), storage.getUser(req.user.id)]);
     const answers = ((profile as any)?.jobPreferences?.applicationAnswers) || {};
     res.json({ ...answers, phone: (user as any)?.phone_number || '' });
+  }));
+
+  // One or a few answers at a time, kept alongside the rest: the extension saves an answer the
+  // candidate typed on a form ("use this on every form") without touching the others.
+  app.patch('/api/candidate/application-answers', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const parsed = applicationAnswersSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ message: 'Invalid answers', issues: parsed.error.issues.map(i => i.path.join('.')) });
+    }
+    const { phone, ...changes } = parsed.data;
+    const profile: any = await storage.getCandidateUser(req.user.id);
+    const answers = { ...(profile?.jobPreferences?.applicationAnswers || {}), ...changes };
+    await storage.upsertCandidateUser({ userId: req.user.id, jobPreferences: { ...(profile?.jobPreferences || {}), applicationAnswers: answers } });
+    if (phone !== undefined) {
+      await storage.updateUserInfo(req.user.id, { phone_number: phone || null } as any);
+    }
+    res.json({ success: true, saved: Object.keys(changes) });
   }));
 
   app.put('/api/candidate/application-answers', isAuthenticated, asyncHandler(async (req: any, res) => {

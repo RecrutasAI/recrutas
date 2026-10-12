@@ -19,6 +19,9 @@ export interface ApplicationAnswersData {
   willingToRelocate?: YesNo;
   noticePeriod?: string;
   desiredSalary?: string;
+  driversLicense?: YesNo;
+  languages?: string;
+  backgroundCheck?: YesNo;
 }
 
 const YES_NO_QUESTIONS: { key: keyof ApplicationAnswersData; label: string }[] = [
@@ -27,6 +30,8 @@ const YES_NO_QUESTIONS: { key: keyof ApplicationAnswersData; label: string }[] =
   { key: "usCitizen", label: "Are you a US citizen?" },
   { key: "over18", label: "Are you 18 or older?" },
   { key: "willingToRelocate", label: "Are you willing to relocate?" },
+  { key: "driversLicense", label: "Do you have a valid driver's license?" },
+  { key: "backgroundCheck", label: "Are you willing to undergo a background check or drug screen?" },
 ];
 
 const CLEARANCES: { value: NonNullable<ApplicationAnswersData["securityClearance"]>; label: string }[] = [
@@ -75,7 +80,7 @@ export function ApplicationAnswers() {
       <div>
         <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Application answers</h3>
         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          Most applications ask these. Answer once and the extension fills them for you. Anything you leave blank stays blank on the form.
+          Most applications ask these. Answer once and the extension fills them on every form, however the question is worded. Anything you leave blank stays blank on the form.
         </p>
       </div>
 
@@ -118,6 +123,11 @@ export function ApplicationAnswers() {
           <Label htmlFor="aa-salary" className="text-sm">Desired salary</Label>
           <Input id="aa-salary" placeholder="$120,000 a year" maxLength={60}
             value={answers.desiredSalary ?? ""} onChange={(e) => set("desiredSalary", e.target.value)} />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="aa-languages" className="text-sm">Languages you speak</Label>
+          <Input id="aa-languages" placeholder="English (native), Spanish (conversational)" maxLength={120}
+            value={answers.languages ?? ""} onChange={(e) => set("languages", e.target.value)} />
         </div>
       </div>
 
