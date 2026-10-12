@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Send an operational alert by email, via the Resend key the app already uses.
+# Send an operational alert by email (Resend) and, if NTFY_TOPIC is set, as a phone push
+# through ntfy.sh, so a Resend outage can't hide every other outage.
 #
 #   alert.sh <dedupe-key> <subject> [body-file-or-"-"]
 #
@@ -26,8 +27,8 @@ BODY_SRC="${3:-}"
 [ -f "$APP_DIR/.env" ] && { set -a; # shellcheck disable=SC1091
   source "$APP_DIR/.env"; set +a; }
 
-if [ -z "${RESEND_API_KEY:-}" ] || [ -z "${ADMIN_EMAILS:-}" ]; then
-  echo "[alert] RESEND_API_KEY/ADMIN_EMAILS not set — cannot alert: $SUBJECT" >&2
+if { [ -z "${RESEND_API_KEY:-}" ] || [ -z "${ADMIN_EMAILS:-}" ]; } && [ -z "${NTFY_TOPIC:-}" ]; then
+  echo "[alert] no channel set (RESEND_API_KEY+ADMIN_EMAILS or NTFY_TOPIC) — cannot alert: $SUBJECT" >&2
   exit 0
 fi
 
@@ -61,7 +62,7 @@ $BODY"
 
 # JSON-encode with python so log output containing quotes/newlines can't break
 # the request (and so a malformed body can't silently drop the alert).
-PAYLOAD="$(SUBJECT="$SUBJECT" FULL="$FULL" TO="$ADMIN_EMAILS" python3 -c '
+PAYLOAD="$(SUBJECT="$SUBJECT" FULL="$FULL" TO="${ADMIN_EMAILS:-}" python3 -c '
 import json, os
 to = [e.strip() for e in os.environ["TO"].split(",") if e.strip()]
 print(json.dumps({
@@ -72,17 +73,34 @@ print(json.dumps({
 }))
 ')"
 
-CODE="$(curl -sS -o /tmp/alert-resp.$$ -w '%{http_code}' --max-time 20 \
-  -X POST https://api.resend.com/emails \
-  -H "Authorization: Bearer $RESEND_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d "$PAYLOAD" 2>/dev/null)"
-
-if [ "$CODE" = "200" ]; then
-  touch "$STAMP"
-  echo "[alert] sent '$KEY' to $ADMIN_EMAILS"
-else
-  echo "[alert] send FAILED (http=$CODE): $(cat /tmp/alert-resp.$$ 2>/dev/null)" >&2
+SENT=0
+if [ -n "${RESEND_API_KEY:-}" ] && [ -n "${ADMIN_EMAILS:-}" ]; then
+  CODE="$(curl -sS -o /tmp/alert-resp.$$ -w '%{http_code}' --max-time 20 \
+    -X POST https://api.resend.com/emails \
+    -H "Authorization: Bearer $RESEND_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "$PAYLOAD" 2>/dev/null)"
+  if [ "$CODE" = "200" ]; then
+    SENT=1
+    echo "[alert] sent '$KEY' to $ADMIN_EMAILS"
+  else
+    echo "[alert] email FAILED (http=$CODE): $(cat /tmp/alert-resp.$$ 2>/dev/null)" >&2
+  fi
+  rm -f /tmp/alert-resp.$$
 fi
-rm -f /tmp/alert-resp.$$
+
+# Second channel, independent of Resend: a phone push through ntfy.sh (free app,
+# subscribe to the NTFY_TOPIC channel). Subject only: ntfy's public server is open to
+# anyone who knows the channel name, so log text and details stay in the email/VPS logs.
+if [ -n "${NTFY_TOPIC:-}" ]; then
+  NCODE="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 \
+    -H "Title: $(printf '%s' "$SUBJECT" | tr -d '\r\n' | cut -c1-200)" \
+    -H "Tags: rotating_light" \
+    -d "Details in the alert email or on the VPS (alert key: $KEY)." \
+    "https://ntfy.sh/$NTFY_TOPIC" 2>/dev/null)"
+  if [ "$NCODE" = "200" ]; then SENT=1; echo "[alert] pushed '$KEY' to ntfy"; else echo "[alert] ntfy push FAILED (http=$NCODE)" >&2; fi
+fi
+
+# Rate-limit only after at least one channel delivered, so a failed send retries.
+[ "$SENT" = "1" ] && touch "$STAMP"
 exit 0

@@ -30,7 +30,10 @@ if ! command -v caddy >/dev/null; then
 fi
 caddy version
 
-cat > /etc/caddy/Caddyfile <<CADDY
+mkdir -p /etc/caddy/sites
+# One Caddyfile that loads every site file (this sign-in backup, the Vercel standby).
+printf '# Sites: one file each in /etc/caddy/sites (infra/vps/auth, infra/vps/standby).\nimport sites/*.caddy\n' > /etc/caddy/Caddyfile
+cat > /etc/caddy/sites/auth.caddy <<CADDY
 # Backup sign-in server (infra/vps/auth). Only /auth/v1/* is served, as on Supabase.
 $HOST {
 	handle_path /auth/v1/* {

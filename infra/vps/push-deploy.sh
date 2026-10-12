@@ -97,3 +97,8 @@ if [ "$DRIFT" != "0" ]; then
   exit 1
 fi
 say "Deployed $(git log -1 --format='%h %s' "$BRANCH")"
+
+# Keep the Vercel standby's site files current (infra/vps/standby). Built here, copied
+# there; never fails the deploy.
+say "Standby site files"
+bash "$(dirname "$0")/standby/ship-site.sh" 2>&1 | tail -1 || echo "standby site not refreshed (deploy itself is fine)" >&2
