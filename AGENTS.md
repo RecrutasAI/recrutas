@@ -1,14 +1,14 @@
 # AGENTS.md - Development Guidelines for Recrutas
 
-This document provides comprehensive guidelines for agentic coding agents working on the Recrutas codebase.
+This document provides comprehensive guidelines for agentic coding agents working on the Recrutas codebase. Start with docs/ONBOARDING.md for the repo map, the feed flow and production runbook.
 
 ## Project Overview
 
 Recrutas is a modern full-stack AI-powered recruitment platform with:
 - **Frontend**: React 18 + TypeScript + Vite + Tailwind CSS + shadcn/ui
 - **Backend**: Node.js + Express + TypeScript + Drizzle ORM
-- **Database**: PostgreSQL via Supabase
-- **AI Integration**: OpenAI API + Groq API for job matching and resume parsing
+- **Database**: PostgreSQL 17 + pgvector, self-hosted on the Hetzner VPS behind pgBouncer (Supabase is used only for sign-in and resume files)
+- **AI Integration**: resume parsing through a free-provider rotation (Groq → Gemini → OpenRouter → Cloudflare, then a rules parser) in `server/lib/ai-client.ts`; matching uses local embeddings + `server/job-scorer.ts`
 - **Real-time**: WebSockets for live notifications
 
 ## Build, Test, and Quality Commands
@@ -58,13 +58,11 @@ npx playwright test path/to/spec.ts
 ```bash
 npm run type-check         # TypeScript type checking (ALWAYS run)
 npm run check              # Run type-check + lint
-npm run lint               # Currently disabled, but run check instead
+npm run lint               # ESLint; CI fails on errors
 ```
 
 ### Database Commands
-```bash
-npm run db:push           # Push schema changes to database
-```
+Schema changes ship as idempotent SQL in `migrations/`, applied by hand on the VPS database with `psql`, and mirrored in `shared/schema.ts`. Do not run `npm run db:push` against production.
 
 ## Code Style Guidelines
 
@@ -269,23 +267,25 @@ export function JobForm() {
 
 #### Required for Development
 ```bash
-# Database
+# Database (the VPS Postgres; see .env.example)
 DATABASE_URL=postgresql://...
-DIRECT_URL=postgresql://...
 
-# Supabase
+# Supabase (sign-in + resume files only)
 VITE_SUPABASE_URL=https://...
 VITE_SUPABASE_ANON_KEY=...
+SUPABASE_URL=https://...
+SUPABASE_SERVICE_ROLE_KEY=...
+SUPABASE_JWT_SECRET=...   # the API verifies sign-in tokens with it
 ```
 
 #### Optional Services
 ```bash
-# AI Services
-OPENAI_API_KEY=sk-...
-GROQ_API_KEY=gsk_...
+# AI Services (free tiers in rotation)
+GROQ_API_KEY=...
+OPENROUTER_API_KEY=...
 
-# Email
-SENDGRID_API_KEY=SG._
+# Email (Resend)
+RESEND_API_KEY=...
 
 # Payments
 STRIPE_SECRET_KEY=sk_test_
@@ -343,6 +343,7 @@ describe('Jobs API', () => {
 - Leverage shared schema types between frontend/backend
 - Use WebSockets for real-time features
 - Implement proper auth middleware on protected routes
+- Follow the Recrutas principles in docs/ONBOARDING.md: direct-from-company only, US only, real links, truthful (never guessed), frugal, easy on the server
 
 ### Security Considerations
 - Never log or expose sensitive data (API keys, passwords)
@@ -364,7 +365,7 @@ describe('Jobs API', () => {
 - Background jobs for AI processing (resume parsing, job matching)
 
 ### Database Design
-- Use Drizzle migrations for schema changes
+- Ship schema changes as idempotent SQL in `migrations/` (applied by hand)
 - Keep shared schema in sync with database
 - Use foreign keys and constraints for data integrity
 - Index frequently queried columns

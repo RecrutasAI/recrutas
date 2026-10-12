@@ -237,7 +237,7 @@ async function main() {
     const r = await fetch(`${OLLAMA_URL}/api/tags`);
     if (!r.ok) throw new Error(`Ollama tags returned ${r.status}`);
   } catch (e) {
-    console.error(`Cannot reach Ollama at ${OLLAMA_URL}. Start it first (see OLLAMA_SETUP.md).`);
+    console.error(`Cannot reach Ollama at ${OLLAMA_URL}. Start it first (see docs/archive/OLLAMA_SETUP.md).`);
     console.error(`Error: ${(e as Error).message}`);
     process.exit(1);
   }
