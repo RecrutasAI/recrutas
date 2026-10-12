@@ -6,6 +6,7 @@ import "@fontsource-variable/geist-mono";
 import RecrutasLogo from "@/components/recrutas-logo";
 import { ThemeToggleButton } from "@/components/theme-toggle-button";
 import { FeedbackDialog } from "@/components/FeedbackButton";
+import { REDDIT_COMMUNITY_URL } from '@/lib/community';
 
 // Shared chrome for the public marketing pages (home + manifesto). The look is
 // precise and flat — a framed column with hairline rules, square corners, mono
@@ -61,7 +62,7 @@ function RedditLogo({ className = "" }: { className?: string }) {
 const SOCIALS: { label: string; href: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { label: "Recrutas on LinkedIn", href: "https://www.linkedin.com/company/recrutas/", icon: Linkedin },
   { label: "Recrutas on X", href: "https://x.com/recrutasai", icon: XLogo },
-  { label: "Recrutas community on Reddit", href: "https://www.reddit.com/r/recrutas/", icon: RedditLogo },
+  { label: "Recrutas community on Reddit", href: REDDIT_COMMUNITY_URL, icon: RedditLogo },
 ];
 
 export function SiteShell({ active, children }: { active: SiteSection; children: ReactNode }) {

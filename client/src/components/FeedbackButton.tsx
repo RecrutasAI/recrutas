@@ -5,6 +5,7 @@ import { useSession } from '@supabase/auth-helpers-react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import '@fontsource-variable/geist';
 import '@fontsource-variable/geist-mono';
+import { REDDIT_COMMUNITY_URL } from '@/lib/community';
 
 // Public marketing pages carry feedback in their footer instead of a
 // floating button, which covered page content there.
@@ -145,6 +146,12 @@ export function FeedbackDialog({ open, onOpenChange }: { open: boolean; onOpenCh
             >
               {state === 'sending' ? 'Sending…' : 'Send feedback'}
             </button>
+            <p className="text-center text-xs text-neutral-500">
+              Want to talk it over with other job seekers?{' '}
+              <a href={REDDIT_COMMUNITY_URL} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-neutral-900 dark:hover:text-white">
+                Join r/recrutas
+              </a>
+            </p>
           </form>
         )}
       </DialogContent>
