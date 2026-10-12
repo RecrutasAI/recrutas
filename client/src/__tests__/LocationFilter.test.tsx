@@ -1,7 +1,7 @@
 /**
  * The feed's location filter, as a person uses it: typing never filters, picking a place does,
  * every job resolved to that place shows however its post wrote the location, and a place with
- * no direct matches says so instead of swapping in third-party jobs.
+ * no direct matches says so (third-party jobs there are covered in ThirdPartyFilters.test.tsx).
  */
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -129,15 +129,16 @@ describe('location filter', () => {
     expect(visible()).toHaveLength(5);
   });
 
-  it('says a place has no direct matches, offers to clear it, and never shows third-party jobs for it', async () => {
+  it('says a place has no direct matches, offers to clear it, and shows no third-party job from elsewhere', async () => {
     renderFeed();
     await screen.findByText('Nurse A');
     fireEvent.focus(box());
     fireEvent.change(box(), { target: { value: 'san fr' } });
     fireEvent.click(await screen.findByRole('option', { name: /San Francisco, CA/ }));
     expect(await screen.findByText('No direct matches in San Francisco, CA')).toBeInTheDocument();
+    // Third-party jobs are asked for in that place; the only one there is is in Seattle.
+    await waitFor(() => expect(calls.some(u => u.startsWith('/api/third-party-matches') && u.includes('location=San+Francisco'))).toBe(true));
     expect(screen.queryByText('Agency Nurse')).toBeNull();
-    expect(calls.some(u => u.startsWith('/api/third-party-matches'))).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: /Clear filters/ }));
     await waitFor(() => expect(visible()).toHaveLength(5));
   });
