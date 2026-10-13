@@ -3197,6 +3197,7 @@ export class DatabaseStorage implements IStorage {
           jp.status AS "jobStatus",
           jp.liveness_status AS "jobLiveness",
           jp.updated_at AS "jobUpdatedAt",
+          jp.last_liveness_check AS "jobLastChecked",
           cr.id AS "chatRoomId"
         FROM job_applications ja
         INNER JOIN job_postings jp ON ja.job_id = jp.id
@@ -3227,6 +3228,8 @@ export class DatabaseStorage implements IStorage {
           postingState: r.jobStatus === 'closed' && r.jobLiveness === 'removed' ? 'taken_down'
             : r.jobStatus === 'active' ? 'live' : 'unknown',
           takenDownAt: r.jobStatus === 'closed' && r.jobLiveness === 'removed' ? r.jobUpdatedAt : null,
+          // When we last saw it on the employer's board; boards are re-read every few hours to 3 days.
+          lastCheckedAt: r.jobLastChecked ?? null,
         },
         reposted: !!r.metadata?.repostNotifiedAt,
       }));
