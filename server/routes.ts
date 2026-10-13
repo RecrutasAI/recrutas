@@ -60,6 +60,7 @@ import { jobIngestionService } from './services/job-ingestion.service';
 import { getModelInfo } from './ml-matching';
 import { LIVE_BADGE_MAX_AGE_HOURS } from "../shared/liveness.js";
 import { sendWelcomeEmail, sendEmail } from './email-service';
+import { underDailyCap } from './lib/email-budget';
 import { sendEmail as sendTransactionalEmail, employerWelcomeEmail, employerNewApplicantEmail } from './lib/email';
 import { track as serverTrack } from './lib/analytics';
 // greenhouse-submit.service.ts kept for future use (verification code flow, etc.)
@@ -1641,9 +1642,13 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     }
     if (isNew && req.user.email) {
       await serverTrack(req.user.id, 'signup_completed', { role: req.user.user_metadata?.role, source: signupSource });
-      sendWelcomeEmail(req.user.email, req.user.user_metadata?.first_name).catch((err: Error) =>
-        console.error("Failed to send welcome email:", err)
-      );
+      // Off unless WELCOME_EMAIL=on: the sign-up confirmation is already the first email, and every
+      // send shares Resend's 100/day with confirmations (email-budget.ts). Capped when on.
+      if (process.env.WELCOME_EMAIL === 'on' && await underDailyCap('welcome')) {
+        sendWelcomeEmail(req.user.email, req.user.user_metadata?.first_name).catch((err: Error) =>
+          console.error("Failed to send welcome email:", err)
+        );
+      }
     }
     return { ok: true, user, isNew };
   }
@@ -3975,6 +3980,13 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       source: typeof source === 'string' ? source.trim().slice(0, 50) : 'early-access-page',
     });
 
+    // Both emails below are optional: past the day's cap (email-budget.ts) the entry is saved and
+    // nothing is sent, so sign-up confirmations keep their share of the daily email limit.
+    const emailing = await underDailyCap('waitlist');
+    if (!emailing) {
+      return res.json({ ok: true, message: "You're on the list. We'll email you when there's news." });
+    }
+
     // Send confirmation email. Non-US visitors join from the signup page's
     // US-only notice (source "non-us:<CC>"); promising them an invite would be
     // wrong — they're waiting for coverage, not for a spot.
@@ -4010,13 +4022,8 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       `,
     }).catch((err: Error) => console.error('[Waitlist] Failed to send confirmation email:', err));
 
-    // Notify admin
-    await sendEmail({
-      to: 'hello@recrutas.ai',
-      from: 'noreply@recrutas.ai',
-      subject: employer ? `[Employer interest] ${normalizedEmail}` : `[Waitlist] New signup: ${normalizedEmail}`,
-      html: `<p><strong>${firstName || ''} ${lastName || ''}</strong> (${normalizedEmail}) joined the waitlist.</p><p>Source: ${source || 'early-access-page'}</p>`,
-    }).catch((err: Error) => console.error('[Waitlist] Failed to send admin notification:', err));
+    // No note to hello@ per entry: the admin console and the weekly report list waitlist entries,
+    // and each note spent one of Resend's 100 emails a day.
 
     res.json({ ok: true, message: "You're in! Check your email for confirmation." });
   }));
