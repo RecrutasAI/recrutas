@@ -9,7 +9,7 @@
 import { sql } from 'drizzle-orm/sql';
 import { db } from '../db';
 import { realUserIds } from '../lib/real-users';
-import { activationForIds, type ActivationStep } from './admin-insights.service';
+import { activationForIds, interestSummary, trafficSources, type ActivationStep, type Interest, type Labeled } from './admin-insights.service';
 
 type Conn = { execute: typeof db.execute };
 const rows = (r: any): any[] => (r?.rows ?? r) as any[];
@@ -25,6 +25,8 @@ export interface WeeklyNumbers {
   activation: { last7: ActivationStep[] | null; last30: ActivationStep[] | null };
   channels: ChannelRow[];            // sign-ups in the last 30 days
   supply: { catalogJobs: number | null; catalogAt: string | null; directActive: number };
+  traffic: { visitors: number; referrers: Labeled[]; campaigns: Labeled[] } | null;  // last 7 days
+  interest: Interest | null;                                                          // waitlist
 }
 
 export async function collectWeeklyNumbers(conn: Conn = db, now = new Date()): Promise<WeeklyNumbers> {
@@ -73,8 +75,13 @@ export async function collectWeeklyNumbers(conn: Conn = db, now = new Date()): P
   }
   channels.sort((x, y) => y.signups - x.signups || x.channel.localeCompare(y.channel));
 
+  const traffic = await trafficSources(7).catch(err => { console.warn('[weekly-numbers] traffic:', (err as Error).message); return null; });
+  const interest = await interestSummary(7, conn).catch(() => null);
+
   return {
     generatedAt: now.toISOString(),
+    traffic,
+    interest,
     weekStart: weekAgo.slice(0, 10),
     signups: { thisWeek: u?.this_week ?? 0, priorWeek: u?.prior_week ?? 0, total: u?.total ?? 0 },
     resumes: { thisWeekSignups: r?.week_signups ?? 0, ofThem: r?.week_resumes ?? 0, last30Signups: r?.month_signups ?? 0, last30OfThem: r?.month_resumes ?? 0 },
@@ -133,6 +140,20 @@ export function weeklyMarkdown(w: WeeklyNumbers): string {
       ? ['| Channel | Sign-ups | Activated | Codes |', '|---|---|---|---|',
         ...w.channels.map(c => `| ${c.channel} | ${c.signups} | ${n(c.activated)} | ${c.codes.join(', ') || '—'} |`)]
       : ['- No sign-ups in the last 30 days.']),
+    '',
+    '## Visitors and where they come from (last 7 days, people)',
+    ...(w.traffic
+      ? [`- Visitors: **${w.traffic.visitors}** (our own test machine excluded; add your home network to INTERNAL_IP_PREFIXES to exclude your own visits too)`,
+        `- Referring sites: ${w.traffic.referrers.map(r => `${r.label} ${r.value}`).join(' · ') || 'none'}`,
+        `- Campaign tags (utm_source): ${w.traffic.campaigns.map(r => `${r.label} ${r.value}`).join(' · ') || 'none'}`]
+      : ['- not available (PostHog did not answer)']),
+    '',
+    '## Waiting for us (waitlist)',
+    ...(w.interest
+      ? [`- Employers asking for access: **${w.interest.employers.total}** (${w.interest.employers.recent} new this week)`,
+        `- Outside the US: **${w.interest.outsideUs.total}** (${w.interest.outsideUs.recent} new)${w.interest.outsideUs.byCountry.length ? `; by country: ${w.interest.outsideUs.byCountry.map(c => `${c.label} ${c.value}`).join(', ')}` : ''}`,
+        `- Early access: ${w.interest.earlyAccess.total} (${w.interest.earlyAccess.recent} new)`]
+      : ['- not available']),
     '',
     '## Applications (marked applied in Recrutas)',
     `- This week: **${w.applications.thisWeek}** (the week before: ${w.applications.priorWeek})`,

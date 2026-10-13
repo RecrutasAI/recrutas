@@ -23,6 +23,8 @@ const base: WeeklyNumbers = {
     { channel: 'none', signups: 6, activated: 0, codes: [] },
   ],
   supply: { catalogJobs: 1069522, catalogAt: '2026-10-19T03:02:00.000Z', directActive: 120000 },
+  traffic: { visitors: 412, referrers: [{ label: 'news.ycombinator.com', value: 300 }], campaigns: [{ label: 'hn', value: 120 }] },
+  interest: { days: 7, employers: { recent: 2, total: 3 }, outsideUs: { recent: 40, total: 55, byCountry: [{ label: 'IN', value: 20 }] }, earlyAccess: { recent: 0, total: 4 } },
 };
 
 describe('weeklyMarkdown', () => {
@@ -33,6 +35,8 @@ describe('weeklyMarkdown', () => {
     expect(md).toContain('Last 7 days: **1 activated**');
     expect(md).toContain('| reddit | 3 | 1 | REDDIT-A1 |');
     expect(md).toContain('**1,069,522**');
+    expect(md).toContain('news.ycombinator.com 300');
+    expect(md).toContain('Outside the US: **55** (40 new); by country: IN 20');
   });
 
   it('says "not available" when PostHog did not answer, never 0', () => {
