@@ -3165,9 +3165,9 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     try {
       const { candidateId } = req.params;
 
-      // Verify the user is requesting their own matches or is a talent owner
-      const user = await storage.getUser(req.user.id);
-      if (candidateId !== req.user.id && user?.role !== 'talent_owner') {
+      // Own matches only. Any employer account could read any candidate's matches before;
+      // nothing in the app asks for someone else's.
+      if (candidateId !== req.user.id) {
         return res.status(403).json({ message: "Unauthorized to view these matches" });
       }
 
