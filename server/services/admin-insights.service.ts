@@ -94,60 +94,113 @@ async function hogql(query: string): Promise<any[][] | null> {
 // ── Activation, person by person ──────────────────────────────────────────────
 // Phase 1's metric (gtm-plan A3): the same people, in order, from sign-up to autofill. A
 // count per event ("how many ever did X") can rise between steps and says nothing about
-// who converted; PostHog's ordered funnel follows each person. Only real accounts count:
-// test sign-ups made through the admin API never send an email to PostHog, so they're
-// excluded by their user id (the database knows which accounts are real), not by email.
+// who converted, so each person is followed through the steps. Sign-up and resume come
+// from the database (exact); feed and autofill exist only in PostHog. PostHog's own
+// funnel was dropped: its first two events were missing for real people (server events
+// lost on Vercel, 3 of 8 sign-ups in Sep-Oct 2026), which hid them from every step.
+// Only real accounts count (server/lib/real-users.ts).
 
 export const ACTIVATION_STEPS = [
-  { event: 'signup_completed', label: 'Signed up' },
-  { event: 'resume_uploaded', label: 'Uploaded a resume' },
+  { event: 'signup', label: 'Signed up' },
+  { event: 'resume_parsing_complete', label: 'Uploaded a resume' },
   { event: 'job_feed_viewed', label: 'Opened their feed' },
   { event: 'auto_apply_filled', label: 'Used autofill' },
 ] as const;
 
 export interface ActivationStep { label: string; event: string; people: number; fromPrevious: number | null; fromStart: number | null; avgHoursFromPrevious: number | null }
 
+/** One account's times: sign-up and first resume from the database, every feed view and autofill from PostHog. */
+export interface PersonTimes { signup: Date; resume: Date | null; feeds: Date[]; autofills: Date[] }
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SKEW_MS = 60_000;  // PostHog and database clocks differ by seconds
 
-/** The PostHog funnel query: steps in order, within `windowDays` of sign-up, real accounts only. */
-export function activationFunnelQuery(realIds: string[], days: number, windowDays = 30) {
-  const ids = realIds.filter(id => UUID.test(id)).map(id => `'${id}'`).join(', ') || "''";
-  return {
-    kind: 'FunnelsQuery',
-    dateRange: { date_from: `-${days}d` },
-    series: ACTIVATION_STEPS.map(s => ({ kind: 'EventsNode', event: s.event })),
-    funnelsFilter: { funnelWindowInterval: windowDays, funnelWindowIntervalUnit: 'day', funnelOrderType: 'ordered' },
-    properties: [{ type: 'hogql', key: `distinct_id IN (${ids})` }],
-  };
-}
-
-/** PostHog's funnel result as steps with conversion from the previous step and from the start. */
-export function activationSteps(results: any[]): ActivationStep[] {
+/**
+ * The ordered funnel: a person reaches a step only by doing it after the step before,
+ * within `windowDays` of signing up. Typical time = mean, to the whole minute.
+ */
+export function orderedSteps(people: PersonTimes[], windowDays = 30): ActivationStep[] {
   const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 1000) / 10 : null);
-  const first = Number(results?.[0]?.count ?? 0);
+  const reached = ACTIVATION_STEPS.map(() => 0);
+  const gaps: number[][] = ACTIVATION_STEPS.map(() => []);
+  for (const p of people) {
+    const deadline = p.signup.getTime() + windowDays * 86_400_000;
+    const after = (times: Array<Date | null>, from: number) => times
+      .map(t => t?.getTime() ?? NaN).filter(t => Number.isFinite(t) && t >= from - SKEW_MS && t <= deadline).sort((a, b) => a - b)[0];
+    const steps: Array<Array<Date | null>> = [[p.resume], p.feeds, p.autofills];
+    let at = p.signup.getTime();
+    reached[0]++;
+    for (let i = 1; i < ACTIVATION_STEPS.length; i++) {
+      const t = after(steps[i - 1], at);
+      if (t === undefined) {break;}
+      reached[i]++;
+      gaps[i].push(Math.max(0, t - at));
+      at = t;
+    }
+  }
   return ACTIVATION_STEPS.map((step, i) => {
-    const r = results?.[i] ?? {};
-    const people = Number(r.count ?? 0);
-    const prev = i > 0 ? Number(results?.[i - 1]?.count ?? 0) : null;
-    const secs = Number(r.average_conversion_time);
+    const mean = gaps[i].length ? gaps[i].reduce((a, b) => a + b, 0) / gaps[i].length : NaN;
     return {
-      label: step.label, event: step.event, people,
-      fromPrevious: prev === null ? null : pct(people, prev),
-      fromStart: i === 0 ? null : pct(people, first),
-      avgHoursFromPrevious: i > 0 && Number.isFinite(secs) && secs > 0 ? Math.round((secs / 3600) * 10) / 10 : null,
+      label: step.label, event: step.event, people: reached[i],
+      fromPrevious: i === 0 ? null : pct(reached[i], reached[i - 1]),
+      fromStart: i === 0 ? null : pct(reached[i], reached[0]),
+      avgHoursFromPrevious: i > 0 && Number.isFinite(mean) ? Math.max(1, Math.round(mean / 60_000)) / 60 : null,
     };
   });
 }
 
+/** Feed views and autofills per account, from PostHog; null when it isn't reachable. */
+async function featureTimes(ids: string[], days: number): Promise<Map<string, { feeds: Date[]; autofills: Date[] }> | null> {
+  const out = new Map<string, { feeds: Date[]; autofills: Date[] }>();
+  const valid = ids.filter(id => UUID.test(id));
+  for (let i = 0; i < valid.length; i += 500) {
+    const chunk = valid.slice(i, i + 500).map(id => `'${id}'`).join(', ');
+    const res = await posthogQuery({
+      kind: 'HogQLQuery',
+      query: `SELECT distinct_id, event, arraySort(groupArray(200)(timestamp)) FROM events
+        WHERE event IN ('job_feed_viewed', 'auto_apply_filled') AND distinct_id IN (${chunk})
+          AND timestamp >= now() - INTERVAL ${Math.ceil(days) + 31} DAY
+        GROUP BY distinct_id, event`,
+    }, 45_000);
+    if (!res) {return null;}
+    for (const [id, event, times] of res as Array<[string, string, string[]]>) {
+      const entry = out.get(id) ?? { feeds: [], autofills: [] };
+      const dates = (times ?? []).map(t => new Date(/Z|[+-]\d\d:?\d\d$/.test(t) ? t : `${t}Z`));
+      if (event === 'job_feed_viewed') {entry.feeds = dates;} else {entry.autofills = dates;}
+      out.set(id, entry);
+    }
+  }
+  return out;
+}
+
+/**
+ * The activation funnel for real accounts that signed up in the last `days` days (only those
+ * in `onlyIds`, when given: one channel's sign-ups). Null when PostHog isn't reachable.
+ */
+export async function activationForIds(onlyIds: string[] | null, days: number, conn: Conn = db): Promise<ActivationStep[] | null> {
+  const users = rows(await conn.execute(sql`
+    SELECT u.id::text AS id, u."createdAt" AS signup,
+           (SELECT min(a.created_at) FROM activity_logs a WHERE a.user_id = u.id AND a.type = 'resume_parsing_complete') AS resume
+    FROM users u
+    WHERE u."createdAt" > NOW() - make_interval(days => ${days}) AND u.role IS DISTINCT FROM 'system' AND u.id IN ${realUserIds}`))
+    .filter(u => !onlyIds || onlyIds.includes(String(u.id)));
+  const times = users.length ? await featureTimes(users.map(u => String(u.id)), days) : new Map();
+  if (!times) {return null;}
+  return orderedSteps(users.map(u => ({
+    signup: new Date(u.signup),
+    resume: u.resume ? new Date(u.resume) : null,
+    feeds: times.get(String(u.id))?.feeds ?? [],
+    autofills: times.get(String(u.id))?.autofills ?? [],
+  })));
+}
+
 let activationCache: { at: number; key: string; value: ActivationStep[] | null } | null = null;
 
-/** The activation funnel for the last `days` days; null when PostHog isn't reachable. Cached 10 min. */
+/** The activation funnel for everyone who signed up in the last `days` days. Cached 10 min. */
 export async function activationFunnel(days = 90, conn: Conn = db): Promise<ActivationStep[] | null> {
   const key = `act-${days}`;
   if (activationCache && activationCache.key === key && Date.now() - activationCache.at < PH_CACHE_MS) {return activationCache.value;}
-  const ids = rows(await conn.execute(sql`SELECT id::text AS id FROM users WHERE id IN ${realUserIds}`)).map(r => String(r.id));
-  const results = await posthogQuery(activationFunnelQuery(ids, days), 45_000);
-  const value = results ? activationSteps(results) : null;
+  const value = await activationForIds(null, days, conn);
   activationCache = { at: Date.now(), key, value };
   return value;
 }

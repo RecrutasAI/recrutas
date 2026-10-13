@@ -1,44 +1,47 @@
 /**
- * The Phase 1 activation funnel (gtm-plan A3): PostHog's ordered funnel, real accounts only.
- * Numbers below are PostHog's real answer for the last 90 days on 2026-10-13.
+ * The activation funnel follows each person in order (gtm-plan A3); see
+ * orderedSteps in server/services/admin-insights.service.ts.
  */
-import { describe, it, expect } from 'vitest';
-import { activationFunnelQuery, activationSteps, ACTIVATION_STEPS } from '../server/services/admin-insights.service';
+import { describe, expect, it } from 'vitest';
+import { orderedSteps, ACTIVATION_STEPS, type PersonTimes } from '../server/services/admin-insights.service';
 
-const real = ['94592c0d-223a-4f08-9889-36b67ef783b7', '4d001988-45b3-42a3-9ad2-fec0aa4ac8f4'];
+const T0 = new Date('2026-10-01T12:00:00Z').getTime();
+const at = (min: number) => new Date(T0 + min * 60_000);
+const person = (p: Partial<PersonTimes>): PersonTimes => ({ signup: at(0), resume: null, feeds: [], autofills: [], ...p });
 
-describe('activationFunnelQuery', () => {
-  it('asks for the four steps in order, within 30 days of sign-up', () => {
-    const q: any = activationFunnelQuery(real, 90);
-    expect(q.kind).toBe('FunnelsQuery');
-    expect(q.series.map((s: any) => s.event)).toEqual(ACTIVATION_STEPS.map(s => s.event));
-    expect(q.funnelsFilter).toMatchObject({ funnelOrderType: 'ordered', funnelWindowInterval: 30, funnelWindowIntervalUnit: 'day' });
-    expect(q.dateRange.date_from).toBe('-90d');
+describe('orderedSteps', () => {
+  it('counts the same people, in order', () => {
+    const s = orderedSteps([
+      person({ resume: at(2), feeds: [at(3)], autofills: [at(63)] }),   // activated
+      person({ resume: at(1), feeds: [at(2)] }),                         // stopped at feed
+      person({ resume: at(5) }),                                         // stopped at resume
+      person({}),                                                        // signed up only
+    ]);
+    expect(s.map(x => x.label)).toEqual(ACTIVATION_STEPS.map(x => x.label));
+    expect(s.map(x => x.people)).toEqual([4, 3, 2, 1]);
+    expect(s.map(x => x.fromPrevious)).toEqual([null, 75, 66.7, 50]);
+    expect(s.map(x => x.fromStart)).toEqual([null, 75, 50, 25]);
+    expect(s[3].avgHoursFromPrevious).toBe(1);                // 60 min after the feed
+    expect(s[1].avgHoursFromPrevious! * 60).toBeCloseTo(3);   // (2 + 1 + 5) / 3 ≈ 2.7 → 3 min
   });
-  it('counts only the given real accounts, and lets nothing but user ids into the query', () => {
-    const q: any = activationFunnelQuery([...real, "x') OR 1=1 --", ''], 30);
-    expect(q.properties[0].key).toBe(`distinct_id IN ('${real[0]}', '${real[1]}')`);
-    expect(activationFunnelQuery([], 30).properties[0].key).toBe("distinct_id IN ('')");   // no real accounts: nobody
-  });
-});
 
-describe('activationSteps', () => {
-  const posthog = [
-    { name: 'signup_completed', count: 13, average_conversion_time: null },
-    { name: 'resume_uploaded', count: 7, average_conversion_time: 37.3 },
-    { name: 'job_feed_viewed', count: 7, average_conversion_time: 76.7 },
-    { name: 'auto_apply_filled', count: 1, average_conversion_time: 7200 },
-  ];
-  it('gives conversion from the step before and from sign-up', () => {
-    const s = activationSteps(posthog);
-    expect(s.map(x => x.people)).toEqual([13, 7, 7, 1]);
-    expect(s.map(x => x.fromPrevious)).toEqual([null, 53.8, 100, 14.3]);
-    expect(s.map(x => x.fromStart)).toEqual([null, 53.8, 53.8, 7.7]);
-    expect(s[3].avgHoursFromPrevious).toBe(2);
-    expect(s[0].label).toBe('Signed up');
+  it('needs each step after the one before', () => {
+    // Autofill before ever opening the feed doesn't count; a feed view only before the resume doesn't either.
+    const s = orderedSteps([
+      person({ resume: at(10), feeds: [at(5), at(20)], autofills: [at(15)] }),
+      person({ resume: at(10), feeds: [at(5)] }),
+    ]);
+    expect(s.map(x => x.people)).toEqual([2, 2, 1, 0]);
   });
-  it('never divides by zero', () => {
-    expect(activationSteps([{ count: 0 }, { count: 0 }, { count: 0 }, { count: 0 }]).every(x => x.fromPrevious === null || x.fromPrevious === 0)).toBe(true);
-    expect(activationSteps([]).map(x => x.people)).toEqual([0, 0, 0, 0]);
+
+  it('only within 30 days of signing up', () => {
+    const s = orderedSteps([person({ resume: at(1), feeds: [at(31 * 24 * 60)] })]);
+    expect(s.map(x => x.people)).toEqual([1, 1, 0, 0]);
+  });
+
+  it('no sign-ups: zeros, no division by zero', () => {
+    const s = orderedSteps([]);
+    expect(s.map(x => x.people)).toEqual([0, 0, 0, 0]);
+    expect(s.every(x => x.fromPrevious === null && x.avgHoursFromPrevious === null)).toBe(true);
   });
 });
