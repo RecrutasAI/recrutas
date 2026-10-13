@@ -1,7 +1,7 @@
 /**
  * Application cards say what happened to the posting since the candidate
  * applied: still posted, taken down, or reposted. Recrutas re-reads every
- * employer's careers page daily, so this answers the silence after applying.
+ * employer's careers page (every few hours to 3 days), so this answers the silence after applying.
  */
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';

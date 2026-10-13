@@ -420,7 +420,7 @@ export default function ApplicationTracker() {
 }
 
 // What we know about the posting since the candidate applied. Recrutas re-reads
-// every company's careers page daily, so this answers "is it still open?"
+// every company's careers page (every few hours to 3 days), so this answers "is it still open?"
 // without the candidate checking or waiting on a reply.
 function PostingStateNote({ application }: { application: ApplicationStatus }) {
   const job = application.job;

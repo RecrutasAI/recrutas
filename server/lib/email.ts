@@ -771,7 +771,7 @@ export function applicationUpdatesDigestEmail(
   return emailBase(`
     <p style="margin:0 0 6px;font-size:22px;font-weight:700;color:#111827;">${greeting}</p>
     <p style="margin:0 0 24px;font-size:15px;color:#4b5563;line-height:1.6;">
-      Here's what changed with ${items.length === 1 ? 'a job' : 'jobs'} you applied to. We check every company's careers page daily so you don't have to wonder.
+      Here's what changed with ${items.length === 1 ? 'a job' : 'jobs'} you applied to. We keep re-reading every company's careers page (the busiest daily, all at least every 3 days) so you don't have to wonder.
     </p>
     ${cards}
     <div style="text-align:center;margin:28px 0 8px;">
@@ -808,7 +808,7 @@ export function weeklySummaryEmail(
     replied: 'got a response',
   };
   let body = `<p style="margin:0 0 6px;font-size:22px;font-weight:700;color:#111827;">${greeting}</p>
-    <p style="margin:0;font-size:15px;color:#4b5563;line-height:1.6;">Here's your week. We check every company's careers page daily, so you don't have to wonder.</p>`;
+    <p style="margin:0;font-size:15px;color:#4b5563;line-height:1.6;">Here's your week. We keep re-reading every company's careers page (the busiest daily, all at least every 3 days), so you don't have to wonder.</p>`;
   if (s.appliedThisWeek.length) {
     body += section(`You applied to ${s.appliedThisWeek.length}`, list(s.appliedThisWeek.map(a => `${e(a.title)} · ${e(a.company)}`)));
   }
