@@ -5,14 +5,10 @@ import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { Eye, EyeOff, Check, X, Loader2 } from "lucide-react";
 import { track } from "@/lib/analytics";
+import { getSignupCode } from "@/lib/signup-code";
 import { Turnstile, captchaEnabled, type TurnstileHandle } from "@/components/turnstile";
 
 /** Read ?code= from URL query params (e.g. recrutas.ai/signup/candidate?code=REDDIT-A1B2C3) */
-function getCodeFromURL(): string {
-  const params = new URLSearchParams(window.location.search);
-  return (params.get('code') || '').toUpperCase();
-}
-
 interface SignUpFormProps {
   role: 'candidate' | 'talent_owner';
 }
@@ -42,14 +38,14 @@ export default function SignUpForm({ role }: SignUpFormProps) {
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [inviteCode, setInviteCode] = useState(getCodeFromURL);
+  const [inviteCode, setInviteCode] = useState(() => getSignupCode());
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const captchaRef = useRef<TurnstileHandle>(null);
 
   // Also pick up code if user navigates with ?code= after initial render
   useEffect(() => {
-    const urlCode = getCodeFromURL();
+    const urlCode = getSignupCode();
     if (urlCode && !inviteCode) setInviteCode(urlCode);
   }, []);
 
@@ -71,6 +67,8 @@ export default function SignUpForm({ role }: SignUpFormProps) {
             first_name: firstName,
             last_name: lastName,
             full_name: `${firstName} ${lastName}`.trim(),
+            // Kept on the account: the confirmation link may open on another device.
+            ...(inviteCode.trim() ? { invite_code: inviteCode.trim() } : {}),
           },
           // The confirmation link signs them in; land on their dashboard, not the homepage.
           emailRedirectTo: `${window.location.origin}${role === 'candidate' ? '/candidate-dashboard' : '/talent-dashboard'}`,
