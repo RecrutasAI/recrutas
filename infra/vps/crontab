@@ -135,9 +135,10 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # than linear and the cap (not just this value) needs revisiting.
 0 6,18 * * * $RUN scrape-tech-companies 60 bash -c 'npx tsx scripts/scrape-tier.ts --tier=1 --timeout=1800000; npx tsx scripts/scrape-tier.ts --tier=2 --timeout=600000; npx tsx scripts/scrape-tier.ts --cleanup --days=15'
 
-# Weekly numbers (gtm-plan A4) — Monday 11:30 UTC, before the GTM agent's Monday [REPORT].
+# Weekly numbers (gtm-plan A4) — daily 11:30 UTC, the last 7 days rolling; Monday's file is the
+# GTM agent's [REPORT] input, the other days keep latest.md fresh for launch week.
 # Writes /opt/recrutas/reports/weekly/<date>.md/.json and latest.md/.json; emails nothing.
-30 11 * * 1 $RUN weekly-numbers 15 npx tsx scripts/weekly-numbers.ts --out /opt/recrutas/reports/weekly
+30 11 * * * $RUN weekly-numbers 15 npx tsx scripts/weekly-numbers.ts --out /opt/recrutas/reports/weekly
 
 # Cleanup Errors — weekly, Sunday 06:00
 0 6 * * 0 $RUN cleanup-errors 5 npx tsx scripts/cleanup-errors.ts

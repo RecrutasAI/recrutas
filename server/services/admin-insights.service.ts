@@ -234,6 +234,65 @@ async function posthogNumbers(days = 30): Promise<{ available: boolean; people: 
   return value;
 }
 
+// ── Where people come from, and who is waiting (gtm-plan: channels, stop rule) ─────────
+
+export interface Labeled { label: string; value: number }
+
+/** Visitors in the last `days` days by referring site and by utm_source (people, not visits); null without PostHog. */
+// Our own machines: the VPS (browser tests) plus any prefixes in INTERNAL_IP_PREFIXES (comma
+// separated, e.g. the founder's home network), so our own visits aren't counted as visitors.
+const internalIpFilter = (): string => {
+  const prefixes = ['178.156.193.183', ...(process.env.INTERNAL_IP_PREFIXES || '').split(',')]
+    .map(p => p.trim()).filter(p => /^[0-9a-f.:]+$/i.test(p));
+  return prefixes.map(p => `startsWith(toString(properties.$ip), '${p}')`).join(' OR ');
+};
+
+export async function trafficSources(days = 7): Promise<{ visitors: number; referrers: Labeled[]; campaigns: Labeled[] } | null> {
+  const where = `event = '$pageview' AND timestamp >= now() - INTERVAL ${Math.ceil(days)} DAY AND NOT (${internalIpFilter()})`;
+  const top = async (prop: string) => {
+    // Each visitor's FIRST page view in the window (how they arrived), not every page's referrer:
+    // clicking around the site would otherwise credit recrutas.ai itself. Person profiles aren't
+    // kept for anonymous visitors, so $initial_* person properties are empty.
+    const r = await hogql(`SELECT k, count() AS n FROM (
+        SELECT distinct_id, argMin(coalesce(nullIf(toString(properties.${prop}), ''), '(none)'), timestamp) AS k
+        FROM events WHERE ${where} GROUP BY distinct_id)
+      GROUP BY k ORDER BY n DESC LIMIT 10`);
+    const label = (k: string) => (k === '$direct' ? 'direct (typed or bookmarked)' : /(^|\.)recrutas\.ai$/.test(k) ? 'recrutas.ai (came back to another page)' : k);
+    return r ? r.map(x => ({ label: label(String(x[0])), value: Number(x[1]) || 0 })) : null;
+  };
+  const v = await hogql(`SELECT count(DISTINCT distinct_id) FROM events WHERE ${where}`);
+  if (!v) {return null;}
+  const referrers = await top('$referring_domain');
+  const campaigns = await top('utm_source');
+  return { visitors: Number(v[0]?.[0] ?? 0), referrers: referrers ?? [], campaigns: (campaigns ?? []).filter(c => c.label !== '(none)') };
+}
+
+/** Real sign-ups in the last `days` days by channel (the ?code= prefix; 'none' without one). */
+export async function signupsByChannel(days = 30, conn: Conn = db): Promise<Labeled[]> {
+  return rows(await conn.execute(sql`
+    SELECT COALESCE(NULLIF(lower(signup_source), ''), 'none') AS label, count(*)::int AS value FROM users
+    WHERE "createdAt" > NOW() - make_interval(days => ${days}) AND role IS DISTINCT FROM 'system' AND id IN ${realUserIds}
+    GROUP BY 1 ORDER BY 2 DESC`)).map(r => ({ label: String(r.label), value: Number(r.value) }));
+}
+
+export interface Interest { days: number; employers: { recent: number; total: number }; outsideUs: { recent: number; total: number; byCountry: Labeled[] }; earlyAccess: { recent: number; total: number } }
+
+/** The waitlist: employers asking for access, people outside the US (by country), early-access requests. */
+export async function interestSummary(days = 7, conn: Conn = db): Promise<Interest> {
+  const r = rows(await conn.execute(sql`
+    SELECT CASE WHEN source = 'employer' THEN 'employer' WHEN source LIKE 'non-us:%' THEN 'outside' ELSE 'early' END AS kind,
+           upper(NULLIF(split_part(source, ':', 2), '')) AS country,
+           count(*) FILTER (WHERE created_at > NOW() - make_interval(days => ${days}))::int AS recent, count(*)::int AS total
+    FROM waitlist_entries GROUP BY 1, 2`));
+  const sumOf = (kind: string) => r.filter(x => x.kind === kind).reduce((a, x) => ({ recent: a.recent + Number(x.recent), total: a.total + Number(x.total) }), { recent: 0, total: 0 });
+  return {
+    days,
+    employers: sumOf('employer'),
+    outsideUs: { ...sumOf('outside'), byCountry: r.filter(x => x.kind === 'outside').map(x => ({ label: String(x.country || '?'), value: Number(x.total) })).sort((a, b) => b.value - a.value).slice(0, 8) },
+    earlyAccess: sumOf('early'),
+  };
+}
+
 // ── Growth ───────────────────────────────────────────────────────────────────
 
 export interface FunnelStep { label: string; value: number | null; source: 'database' | 'site analytics' }
@@ -243,9 +302,11 @@ export async function getGrowthAnalytics() {
   const ph = await safe(() => posthogNumbers(30), { available: false, people: {} as Record<string, number | null>, visitorsDaily: [] as DayPoint[] });
   const p = (ev: string) => (ph.available ? ph.people[ev] ?? null : null);
   const activation = await safe(() => activationFunnel(90), null as ActivationStep[] | null);
+  const sources = await safe(() => trafficSources(7), null);
   return {
     available: ph.available,
     activation,
+    sources,
     visitors: ph.visitorsDaily,
     funnel: { 'Visited the site': p('$pageview'), 'Opened their feed': p('job_feed_viewed'), 'Used autofill': p('auto_apply_filled') } as Record<string, number | null>,
   };
@@ -277,10 +338,16 @@ export async function getGrowth(conn: Conn = db) {
     { label: 'Applied to a job', value: applied, source: 'database' },
     { label: 'Used autofill', value: null, source: 'site analytics' },
   ];
+  const [channels, interest] = await Promise.all([
+    safe(() => signupsByChannel(30, conn), [] as Labeled[]),
+    safe(() => interestSummary(7, conn), null as Interest | null),
+  ]);
   return {
     generatedAt: new Date().toISOString(),
     series: { signups, resumes, applications },
     funnel,
+    channels,
+    interest,
   };
 }
 

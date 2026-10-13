@@ -1,17 +1,22 @@
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2 } from 'lucide-react';
-import { DailyColumns, Funnel, StatTile, VIZ_TOKENS, type DayPoint } from './charts';
+import { DailyColumns, Funnel, HBars, StatTile, VIZ_TOKENS, type DayPoint } from './charts';
 import { useAdminData } from './use-admin-data';
 
 interface Growth {
   generatedAt: string;
   series: { signups: DayPoint[]; resumes: DayPoint[]; applications: DayPoint[] };
   funnel: Array<{ label: string; value: number | null; source: 'database' | 'site analytics' }>;
+  channels?: Labeled[];
+  interest?: Interest | null;
 }
+interface Labeled { label: string; value: number }
+interface Interest { days: number; employers: { recent: number; total: number }; outsideUs: { recent: number; total: number; byCountry: Labeled[] }; earlyAccess: { recent: number; total: number } }
+interface Sources { visitors: number; referrers: Labeled[]; campaigns: Labeled[] }
 /** Site analytics (PostHog) is slow, so it loads after the database numbers. */
 interface ActivationStep { label: string; people: number; fromPrevious: number | null; fromStart: number | null; avgHoursFromPrevious: number | null }
-interface Analytics { available: boolean; visitors: DayPoint[]; funnel: Record<string, number | null>; activation?: ActivationStep[] | null }
+interface Analytics { available: boolean; visitors: DayPoint[]; funnel: Record<string, number | null>; activation?: ActivationStep[] | null; sources?: Sources | null }
 
 /** "3 h" / "2 days": the typical time between two steps. */
 const fmtHours = (h: number) => (h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : h < 48 ? `${Math.round(h)} h` : `${Math.round(h / 24)} days`);
@@ -112,6 +117,58 @@ export function ConsoleGrowth() {
           )}
         </CardContent>
       </Card>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card data-testid="growth-sources">
+          <CardHeader>
+            <CardTitle className="text-base">Where people come from</CardTitle>
+            <p className="text-xs text-gray-500">Visitors in the last 7 days by site and by campaign tag (utm_source); sign-ups in the last 30 days by launch-link code. People, not visits.</p>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            {a?.sources ? (
+              <>
+                <div>
+                  <p className="text-xs font-medium text-gray-500 mb-2">Referring sites ({a.sources.visitors} visitors)</p>
+                  {a.sources.referrers.length ? <HBars rows={a.sources.referrers} /> : <p className="text-sm text-gray-500">No visits yet.</p>}
+                </div>
+                {a.sources.campaigns.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-gray-500 mb-2">Campaign tags</p>
+                    <HBars rows={a.sources.campaigns} />
+                  </div>
+                )}
+              </>
+            ) : <p className="text-sm text-gray-500">{analytics.error ? 'Site analytics unavailable.' : 'Loading site analytics…'}</p>}
+            <div>
+              <p className="text-xs font-medium text-gray-500 mb-2">Sign-ups by channel</p>
+              {data.channels?.length ? <HBars rows={data.channels} /> : <p className="text-sm text-gray-500">No sign-ups in the last 30 days.</p>}
+            </div>
+          </CardContent>
+        </Card>
+        <Card data-testid="growth-interest">
+          <CardHeader>
+            <CardTitle className="text-base">Waiting for us</CardTitle>
+            <p className="text-xs text-gray-500">The waitlist: employers asking for access, people outside the US, early-access requests. New in the last {data.interest?.days ?? 7} days, and all time.</p>
+          </CardHeader>
+          <CardContent>
+            {data.interest ? (
+              <div className="space-y-5">
+                <div className="grid grid-cols-3 gap-3">
+                  <StatTile label="Employers" value={data.interest.employers.total} sub={`${data.interest.employers.recent} new`} />
+                  <StatTile label="Outside the US" value={data.interest.outsideUs.total} sub={`${data.interest.outsideUs.recent} new`} />
+                  <StatTile label="Early access" value={data.interest.earlyAccess.total} sub={`${data.interest.earlyAccess.recent} new`} />
+                </div>
+                {data.interest.outsideUs.byCountry.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-gray-500 mb-2">Outside the US, by country (all time)</p>
+                    <HBars rows={data.interest.outsideUs.byCountry} />
+                  </div>
+                )}
+              </div>
+            ) : <p className="text-sm text-gray-500">Not available.</p>}
+          </CardContent>
+        </Card>
+      </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
