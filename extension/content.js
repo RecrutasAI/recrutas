@@ -193,6 +193,9 @@
 
     // Standard form elements
     const elements = deepQueryAll('input, textarea, select');
+    // Checkboxes sharing a name ("Select all that apply") are one question, collected as a
+    // group further down; listing each option alone showed every option as a question.
+    const groupNames = checkboxGroupNames();
 
     for (const el of elements) {
       const type = (el.type || el.tagName.toLowerCase()).toLowerCase();
@@ -209,6 +212,7 @@
       if (type === 'radio') continue;
       // Yes/No button pairs are collected further down, as one choice field.
       if (type === 'checkbox' && toggleButtons(el).length >= 2) continue;
+      if (type === 'checkbox' && groupNames.has(el.name)) continue;
 
       // Allow visually-hidden inputs (React Select, comboboxes use opacity:0 / position:absolute)
       const isFileInput = el.type === 'file';
@@ -302,6 +306,28 @@
         name: group.name,
         required: group.radios.some(r => r.required || r.getAttribute('aria-required') === 'true'),
         options: options.length > 0 ? options : undefined,
+      });
+    }
+
+    // Checkbox groups: one field per shared name, with the group question and every option.
+    for (const name of groupNames) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      const boxes = groupBoxes(name);
+      const first = boxes[0];
+      const fieldset = first.closest('fieldset');
+      const label =
+        (fieldset?.querySelector(':scope > legend')?.textContent?.trim()) ||
+        first.getAttribute('aria-label') ||
+        questionLabel(first, boxes) || '';
+      fields.push({
+        id: name,
+        type: 'checkbox',
+        label,
+        name,
+        required: boxes.some(b => b.required || b.getAttribute('aria-required') === 'true'),
+        options: boxes.map(b => (getLabelText(b) || b.value || '').trim()).filter(Boolean),
+        multiple: true,
       });
     }
 
@@ -721,6 +747,35 @@
     return !!ok;
   }
 
+  // Plain (non-toggle) checkboxes with this name, when two or more share it.
+  function groupBoxes(name) {
+    if (!name) return [];
+    const boxes = deepQueryAll(`input[type="checkbox"][name="${CSS.escape(name)}"]`)
+      .filter(b => !b.disabled && toggleButtons(b).length < 2);
+    return boxes.length >= 2 ? boxes : [];
+  }
+
+  function checkboxGroupNames() {
+    const names = new Set();
+    for (const b of deepQueryAll('input[type="checkbox"][name]')) {
+      if (!names.has(b.name) && groupBoxes(b.name).length) names.add(b.name);
+    }
+    return names;
+  }
+
+  // ACTION: check the options of a checkbox group named in `value` (pipe-separated). Only exact
+  // option matches are checked; nothing is unchecked.
+  function executeCheckboxGroup(el, value) {
+    const wanted = String(value || '').split('|').map(v => v.trim().toLowerCase()).filter(Boolean);
+    let any = false;
+    for (const box of groupBoxes(el.getAttribute('name'))) {
+      const label = (getLabelText(box) || box.value || '').trim().toLowerCase();
+      if (!wanted.includes(label)) continue;
+      any = executeCheck(box) || any;
+    }
+    return any;
+  }
+
   // ACTION: check
   function executeCheck(el) {
     if (el.type !== 'checkbox') return false;
@@ -859,6 +914,10 @@
         }
         if (el.type === 'checkbox' && toggleButtons(el).length >= 2) {
           success = await executeToggle(el, action.value || '');
+          continue;
+        }
+        if (el.type === 'checkbox' && groupBoxes(el.getAttribute('name')).length) {
+          success = executeCheckboxGroup(el, action.value || '');
           continue;
         }
 
