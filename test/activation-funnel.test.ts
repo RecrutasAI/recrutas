@@ -35,6 +35,8 @@ describe('activationSteps', () => {
     expect(s.map(x => x.fromPrevious)).toEqual([null, 53.8, 100, 14.3]);
     expect(s.map(x => x.fromStart)).toEqual([null, 53.8, 53.8, 7.7]);
     expect(s[3].avgHoursFromPrevious).toBe(2);
+    expect(s[2].avgHoursFromPrevious).toBeCloseTo(1 / 60);  // 77 s → 1 min
+    expect(activationSteps([{ count: 2 }, { count: 1, average_conversion_time: 300 }])[1].avgHoursFromPrevious! * 60).toBeCloseTo(5);  // not 6
     expect(s[0].label).toBe('Signed up');
   });
   it('never divides by zero', () => {

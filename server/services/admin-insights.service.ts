@@ -134,7 +134,8 @@ export function activationSteps(results: any[]): ActivationStep[] {
       label: step.label, event: step.event, people,
       fromPrevious: prev === null ? null : pct(people, prev),
       fromStart: i === 0 ? null : pct(people, first),
-      avgHoursFromPrevious: i > 0 && Number.isFinite(secs) && secs > 0 ? Math.round((secs / 3600) * 10) / 10 : null,
+      // Whole minutes, in hours: rounding to 0.1 h showed every step under 3 min as "1 min".
+      avgHoursFromPrevious: i > 0 && Number.isFinite(secs) && secs > 0 ? Math.max(1, Math.round(secs / 60)) / 60 : null,
     };
   });
 }
