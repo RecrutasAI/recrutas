@@ -27,8 +27,9 @@ async function initializeSupabase() {
     const resumeBucket = buckets.find(bucket => bucket.name === 'resumes');
     if (!resumeBucket) {
       console.log('"resumes" bucket not found. Creating it...');
+      // Private: resumes are read through short-lived signed URLs only (server/lib/resume-files.ts).
       const { error: createError } = await supabaseAdmin.storage.createBucket('resumes', {
-        public: true,
+        public: false,
       });
       if (createError) {
         console.error('Error creating "resumes" bucket:', createError.message);

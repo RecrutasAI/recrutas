@@ -428,14 +428,14 @@ export class AIResumeParser {
             if (result.data.text) {
               fullText += result.data.text + '\n';
             }
-            console.log(`[AIResumeParser] OCR page ${pageNum}/${maxPages}: ${result.data.text?.slice(0, 50)}...`);
+            console.log(`[AIResumeParser] OCR page ${pageNum}/${maxPages}: ${result.data.text?.length ?? 0} chars`);  // never the text: it's a resume
           } catch (pageErr) {
             console.warn(`[AIResumeParser] OCR failed for page ${pageNum}:`, (pageErr as Error).message);
           }
         }
         
         if (fullText.trim().length >= 20) {
-          console.log('[AIResumeParser] OCR extracted text, using for parsing:', fullText.slice(0, 100));
+          console.log(`[AIResumeParser] OCR extracted ${fullText.length} chars, using for parsing`);
           return fullText;
         }
         console.log('[AIResumeParser] OCR returned thin content, continuing to AI parsing');
