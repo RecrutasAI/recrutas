@@ -29,11 +29,12 @@ afterEach(() => { cleanup(); queryClient.clear(); server.resetHandlers(); });
 describe('application posting state', () => {
   it('shows live, taken down and reposted postings', async () => {
     renderWith([
-      app(1, { postingState: 'live' }),
+      app(1, { postingState: 'live', lastCheckedAt: new Date(Date.now() - 5 * 3600_000).toISOString() }),
       app(2, { postingState: 'taken_down', takenDownAt: new Date(Date.now() - 2 * 864e5).toISOString() }),
       app(3, { postingState: 'taken_down' }, { reposted: true }),
     ]);
     expect(await screen.findByTestId('posting-live')).toHaveTextContent("Still posted on Rocket Lab's careers page");
+    expect(screen.getByTestId('posting-live')).toHaveTextContent('Checked about 5 hours ago.');  // the real time, never "daily"
     expect(screen.getByTestId('posting-taken-down')).toHaveTextContent(/Taken down 2 days ago/);
     expect(screen.getByTestId('posting-reposted')).toHaveTextContent('posted the same role again');
   });
