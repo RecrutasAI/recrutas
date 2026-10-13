@@ -178,7 +178,7 @@ export class ResumeService {
     if (!parseResult) return;
     const { extractor, degraded, primaryError, confidence } = parseResult;
 
-    track(userId, 'resume_parsed', {
+    void track(userId, 'resume_parsed', {
       extractor,
       degraded: !!degraded,
       confidence: confidence ?? 0,
