@@ -11,6 +11,7 @@ import { getLimiterStats } from '../lib/groq-limiter.js';
 import { redisEnabled } from '../lib/redis.js';
 import { getModelInfo } from '../ml-matching.js';
 import { verifyAdminSecret } from '../middleware/security.js';
+import { activationFunnel } from '../services/admin-insights.service.js';
 
 export function registerMetricsRoutes(app: Express) {
   // ── Latency percentiles per endpoint (last N hours) ──────────────────────
@@ -437,6 +438,29 @@ export function registerMetricsRoutes(app: Express) {
     ];
 
     const steps = req.query.funnel === 'exam' ? EXAM_STEPS : ACTIVATION_STEPS;
+
+    // Activation: the same people, in order, real accounts only (admin-insights.service.ts).
+    // The exam funnel below still counts each event on its own; it's paused (see above).
+    if (req.query.funnel !== 'exam') {
+      try {
+        const ordered = await activationFunnel(days);
+        if (!ordered) {return res.status(503).json({ message: 'PostHog read access not configured' });}
+        return res.json({
+          funnel: 'activation',
+          ordered: true,
+          days,
+          since,
+          steps: ordered.map(s => ({
+            event: s.event, label: s.label, users: s.people,
+            conversion_pct: s.fromStart ?? (s.people > 0 ? 100 : null),
+            step_conversion_pct: s.fromPrevious ?? 100,
+            avg_hours_from_previous: s.avgHoursFromPrevious,
+          })),
+        });
+      } catch (error: any) {
+        return res.status(500).json({ message: 'Failed to fetch PostHog funnel', error: error.message });
+      }
+    }
 
     try {
       const results = await Promise.all(
