@@ -1066,7 +1066,7 @@ export async function registerRoutes(app: Express): Promise<Express> {
     const result = await recordReportedApplication(req.user.id, parsed.data);
     if (!result) {return res.status(422).json({ message: 'Could not identify this job posting' });}
     if (!result.duplicate) {
-      serverTrack(req.user.id, 'application_detected', { job_id: result.jobId, tracked: result.tracked, auto_filled: !!parsed.data.autoFilled });
+      await serverTrack(req.user.id, 'application_detected', { job_id: result.jobId, tracked: result.tracked, auto_filled: !!parsed.data.autoFilled });
       await storage.createActivityLog(req.user.id, 'job_applied', `Applied to job ID: ${result.jobId} (detected by extension)`);
     }
     res.json(result);
@@ -1359,7 +1359,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       // an auto-apply, and counting it would inflate the metric the phase is
       // gated on.
       if (actions.length > 0) {
-        serverTrack(req.user.id, 'auto_apply_filled', {
+        await serverTrack(req.user.id, 'auto_apply_filled', {
           field_count: fields.length,
           action_count: actions.length,
           resume_attached: actions.some(a => a.action === 'upload_resume') && !!resumeUrl,
@@ -1637,7 +1637,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       await storage.redeemInviteCode(pendingInvite, req.user.id);
     }
     if (isNew && req.user.email) {
-      serverTrack(req.user.id, 'signup_completed', { role: req.user.user_metadata?.role, source: signupSource });
+      await serverTrack(req.user.id, 'signup_completed', { role: req.user.user_metadata?.role, source: signupSource });
       sendWelcomeEmail(req.user.email, req.user.user_metadata?.first_name).catch((err: Error) =>
         console.error("Failed to send welcome email:", err)
       );
@@ -1702,7 +1702,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       console.error(`[account-delete] auth user NOT deleted for ${userId}:`, authError.message);
     }
 
-    serverTrack(userId, 'account_deleted', {});
+    await serverTrack(userId, 'account_deleted', {});
     res.json({ success: true });
   }));
 
@@ -2080,7 +2080,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       }
       const result = await resumeService.uploadAndProcessResume(req.user.id, req.file.buffer, req.file.mimetype);
       await storage.incrementDailyUsage(req.user.id, 'resume_upload');
-      serverTrack(req.user.id, 'resume_parsed', { success: true, mimetype: req.file.mimetype });
+      await serverTrack(req.user.id, 'resume_parsed', { success: true, mimetype: req.file.mimetype });
       res.json(result);
     } catch (error) {
       console.error("Error processing resume upload:", error);
@@ -2340,7 +2340,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       const updatedApplication = await storage.updateApplicationStatusByCandidate(applicationId, status);
       // Outcomes are the measure of whether applying through Recrutas works.
       const appliedAt = application.appliedAt ? new Date(application.appliedAt).getTime() : NaN;
-      serverTrack(req.user.id, 'application_outcome', {
+      await serverTrack(req.user.id, 'application_outcome', {
         status,
         previous_status: application.status,
         days_since_applied: Number.isFinite(appliedAt) ? Math.floor((Date.now() - appliedAt) / 86_400_000) : null,
@@ -2417,7 +2417,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       await storage.incrementDailyUsage(userId, 'application');
       await storage.createActivityLog(userId, "job_applied", `Applied to job ID: ${jobId}`);
 
-      serverTrack(userId, 'application_created', {
+      await serverTrack(userId, 'application_created', {
         job_id: jobId,
         application_id: application.id,
         is_internal: isInternalJob,
