@@ -1,6 +1,7 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 import { supabase } from './supabase-client';
 import { getCachedProfile, setCachedProfile } from '@/utils/storage.utils';
+import { getSignupCode } from './signup-code';
 
 /**
  * Generic API request helper with authentication
@@ -14,6 +15,11 @@ export async function apiRequest(method: string, url: string, body?: any): Promi
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
+  }
+  // Read by the server only on the request that creates a new account (sign-up attribution).
+  const signupCode = getSignupCode();
+  if (signupCode) {
+    headers['x-invite-code'] = signupCode;
   }
 
   // Handle FormData (file uploads) vs JSON

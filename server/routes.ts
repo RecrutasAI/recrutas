@@ -1575,7 +1575,10 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     | { ok: true; invite: any | null; code?: string; source?: string }
     | { ok: false; status: number; body: { message: string; code: string } }
   > {
-    const raw = req.body?.inviteCode ?? req.headers['x-invite-code'];
+    // Body (sign-up form), header (any API call; client/src/lib/signup-code.ts), or the code saved
+    // on the account at sign-up: an email sign-up's row is created after the confirmation link,
+    // often in a later request or on another device, so the account's own copy is the backstop.
+    const raw = req.body?.inviteCode ?? req.headers['x-invite-code'] ?? req.user?.user_metadata?.invite_code;
     const supplied = typeof raw === 'string' ? raw.trim() : '';
 
     // Source is the code PREFIX (REDDIT-A1B2 → reddit), derived before any
