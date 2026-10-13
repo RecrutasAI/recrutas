@@ -70,7 +70,8 @@ export function groupSources(sources: Array<{ source: string | null; n: number |
 let phCache: { at: number; key: string; value: any } | null = null;
 const PH_CACHE_MS = 10 * 60_000;
 
-async function hogql(query: string): Promise<any[][] | null> {
+/** A PostHog query (HogQL, funnels…) through the query API; null when read access isn't set up. */
+async function posthogQuery(query: Record<string, unknown>, timeoutMs = 20_000): Promise<any | null> {
   const token = process.env.POSTHOG_PERSONAL_API_KEY;
   const project = process.env.POSTHOG_PROJECT_ID;
   if (!token || !project) {return null;}
@@ -78,12 +79,77 @@ async function hogql(query: string): Promise<any[][] | null> {
   const r = await fetch(`${host}/api/projects/${project}/query/`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: { kind: 'HogQLQuery', query } }),
-    signal: AbortSignal.timeout(20_000),
+    body: JSON.stringify({ query }),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!r.ok) {throw new Error(`PostHog HTTP ${r.status}`);}
   const data: any = await r.json();
   return data?.results ?? null;
+}
+
+async function hogql(query: string): Promise<any[][] | null> {
+  return posthogQuery({ kind: 'HogQLQuery', query });
+}
+
+// ── Activation, person by person ──────────────────────────────────────────────
+// Phase 1's metric (gtm-plan A3): the same people, in order, from sign-up to autofill. A
+// count per event ("how many ever did X") can rise between steps and says nothing about
+// who converted; PostHog's ordered funnel follows each person. Only real accounts count:
+// test sign-ups made through the admin API never send an email to PostHog, so they're
+// excluded by their user id (the database knows which accounts are real), not by email.
+
+export const ACTIVATION_STEPS = [
+  { event: 'signup_completed', label: 'Signed up' },
+  { event: 'resume_uploaded', label: 'Uploaded a resume' },
+  { event: 'job_feed_viewed', label: 'Opened their feed' },
+  { event: 'auto_apply_filled', label: 'Used autofill' },
+] as const;
+
+export interface ActivationStep { label: string; event: string; people: number; fromPrevious: number | null; fromStart: number | null; avgHoursFromPrevious: number | null }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The PostHog funnel query: steps in order, within `windowDays` of sign-up, real accounts only. */
+export function activationFunnelQuery(realIds: string[], days: number, windowDays = 30) {
+  const ids = realIds.filter(id => UUID.test(id)).map(id => `'${id}'`).join(', ') || "''";
+  return {
+    kind: 'FunnelsQuery',
+    dateRange: { date_from: `-${days}d` },
+    series: ACTIVATION_STEPS.map(s => ({ kind: 'EventsNode', event: s.event })),
+    funnelsFilter: { funnelWindowInterval: windowDays, funnelWindowIntervalUnit: 'day', funnelOrderType: 'ordered' },
+    properties: [{ type: 'hogql', key: `distinct_id IN (${ids})` }],
+  };
+}
+
+/** PostHog's funnel result as steps with conversion from the previous step and from the start. */
+export function activationSteps(results: any[]): ActivationStep[] {
+  const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 1000) / 10 : null);
+  const first = Number(results?.[0]?.count ?? 0);
+  return ACTIVATION_STEPS.map((step, i) => {
+    const r = results?.[i] ?? {};
+    const people = Number(r.count ?? 0);
+    const prev = i > 0 ? Number(results?.[i - 1]?.count ?? 0) : null;
+    const secs = Number(r.average_conversion_time);
+    return {
+      label: step.label, event: step.event, people,
+      fromPrevious: prev === null ? null : pct(people, prev),
+      fromStart: i === 0 ? null : pct(people, first),
+      avgHoursFromPrevious: i > 0 && Number.isFinite(secs) && secs > 0 ? Math.round((secs / 3600) * 10) / 10 : null,
+    };
+  });
+}
+
+let activationCache: { at: number; key: string; value: ActivationStep[] | null } | null = null;
+
+/** The activation funnel for the last `days` days; null when PostHog isn't reachable. Cached 10 min. */
+export async function activationFunnel(days = 90, conn: Conn = db): Promise<ActivationStep[] | null> {
+  const key = `act-${days}`;
+  if (activationCache && activationCache.key === key && Date.now() - activationCache.at < PH_CACHE_MS) {return activationCache.value;}
+  const ids = rows(await conn.execute(sql`SELECT id::text AS id FROM users WHERE id IN ${realUserIds}`)).map(r => String(r.id));
+  const results = await posthogQuery(activationFunnelQuery(ids, days), 45_000);
+  const value = results ? activationSteps(results) : null;
+  activationCache = { at: Date.now(), key, value };
+  return value;
 }
 
 /**
@@ -123,8 +189,10 @@ export interface FunnelStep { label: string; value: number | null; source: 'data
 export async function getGrowthAnalytics() {
   const ph = await safe(() => posthogNumbers(30), { available: false, people: {} as Record<string, number | null>, visitorsDaily: [] as DayPoint[] });
   const p = (ev: string) => (ph.available ? ph.people[ev] ?? null : null);
+  const activation = await safe(() => activationFunnel(90), null as ActivationStep[] | null);
   return {
     available: ph.available,
+    activation,
     visitors: ph.visitorsDaily,
     funnel: { 'Visited the site': p('$pageview'), 'Opened their feed': p('job_feed_viewed'), 'Used autofill': p('auto_apply_filled') } as Record<string, number | null>,
   };
