@@ -257,7 +257,7 @@ export async function trafficSources(days = 7): Promise<{ visitors: number; refe
         SELECT distinct_id, argMin(coalesce(nullIf(toString(properties.${prop}), ''), '(none)'), timestamp) AS k
         FROM events WHERE ${where} GROUP BY distinct_id)
       GROUP BY k ORDER BY n DESC LIMIT 10`);
-    const label = (k: string) => (k === '$direct' ? 'direct (typed or bookmarked)' : /(^|\.)recrutas\.ai$/.test(k) ? 'recrutas.ai (came back to another page)' : k);
+    const label = (k: string) => (k === '$direct' ? 'direct (typed or bookmarked)' : /(^|\.)recrutas\.ai$/.test(k) ? 'recrutas.ai (from another page)' : k);
     return r ? r.map(x => ({ label: label(String(x[0])), value: Number(x[1]) || 0 })) : null;
   };
   const v = await hogql(`SELECT count(DISTINCT distinct_id) FROM events WHERE ${where}`);
