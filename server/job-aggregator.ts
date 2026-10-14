@@ -222,6 +222,11 @@ export class JobAggregator {
 
   // Add new open source job sources
   async fetchFromJSearchAPI(userSkills?: string[]): Promise<ExternalJob[]> {
+    // Off unless JSEARCH_ENABLED=on (2026-10-14). On RapidAPI's free BASIC plan the monthly quota
+    // ran out in the first 1-2 days of every month (RapidAPI emails, Jul-Oct), then every call
+    // was refused (718 HTTP 429s in the log) with an overage-fee warning, for 62 live jobs out of
+    // ~4,500 third-party ones. Turn it back on only with a paid plan.
+    if (process.env.JSEARCH_ENABLED !== 'on') {return [];}
     try {
       console.log('Fetching from JSearch API...');
 
