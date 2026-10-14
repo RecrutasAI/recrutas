@@ -106,12 +106,6 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # Scrape External Jobs (aggregators) — daily 06:30
 30 6 * * * $RUN scrape-external-jobs 12 npx tsx scripts/scrape-external-jobs.ts --timeout=540000
 
-# Catch-up for daily jobs the "Pause background jobs" switch can skip (Autopilot pauses them
-# under load, e.g. during the 06:00 scrape): each runs again in the quiet 15:00 hour only if it
-# didn't finish cleanly earlier today (CRON_CATCH_UP in run-cron.sh). Done by 16:00 (scrape-ats).
-5 15 * * * CRON_CATCH_UP=1 $RUN auto-hide-ghost-jobs 5 npx tsx scripts/auto-hide-ghost-jobs.ts --staleDays=30
-15 15 * * * CRON_CATCH_UP=1 $RUN scrape-external-jobs 12 npx tsx scripts/scrape-external-jobs.ts --timeout=540000
-35 15 * * * CRON_CATCH_UP=1 $RUN warm-candidate-matches 10 npx tsx scripts/warm-candidate-matches.ts
 
 # Scrape Tech Companies — 06:00 and 18:00 (tiers continue on error, like GHA)
 #
@@ -206,6 +200,11 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # offsite copy. Both dumps live on the DB's own disk, so this is the only thing
 # standing between a VPS loss and total data loss.
 15 10 * * * $RUN offsite-backup 45 bash infra/vps/offsite-backup.sh
+
+# Pipeline staleness — every 30 min. Fails (→ alert to dev@) when any job in
+# PIPELINE_MAX_AGE_MIN hasn't run on time: failures already alert, a job that silently
+# stopped running did not (2026-10-13: the paused third-party import, stale for a day).
+20,50 * * * * $RUN pipeline-staleness 3 npx tsx scripts/check-pipeline-staleness.ts
 
 # VPS DB health check — every 15 min (liveness + disk; heartbeats to pipeline_runs)
 */15 * * * * $RUN vps-db-health 3 bash infra/vps/healthcheck-db.sh
