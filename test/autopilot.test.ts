@@ -161,11 +161,23 @@ describe('decideAutopilot', () => {
     expect(d.alerts.map(a => a.key)).toEqual(['autopilot-disk']);
   });
 
-  it('emails every action with the reason', () => {
+  it('internal protection acts without an email; a switch people can see is emailed with the reason', () => {
     const d = decideAutopilot({ ...calm, dbConnections: 45 }, S(), {}, { healthySince: {} }, t0);
+    expect(d.changes.map(c => c.key)).toContain('pauseNonEssentialCrons');
+    expect(d.changes.map(c => c.key)).toContain('noticeBanner');
     expect(d.alerts).toHaveLength(1);
-    expect(d.alerts[0].subject).toMatch(/Autopilot: pauseNonEssentialCrons → true/);
+    expect(d.alerts[0].subject).toMatch(/Autopilot: noticeBanner/);
+    expect(d.alerts[0].subject).not.toMatch(/pauseNonEssentialCrons/);
     expect(d.alerts[0].body).toMatch(/45 DB connections/);
+  });
+
+  it('a short load spike (the morning scrape) sends no email; an hour of pressure does', () => {
+    const busy = { ...calm, load1: 3.5 };
+    const first = decideAutopilot(busy, S(), {}, { healthySince: {} }, t0);
+    expect(first.changes.map(c => c.key)).toContain('pauseNonEssentialCrons');
+    expect(first.alerts).toEqual([]);
+    const later = decideAutopilot(busy, S(), {}, first.state, new Date(t0.getTime() + 61 * 60_000));
+    expect(later.alerts.map(a => a.key)).toContain('autopilot-pressure-long');
   });
 
   it('alerts (without changing anything) only when a new job has waited past two missed batches', () => {
