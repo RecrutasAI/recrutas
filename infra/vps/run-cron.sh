@@ -72,6 +72,14 @@ case " $NONESSENTIAL_JOBS " in
     ;;
 esac
 
+# Catch-up runs (CRON_CATCH_UP=1 on a second crontab line): a daily job paused by the switch
+# above lost its whole day (2026-10-13: the 06:30 third-party import fell inside a 30-minute
+# Autopilot pause during the morning scrape, so third-party jobs were two days old). The
+# catch-up line runs the job only if it hasn't finished cleanly today.
+if [ "${CRON_CATCH_UP:-}" = "1" ] && grep -q "^=== $(date -u +%F)T.* \[$JOB\] exit 0 ===" "$LOG" 2>/dev/null; then
+  exit 0
+fi
+
 # Memory bounding. Postgres shares 1.9GB with these workers, so an unbounded
 # scraper can push the DB into reclaim or get the kernel OOM-killer to pick a
 # victim of its choosing. Running each job in its own cgroup scope means the job

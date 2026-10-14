@@ -106,6 +106,13 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # Scrape External Jobs (aggregators) — daily 06:30
 30 6 * * * $RUN scrape-external-jobs 12 npx tsx scripts/scrape-external-jobs.ts --timeout=540000
 
+# Catch-up for daily jobs the "Pause background jobs" switch can skip (Autopilot pauses them
+# under load, e.g. during the 06:00 scrape): each runs again in the quiet 15:00 hour only if it
+# didn't finish cleanly earlier today (CRON_CATCH_UP in run-cron.sh). Done by 16:00 (scrape-ats).
+5 15 * * * CRON_CATCH_UP=1 $RUN auto-hide-ghost-jobs 5 npx tsx scripts/auto-hide-ghost-jobs.ts --staleDays=30
+15 15 * * * CRON_CATCH_UP=1 $RUN scrape-external-jobs 12 npx tsx scripts/scrape-external-jobs.ts --timeout=540000
+35 15 * * * CRON_CATCH_UP=1 $RUN warm-candidate-matches 10 npx tsx scripts/warm-candidate-matches.ts
+
 # Scrape Tech Companies — 06:00 and 18:00 (tiers continue on error, like GHA)
 #
 # Tier 3 was REMOVED 2026-08-01. It is 10 mega-corp boards (Google, Microsoft,
