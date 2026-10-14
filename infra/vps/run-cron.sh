@@ -61,13 +61,29 @@ set +a
 # "Pause background jobs" switch (admin console / Autopilot, runtime_settings
 # pauseNonEssentialCrons). Under load these wait; backups, embeddings, the ATS
 # scrapers and alerts always run. If the setting can't be read, the job runs.
+#
+# A paused job WAITS for the switch to clear (checking each minute, up to
+# CRON_PAUSE_WAIT_MIN, default 120) and then runs; it is not dropped. Dropping it
+# lost a daily job's whole day: 2026-10-13 the 06:30 third-party import fell inside
+# a 30-minute Autopilot pause (the 06:00 scrape's own load), so third-party jobs were
+# two days old and nothing said so. The job's lock is held while it waits, so the next
+# tick of a frequent job skips instead of queueing behind it. If the pause outlasts the
+# wait, the run is skipped and the pipeline-staleness check alerts when it goes stale.
 NONESSENTIAL_JOBS="${NONESSENTIAL_JOBS:-discover-companies scrape-external-jobs auto-hide-ghost-jobs warm-candidate-matches compute-job-requirements fleet-export fleet-ingest}"
 case " $NONESSENTIAL_JOBS " in
   *" $JOB "*)
-    PAUSED="$(psql "${DATABASE_URL:-}" -tAX -c "SELECT value::text FROM runtime_settings WHERE key = 'pauseNonEssentialCrons'" 2>/dev/null || true)"
-    if [ "$PAUSED" = "true" ]; then
-      echo "$(date -u +%FT%TZ) [$JOB] paused by the 'Pause background jobs' switch, skipping" >>"$LOG"
-      exit 0
+    paused() { [ "$(psql "${DATABASE_URL:-}" -tAX -c "SELECT value::text FROM runtime_settings WHERE key = 'pauseNonEssentialCrons'" 2>/dev/null || true)" = "true" ]; }
+    if paused; then
+      WAIT_UNTIL=$(( $(date +%s) + ${CRON_PAUSE_WAIT_MIN:-120} * 60 ))
+      echo "$(date -u +%FT%TZ) [$JOB] paused by the 'Pause background jobs' switch, waiting up to ${CRON_PAUSE_WAIT_MIN:-120} min" >>"$LOG"
+      while paused; do
+        if [ "$(date +%s)" -ge "$WAIT_UNTIL" ]; then
+          echo "$(date -u +%FT%TZ) [$JOB] still paused, skipping this run" >>"$LOG"
+          exit 0
+        fi
+        sleep 60
+      done
+      echo "$(date -u +%FT%TZ) [$JOB] switch cleared, running" >>"$LOG"
     fi
     ;;
 esac
