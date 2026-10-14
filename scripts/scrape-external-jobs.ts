@@ -31,7 +31,7 @@ function checkRequiredEnvVars(): void {
   const sources: string[] = [];
   if (process.env.ADZUNA_APP_ID && process.env.ADZUNA_APP_KEY) sources.push('Adzuna');
   if (process.env.JOOBLE_API_KEY) sources.push('Jooble');
-  if (process.env.RAPIDAPI_KEY) sources.push('JSearch');
+  if (process.env.RAPIDAPI_KEY && process.env.JSEARCH_ENABLED === 'on') sources.push('JSearch');
   sources.push('WeWorkRemotely', 'RemoteOK', 'TheMuse'); // always available
   console.log(`[scrape-external] Available sources: ${sources.join(', ')}`);
 }
