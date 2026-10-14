@@ -1648,8 +1648,11 @@ export class DatabaseStorage implements IStorage {
       // each of up to ~450 pool rows was most of the query's time.
       const { embedding: _vectorColumn, ...poolColumns } = getTableColumns(jobPostings);
       const runQuery = async (extras: (any | null)[]) => {
+        // Jobs without a vector yet are kept (ranked after the ones with one; job-scorer.ts scores
+        // them on skills, title and level). Excluding them hid the newest jobs, the very ones a
+        // "date posted" filter asks for: vectors arrive up to 6 h after a job does (2026-10-14:
+        // 4 of the 6 third-party remote jobs posted in 3 days had none).
         const conditions = [...baseConditions(), ...extras.filter(Boolean)];
-        if (dist) {conditions.push(sql`${jobPostings.embedding} IS NOT NULL`);}
         return db
           .select({ job: poolColumns, distance: dist ?? sql<null>`NULL` })
           .from(jobPostings)
@@ -1659,7 +1662,7 @@ export class DatabaseStorage implements IStorage {
             // nearest jobs overall and THEN filters to third-party, which left 0 rows.
             // The third-party pool is small (~6K), so an exact sort is cheap.
             dist
-              ? sql`${dist} + 0 ASC`
+              ? sql`${dist} + 0 ASC NULLS LAST`
               : skillMatchExpr
                 ? sql`${skillMatchExpr} DESC, ${jobPostings.createdAt} DESC`
                 : sql`${jobPostings.createdAt} DESC`,
