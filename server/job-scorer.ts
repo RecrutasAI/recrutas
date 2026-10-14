@@ -588,40 +588,53 @@ export function scoreJob(
   }
 
   // ── Explanation ────────────────────────────────────────────────
+  // Plain words a candidate can check against their own resume: the role they've held, the
+  // skills that match by name, whether the level fits, and location. No scoring jargon
+  // ("1 direct + 0 related skill matches", "70% profile similarity").
 
   const explanationParts: string[] = [];
+  const pastTitle = closestCandidateTitle(candidateTitles || [], job.title || '');
 
   if (titleScore >= 70) {
-    explanationParts.push(`Strong role match for ${job.title}`);
+    explanationParts.push(pastTitle ? `You've worked as ${pastTitle}` : 'Same kind of role as your experience');
   } else if (titleScore >= 40) {
-    explanationParts.push(`Related role: ${job.title}`);
+    explanationParts.push(pastTitle ? `Close to your work as ${pastTitle}` : 'Close to roles you have held');
   }
 
-  if (effectiveMatches > 0) {
-    explanationParts.push(`${exactMatches.length} direct + ${partialMatches.length} related skill matches`);
+  const named = (list: string[]) => {
+    const shown = list.slice(0, 3).join(', ');
+    return list.length > 3 ? `${shown} and ${list.length - 3} more` : shown;
+  };
+  if (exactMatches.length > 0) {
+    explanationParts.push(`Your skills it asks for: ${named(exactMatches)}`);
+  } else if (partialMatches.length > 0) {
+    explanationParts.push(`Related skills: ${named(partialMatches)}`);
   }
 
-  if (hasSemanticSignal && semanticScore > 30) {
-    explanationParts.push(`${semanticScore}% profile similarity`);
+  if (explanationParts.length === 0 && hasSemanticSignal && semanticScore > 30) {
+    explanationParts.push('Your resume reads close to this job');
   }
 
   if (experienceScore >= 90) {
-    explanationParts.push('Experience level aligns well');
+    explanationParts.push('Right level for your experience');
   } else if (experienceScore < 60) {
     const jobLevel = inferJobLevel(job.title || '');
     const idx: Record<string, number> = { entry: 0, mid: 1, senior: 2, lead: 3, executive: 4 };
     const candIdx = idx[candidateExperienceLevel || 'mid'] ?? 1;
-    explanationParts.push(candIdx > jobLevel ? 'Slightly above your level' : 'Stretch role');
+    // The candidate is above the job's level → the job is more junior (this said "Slightly above
+    // your level", which read as the job being harder).
+    if (candIdx > jobLevel) {explanationParts.push('More junior than your experience');}
+    else if (candIdx < jobLevel) {explanationParts.push('A step up from your experience');}
   }
 
   if (contextBonus >= 6) {
-    explanationParts.push('Good location & work type fit');
+    explanationParts.push('Fits your location and work type');
   } else if (contextBonus >= 4) {
-    explanationParts.push('Location or work type matches');
+    explanationParts.push('Fits your location or work type');
   }
 
   if (explanationParts.length === 0) {
-    explanationParts.push('Limited match: different role or skill set');
+    explanationParts.push('Weak match: a different role or skill set');
   }
 
   const explanation = explanationParts.join('. ');
@@ -655,6 +668,23 @@ export function scoreJob(
  *   2. Role family match — 50%
  *   3. Seniority alignment — 20%
  */
+/** The candidate's past title closest to this job (same role family first, then shared words); null if none is close. */
+function closestCandidateTitle(candidateTitles: string[], jobTitle: string): string | null {
+  if (!jobTitle || candidateTitles.length === 0) return null;
+  const jobRole = extractRoleFamily(jobTitle);
+  const jobWords = new Set(normalizeTitle(jobTitle).split(/\s+/).filter(w => w.length > 2));
+  let best: { title: string; score: number } | null = null;
+  for (const raw of candidateTitles) {
+    const title = String(raw ?? '').trim();
+    if (!title) continue;
+    const words = normalizeTitle(title).split(/\s+/).filter(w => w.length > 2);
+    const shared = words.filter(w => jobWords.has(w)).length;
+    const score = (jobRole && extractRoleFamily(title) === jobRole ? 10 : 0) + shared;
+    if (score > 0 && (!best || score > best.score)) best = { title, score };
+  }
+  return best ? best.title.replace(/\s+/g, ' ').slice(0, 80) : null;
+}
+
 function scoreTitleRelevance(candidateTitles: string[], jobTitle: string): number {
   if (!jobTitle) return 50;
   if (candidateTitles.length === 0) return 50; // no data — neutral

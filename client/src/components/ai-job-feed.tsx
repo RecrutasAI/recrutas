@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Search, MapPin, Building, Filter, ExternalLink, Briefcase, Bookmark, EyeOff, Check, Sparkles, Shield, BadgeCheck, RotateCcw, Clock, FileText, Upload, Loader2, Layers, Calendar, ChevronDown } from "lucide-react";
+import { LocationPrompt } from "@/components/location-prompt";
 import { apiRequest } from "@/lib/queryClient";
 import AIMatchBreakdownModal from "./AIMatchBreakdownModal";
 import { LoadingHype } from "./loading-hype";
@@ -90,6 +91,8 @@ const EXPERIENCE_LEVEL_LABELS: Record<ExperienceLevel, string> = {
   lead: 'Lead',
   executive: 'Executive',
 };
+
+type FilterKey = 'search' | 'location' | 'workType' | 'company' | 'verdict' | 'level' | 'date';
 
 const DATE_FILTER_OPTIONS: { value: string; label: string; days: number }[] = [
   { value: '1d', label: 'Past 24 hours', days: 1 },
@@ -214,6 +217,7 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
   const [experienceLevelFilter, setExperienceLevelFilter] = useState("all");
   const [datePostedFilter, setDatePostedFilter] = useState("all");
   const [verdictFilter, setVerdictFilter] = useState("all");
+  const [sortBy, setSortBy] = useState<'best' | 'newest'>("best");
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<AIJobMatch | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -284,23 +288,24 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
   const parsedLocation = useMemo(() => parseLocationFilter(locationFilter), [locationFilter]);
   const locationKey = useMemo(() => pickedKey(locationFilter), [locationFilter]);
   // The feed's filters as one test, for direct jobs and third-party jobs alike.
-  const passesFilters = useCallback((job: any, verdict?: JobVerdict): boolean => {
-    const term = searchTerm.toLowerCase().trim();
+  // `skip` leaves one filter out: the empty state counts what each filter alone is hiding.
+  const passesFilters = useCallback((job: any, verdict?: JobVerdict, skip?: FilterKey): boolean => {
+    const term = skip === 'search' ? '' : searchTerm.toLowerCase().trim();
     if (term && !(job.title || '').toLowerCase().includes(term) && !(job.company || '').toLowerCase().includes(term) && !(job.description || '').toLowerCase().includes(term)) return false;
     // A picked place matches the places the job's location resolves to (the same keys the
     // server filters on); a job saved before it had keys falls back to the text match.
-    if (locationFilter !== 'all') {
+    if (locationFilter !== 'all' && skip !== 'location') {
       const keys: string[] | null | undefined = job.locationKeys;
       const ok = locationKey && Array.isArray(keys) ? keys.includes(locationKey) : locationMatches(job.location, parsedLocation);
       if (!ok) return false;
     }
     // Work type is exact now that `workType` is reliably classified at ingest
     // (location-dominant) — Remote means remote, not remote-or-hybrid.
-    if (workTypeFilter !== 'all' && (job.workType || '').toLowerCase() !== workTypeFilter.toLowerCase()) return false;
-    if (companyFilter !== 'all' && job.company !== companyFilter) return false;
-    if (verdictFilter !== 'all' && verdict?.label !== verdictFilter) return false;
-    if (experienceLevelFilter !== 'all' && !levelMatches(job.title, experienceLevelFilter as ExperienceLevel)) return false;
-    const dateOption = DATE_FILTER_OPTIONS.find(o => o.value === datePostedFilter);
+    if (workTypeFilter !== 'all' && skip !== 'workType' && (job.workType || '').toLowerCase() !== workTypeFilter.toLowerCase()) return false;
+    if (companyFilter !== 'all' && skip !== 'company' && job.company !== companyFilter) return false;
+    if (verdictFilter !== 'all' && skip !== 'verdict' && verdict?.label !== verdictFilter) return false;
+    if (experienceLevelFilter !== 'all' && skip !== 'level' && !levelMatches(job.title, experienceLevelFilter as ExperienceLevel)) return false;
+    const dateOption = skip === 'date' ? undefined : DATE_FILTER_OPTIONS.find(o => o.value === datePostedFilter);
     if (dateOption) {
       // Only the employer's own posting date counts; a job without one can't be shown as recent.
       const when = job.postedDate ?? job.postedAt;
@@ -319,7 +324,14 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
   // Render the full filtered set at once. All matches are already fetched in a
   // single request, so there is no network cost to showing them; rendering them
   // all avoids the scroll-reveal machinery (and its bugs) entirely.
-  const visibleMatches = filteredMatches;
+  // "Best match" keeps the server's order: fit first, then how fresh and how trustworthy the
+  // posting is (storage.ts compositeScore), which is why a 67% card can sit above a 74% one.
+  // "Newest" orders by the employer's own posting date; undated jobs go last.
+  const visibleMatches = useMemo(() => {
+    if (!filteredMatches || sortBy === 'best') return filteredMatches;
+    const when = (m: any) => { const t = Date.parse(m.job.postedDate ?? m.job.postedAt ?? ''); return Number.isNaN(t) ? -Infinity : t; };
+    return [...filteredMatches].sort((a, b) => when(b) - when(a));
+  }, [filteredMatches, sortBy]);
 
   // Staffing agencies and job boards, mixed and ranked by the person's resume (server side).
   // They fill a feed with no direct jobs: none at all, or none under the person's filters, and
@@ -555,8 +567,44 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
   // Filters (here or on the server) left no direct jobs: say so and offer to clear them.
   const overFiltered = (!filteredMatches || filteredMatches.length === 0) && anyFilterSet;
 
+  // When filters leave nothing, say which one to drop. Filters applied here (verdict, level,
+  // search, company) get a count of what dropping them brings back; date, location and work type
+  // are applied by the server before the 100-job cut, so those are offered without a count.
+  const cap = (v: string) => v.charAt(0).toUpperCase() + v.slice(1);
+  const relaxOptions = useMemo(() => {
+    if (!overFiltered || !allMatches) return [];
+    const local: { key: FilterKey; label: string; active: boolean }[] = [
+      { key: 'verdict', label: cap(verdictFilter), active: verdictFilter !== 'all' },
+      { key: 'level', label: cap(experienceLevelFilter), active: experienceLevelFilter !== 'all' },
+      { key: 'search', label: `"${searchTerm.trim()}"`, active: searchTerm.trim().length > 0 },
+      { key: 'company', label: companyFilter, active: companyFilter !== 'all' },
+    ];
+    const server: { key: FilterKey; label: string; active: boolean }[] = [
+      { key: 'date', label: DATE_FILTER_OPTIONS.find(o => o.value === datePostedFilter)?.label ?? '', active: datePostedFilter !== 'all' },
+      { key: 'workType', label: cap(workTypeFilter), active: workTypeFilter !== 'all' },
+      { key: 'location', label: locationFilter === 'all' ? '' : placeLabel(locationFilter), active: locationFilter !== 'all' },
+    ];
+    const counted = local.filter(o => o.active)
+      .map(o => ({ ...o, count: allMatches.filter(m => passesFilters(m.job, m.verdict, o.key)).length as number | null }))
+      .filter(o => (o.count ?? 0) > 0)
+      .sort((a, b) => (b.count ?? 0) - (a.count ?? 0));
+    return [...counted, ...server.filter(o => o.active).map(o => ({ ...o, count: null as number | null }))];
+  }, [overFiltered, allMatches, passesFilters, verdictFilter, experienceLevelFilter, searchTerm, companyFilter, datePostedFilter, workTypeFilter, locationFilter]);
+  const dropFilter = (key: FilterKey) => {
+    if (key === 'verdict') setVerdictFilter('all');
+    else if (key === 'level') setExperienceLevelFilter('all');
+    else if (key === 'search') setSearchTerm('');
+    else if (key === 'company') setCompanyFilter('all');
+    else if (key === 'date') setDatePostedFilter('all');
+    else if (key === 'workType') setWorkTypeFilter('all');
+    else if (key === 'location') setLocationFilter('all');
+  };
+
   return (
     <div className="space-y-4">
+      {cachedProfile && hasSkills && !String(cachedProfile.location ?? '').trim() && (
+        <LocationPrompt suggestion={cachedProfile.resumeParsingData?.personalInfo?.location} />
+      )}
       {/* Filters */}
       <div className="bg-white dark:bg-gray-800 rounded-lg p-3 sm:p-4 shadow-sm border">
         {/* Search row + mobile filter toggle */}
@@ -708,6 +756,16 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
                     ? "These come from staffing agencies and job boards, not the employer directly, so you'll apply through them. Ranked by fit to your resume."
                     : "Polish your profile to surface more matches, or check back soon. Fresh opportunities are added every hour."}
               </p>
+              {relaxOptions.length > 0 && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5" data-testid="relax-filters">
+                  <span className="text-xs text-gray-500">Drop one filter:</span>
+                  {relaxOptions.map(o => (
+                    <Button key={o.key} variant="secondary" size="sm" className="h-7 text-xs" onClick={() => dropFilter(o.key)}>
+                      Without {o.label}{o.count !== null ? ` · ${o.count} ${o.count === 1 ? 'job' : 'jobs'}` : ''}
+                    </Button>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="flex flex-col sm:flex-row gap-2 shrink-0">
               {overFiltered ? (
@@ -783,12 +841,27 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
       ) : (
         <div className="space-y-4">
           {/* Job count summary with refresh */}
-          <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
-            <span>
+          <div className="flex items-center justify-between gap-3 text-sm text-gray-600 dark:text-gray-400">
+            <span className="min-w-0">
               {filteredMatches.length} {filteredMatches.length === 1 ? 'match' : 'matches'}
               {filteredMatches.length !== totalMatches ? ` (filtered from ${totalMatches})` : ''}
               {data?.refreshing && <span data-testid="feed-refreshing"> · Busy right now: updating your matches shortly</span>}
+              <span className="block text-xs text-gray-500 dark:text-gray-500" data-testid="feed-order">
+                {sortBy === 'best'
+                  ? 'Ranked by fit to your resume, then how fresh and trustworthy each posting is.'
+                  : "Newest first, by the employer's own posting date."}
+              </span>
             </span>
+            <div className="flex items-center gap-2 shrink-0">
+            <Select value={sortBy} onValueChange={(v) => setSortBy(v as 'best' | 'newest')}>
+              <SelectTrigger className="w-[7.5rem] h-8 text-xs" aria-label="Sort matches" data-testid="feed-sort">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="best">Best match</SelectItem>
+                <SelectItem value="newest">Newest</SelectItem>
+              </SelectContent>
+            </Select>
             <Button
               variant="outline"
               size="sm"
@@ -797,8 +870,9 @@ export default function AIJobFeed({ onUploadClick }: AIJobFeedProps) {
               className="flex items-center gap-2"
             >
               <RotateCcw className={`h-3 w-3 ${isFetching ? 'animate-spin' : ''}`} />
-              {isFetching ? 'Refreshing...' : 'Refresh'}
+              <span className="hidden sm:inline">{isFetching ? 'Refreshing...' : 'Refresh'}</span>
             </Button>
+            </div>
           </div>
 
           <div className="space-y-4 max-h-[calc(100vh-350px)] overflow-y-auto">
