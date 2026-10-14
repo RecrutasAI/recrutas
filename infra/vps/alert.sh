@@ -42,6 +42,23 @@ for k in ${ALERT_GTM_KEYS:-cron-weekly-numbers}; do
 done
 
 mkdir -p "$STATE_DIR" 2>/dev/null
+
+# The owner hears at once only about what needs them now (Abas, 2026-10-14: "minimize emails but
+# effective", then yes to one daily summary). Keys matching ALERT_OWNER_NOW go to the owner (email
+# + phone push) immediately. Everything else (a scraper failing, a retry job) goes to the dev agent
+# at once, who fixes it, and is added to the owner's daily summary (owner-digest.sh).
+OWNER_NOW=0
+for pat in ${ALERT_OWNER_NOW:-autopilot-* pgbackrest-* wal-cap-* oracle-a1-launched cron-vps-db-health cron-db-backup cron-vps-db-backup cron-offsite-backup cron-storage-backup cron-pgbackrest-* cron-verify-restore cron-autopilot}; do
+  # shellcheck disable=SC2254
+  case "$KEY" in $pat) OWNER_NOW=1 ;; esac
+done
+if [ "$OWNER_NOW" = "0" ] && [ -n "${ADMIN_EMAILS:-}" ]; then
+  TO="${ALERT_ALSO_TO:-dev@recrutas.ai}"
+  for k in ${ALERT_GTM_KEYS:-cron-weekly-numbers}; do
+    [ "$KEY" = "$k" ] && TO="$TO,${ALERT_GTM_TO:-gtm@recrutas.ai}"
+  done
+fi
+
 STAMP="$STATE_DIR/$(printf '%s' "$KEY" | tr -c '[:alnum:]._-' '_')"
 
 # Rate limit
@@ -101,7 +118,7 @@ fi
 # Second channel, independent of Resend: a phone push through ntfy.sh (free app,
 # subscribe to the NTFY_TOPIC channel). Subject only: ntfy's public server is open to
 # anyone who knows the channel name, so log text and details stay in the email/VPS logs.
-if [ -n "${NTFY_TOPIC:-}" ]; then
+if [ -n "${NTFY_TOPIC:-}" ] && [ "$OWNER_NOW" = "1" ]; then
   NCODE="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 \
     -H "Title: $(printf '%s' "$SUBJECT" | tr -d '\r\n' | cut -c1-200)" \
     -H "Tags: rotating_light" \
@@ -112,4 +129,6 @@ fi
 
 # Rate-limit only after at least one channel delivered, so a failed send retries.
 [ "$SENT" = "1" ] && touch "$STAMP"
+# Not urgent: queue a line for the owner's daily summary (sent even if the dev email failed).
+[ "$OWNER_NOW" = "0" ] && printf '%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$KEY" "$(printf '%s' "$SUBJECT" | tr -d '\t\r\n')" >>"$STATE_DIR/owner-digest.tsv"
 exit 0
