@@ -49,6 +49,8 @@ export interface AutopilotState {
   feedSlowSince?: string;  /** Since when Supabase has been down / up (ISO); one of them is set once it has been checked. */
   supabaseDownSince?: string;
   supabaseUpSince?: string;
+  /** Since when any rule has been under pressure (ISO), cleared once none is. */
+  pressureSince?: string;
 }
 
 export type RuleKey = 'feed' | 'cpuRam' | 'conns';
@@ -68,6 +70,9 @@ export const BUSY_NOTICE = { text: "We're busier than usual right now. Pages may
 const NORMAL_TTL_MINUTES = 120;
 /** Alert when the oldest unmatched job is older than this (two missed 6-hourly batches). */
 export const EMBED_ALERT_MIN = 14 * 60;
+/** Switches people can see: their changes are emailed at once. The rest is internal protection. */
+const PEOPLE_VISIBLE = new Set<string>(['signupWaitlist', 'noticeBanner', 'authProvider']);
+const PRESSURE_ALERT_MS = 60 * 60_000;
 const PRESSURE_TTL_MINUTES = 360;
 
 export function decideAutopilot(i: AutopilotInput, settings: Settings, setBy: SetBy, prev: AutopilotState, now: Date): Decision {
@@ -173,11 +178,25 @@ export function decideAutopilot(i: AutopilotInput, settings: Settings, setBy: Se
   if (supabaseDownLong && settings.authProvider !== 'recrutas') {
     alerts.push({ key: 'autopilot-supabase-down', subject: '[recrutas] Supabase not answering: sign-in is down', body: `Supabase sign-in or storage has not answered since ${supabaseDownSince}. People already signed in keep their feed until their session needs renewing (up to an hour); new sign-ins fail. Resume uploads are being kept in our Postgres and move back on their own (move-fallback-resumes). Check status.supabase.com and the project's usage page (a free-plan restriction returns 402).` });
   }
-  if (changes.length) {
+  // Email only what someone has to know about. A switch people can see (sign-up waitlist, the
+  // site banner, the sign-in server) emails when it changes. Internal protection (a longer feed
+  // cache, pausing background jobs) used to email on every flip, both ways, often for its own
+  // morning scrape: about 10 of the owner's ~39 emails a week (2026-10-14). Now it emails only
+  // when pressure has lasted an hour; each change stays in the admin console's audit log.
+  const pressureSince = Object.values(pressure).some(Boolean) ? (prev.pressureSince ?? now.toISOString()) : undefined;
+  if (pressureSince && now.getTime() - Date.parse(pressureSince) >= PRESSURE_ALERT_MS) {
     alerts.push({
-      key: `autopilot-${changes.map(c => `${c.key}=${JSON.stringify(c.value)}`).join(',')}`,
-      subject: `[recrutas] Autopilot: ${changes.map(c => `${c.key} → ${JSON.stringify(c.value)}`).join(', ')}`,
-      body: changes.map(c => `${c.key} → ${JSON.stringify(c.value)}\n  ${c.reason}`).join('\n\n')
+      key: 'autopilot-pressure-long',
+      subject: `[recrutas] Under load for ${Math.round((now.getTime() - Date.parse(pressureSince)) / 60_000)} min; Autopilot is protecting the site`,
+      body: `Pressure since ${pressureSince}: feed p95 ${i.feedP95Ms ?? 'n/a'} ms (${i.feedSamples} req), load ${i.load1.toFixed(2)}/${i.cpus} cores, RAM free ${Math.round(i.memAvailableMb)} MB, DB connections ${i.dbConnections}. The cache is stretched and background jobs are paused until it eases. If this is real traffic and keeps up, it's the signal to upgrade the box (docs/scaling-strategy.md).`,
+    });
+  }
+  const visible = changes.filter(c => PEOPLE_VISIBLE.has(c.key));
+  if (visible.length) {
+    alerts.push({
+      key: `autopilot-${visible.map(c => `${c.key}=${JSON.stringify(c.value)}`).join(',')}`,
+      subject: `[recrutas] Autopilot: ${visible.map(c => `${c.key} → ${JSON.stringify(c.value)}`).join(', ')}`,
+      body: visible.map(c => `${c.key} → ${JSON.stringify(c.value)}\n  ${c.reason}`).join('\n\n')
         + `\n\nInputs: feed p95 ${i.feedP95Ms ?? 'n/a'} ms (${i.feedSamples} req), load ${i.load1.toFixed(2)}/${i.cpus} cores, RAM free ${Math.round(i.memAvailableMb)} MB, DB connections ${i.dbConnections}, disk ${i.diskPct}%.`
         + '\n\nPin a switch in the admin console (System & scaling) to stop Autopilot changing it.',
     });
@@ -189,6 +208,7 @@ export function decideAutopilot(i: AutopilotInput, settings: Settings, setBy: Se
       ...(feedSlowSince ? { feedSlowSince } : {}),
       ...(supabaseDownSince ? { supabaseDownSince } : {}),
       ...(supabaseUpSince ? { supabaseUpSince } : {}),
+      ...(pressureSince ? { pressureSince } : {}),
     },
   };
 }
