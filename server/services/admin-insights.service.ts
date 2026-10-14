@@ -275,6 +275,15 @@ export async function signupsByChannel(days = 30, conn: Conn = db): Promise<Labe
     GROUP BY 1 ORDER BY 2 DESC`)).map(r => ({ label: String(r.label), value: Number(r.value) }));
 }
 
+/** Real sign-ups in the last `days` days by the full ?code= (one per launch post or partner). */
+export async function signupsByCode(days = 30, conn: Conn = db): Promise<Labeled[]> {
+  return rows(await conn.execute(sql`
+    SELECT upper(invite_code_used) AS label, count(*)::int AS value FROM users
+    WHERE "createdAt" > NOW() - make_interval(days => ${days}) AND role IS DISTINCT FROM 'system' AND id IN ${realUserIds}
+      AND NULLIF(invite_code_used, '') IS NOT NULL
+    GROUP BY 1 ORDER BY 2 DESC LIMIT 30`)).map(r => ({ label: String(r.label), value: Number(r.value) }));
+}
+
 export interface Interest { days: number; employers: { recent: number; total: number }; outsideUs: { recent: number; total: number; byCountry: Labeled[] }; earlyAccess: { recent: number; total: number } }
 
 /** The waitlist: employers asking for access, people outside the US (by country), early-access requests. */
@@ -338,8 +347,9 @@ export async function getGrowth(conn: Conn = db) {
     { label: 'Applied to a job', value: applied, source: 'database' },
     { label: 'Used autofill', value: null, source: 'site analytics' },
   ];
-  const [channels, interest] = await Promise.all([
+  const [channels, codes, interest] = await Promise.all([
     safe(() => signupsByChannel(30, conn), [] as Labeled[]),
+    safe(() => signupsByCode(30, conn), [] as Labeled[]),
     safe(() => interestSummary(7, conn), null as Interest | null),
   ]);
   return {
@@ -347,6 +357,7 @@ export async function getGrowth(conn: Conn = db) {
     series: { signups, resumes, applications },
     funnel,
     channels,
+    codes,
     interest,
   };
 }

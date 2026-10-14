@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { campaignCode } from './lib/campaign-code';
 import { activeAuthBaseUrl } from "./lib/auth-provider";
 import { isFallbackKey, readFallbackFile, removeResumeFile, resumeFileInfo, resumeFileUrl, verifyResumeFileLink } from "./lib/resume-files";
 import { eq } from "drizzle-orm";
@@ -1594,9 +1595,11 @@ Analyze the form and return the actions JSON to fill every field you can.`;
 
     const result = await storage.validateInviteCode(supplied, role);
     if (!result.valid) {
+      // A campaign code with no invite row (HN-47T1WO, RR-KING) is kept whole, not just its
+      // prefix: per-post and per-partner sign-ups are counted by the full code (2026-10-14).
       return INVITE_GATE_ON
         ? { ok: false, status: 403, body: { message: result.error ?? 'Invalid invite code', code: 'INVITE_INVALID' } }
-        : { ok: true, invite: null, source };
+        : { ok: true, invite: null, code: campaignCode(supplied), source };
     }
     return { ok: true, invite: result.invite, code: result.invite.code, source };
   }
