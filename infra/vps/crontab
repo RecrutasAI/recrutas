@@ -189,6 +189,11 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 0 14 * * 0 $RUN pgbackrest-full 60 bash infra/vps/pgbackrest-backup.sh full
 0 14 * * 1-6 $RUN pgbackrest-incr 30 bash infra/vps/pgbackrest-backup.sh incr
 
+# Backup sign-in server (infra/vps/auth/README.md): keep its copy of every account fresh, every
+# 10 minutes, so a failover can use it (Autopilot only fails over if the copy is < 30 min old).
+# Refuses to run while sign-in is on the backup, so nothing made during a failover is lost.
+*/10 * * * * $RUN sync-auth-users 5 bash infra/vps/auth/sync-auth-users.sh
+
 # Supabase Storage objects (résumé FILES) — daily 09:45.
 # The SQL dumps only carry storage METADATA; without this the files themselves
 # have no backup at all and a bucket loss is unrecoverable.
