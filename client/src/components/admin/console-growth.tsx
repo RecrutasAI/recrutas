@@ -9,6 +9,7 @@ interface Growth {
   series: { signups: DayPoint[]; resumes: DayPoint[]; applications: DayPoint[] };
   funnel: Array<{ label: string; value: number | null; source: 'database' | 'site analytics' }>;
   channels?: Labeled[];
+  codes?: Labeled[];
   interest?: Interest | null;
 }
 interface Labeled { label: string; value: number }
@@ -143,6 +144,12 @@ export function ConsoleGrowth() {
               <p className="text-xs font-medium text-gray-500 mb-2">Sign-ups by channel</p>
               {data.channels?.length ? <HBars rows={data.channels} /> : <p className="text-sm text-gray-500">No sign-ups in the last 30 days.</p>}
             </div>
+            {!!data.codes?.length && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-2">Sign-ups by code</p>
+                <HBars rows={data.codes} />
+              </div>
+            )}
           </CardContent>
         </Card>
         <Card data-testid="growth-interest">
