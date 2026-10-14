@@ -82,7 +82,7 @@ services:
     environment:
       - POSTGRES_DB=recrutas
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=password
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set a strong password}
     volumes:
       - postgres_data:/var/lib/postgresql/data
 

@@ -3,7 +3,7 @@ import { chromium } from 'playwright';
 async function main() {
   const browser = await chromium.launch({
     headless: true,
-    executablePath: '/home/akabas7/.cache/ms-playwright/chromium_headless_shell-1169/chrome-linux/headless_shell',
+    executablePath: process.env.CHROME_PATH,
   });
   const ctx = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',

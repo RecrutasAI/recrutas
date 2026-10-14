@@ -94,7 +94,7 @@ Some tests failed due to **selector mismatches** (not actual bugs):
 ✅ Logo "R" visible  
 ✅ Theme toggle present  
 ✅ Notification bell present  
-✅ User avatar with "r" initial + username "rainierit"  
+✅ User avatar with the initial and username of the signed-in test account  
 ✅ Settings gear icon present
 
 #### **Navigation Tabs:**

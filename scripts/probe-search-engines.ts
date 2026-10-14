@@ -226,7 +226,7 @@ async function main() {
 
   const browser = await chromium.launch({
     headless: true,
-    executablePath: '/home/akabas7/.cache/ms-playwright/chromium_headless_shell-1169/chrome-linux/headless_shell',
+    executablePath: process.env.CHROME_PATH,
   });
 
   const braveKey = process.env.BRAVE_SEARCH_API_KEY;

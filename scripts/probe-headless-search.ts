@@ -5,7 +5,7 @@ import { chromium } from 'playwright';
 async function searchFirstResult(query: string): Promise<string | null> {
   const browser = await chromium.launch({ 
     headless: true,
-    executablePath: '/home/akabas7/.cache/ms-playwright/chromium-1169/chrome-linux/chrome'
+    executablePath: process.env.CHROME_PATH
   });
   const page = await browser.newPage();
   
