@@ -32,6 +32,15 @@ if { [ -z "${RESEND_API_KEY:-}" ] || [ -z "${ADMIN_EMAILS:-}" ]; } && [ -z "${NT
   exit 0
 fi
 
+# Recipients: ADMIN_EMAILS (the owner), plus the agent that fixes it (Abas, 2026-10-13: "send
+# these cron failed emails to dev; if anything is gtm related, send it to gtm"). ALERT_ALSO_TO
+# (default dev@recrutas.ai) gets every alert; keys in ALERT_GTM_KEYS (default the GTM report
+# job) also go to ALERT_GTM_TO (gtm@recrutas.ai).
+TO="${ADMIN_EMAILS:-},${ALERT_ALSO_TO:-dev@recrutas.ai}"
+for k in ${ALERT_GTM_KEYS:-cron-weekly-numbers}; do
+  [ "$KEY" = "$k" ] && TO="$TO,${ALERT_GTM_TO:-gtm@recrutas.ai}"
+done
+
 mkdir -p "$STATE_DIR" 2>/dev/null
 STAMP="$STATE_DIR/$(printf '%s' "$KEY" | tr -c '[:alnum:]._-' '_')"
 
@@ -62,7 +71,7 @@ $BODY"
 
 # JSON-encode with python so log output containing quotes/newlines can't break
 # the request (and so a malformed body can't silently drop the alert).
-PAYLOAD="$(SUBJECT="$SUBJECT" FULL="$FULL" TO="${ADMIN_EMAILS:-}" python3 -c '
+PAYLOAD="$(SUBJECT="$SUBJECT" FULL="$FULL" TO="$TO" python3 -c '
 import json, os
 to = [e.strip() for e in os.environ["TO"].split(",") if e.strip()]
 print(json.dumps({
@@ -82,7 +91,7 @@ if [ -n "${RESEND_API_KEY:-}" ] && [ -n "${ADMIN_EMAILS:-}" ]; then
     -d "$PAYLOAD" 2>/dev/null)"
   if [ "$CODE" = "200" ]; then
     SENT=1
-    echo "[alert] sent '$KEY' to $ADMIN_EMAILS"
+    echo "[alert] sent '$KEY' to $TO"
   else
     echo "[alert] email FAILED (http=$CODE): $(cat /tmp/alert-resp.$$ 2>/dev/null)" >&2
   fi
