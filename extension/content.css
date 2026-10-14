@@ -124,6 +124,8 @@
 #recrutas-needs ul { margin: 6px 0 10px; padding-left: 18px; }
 #recrutas-needs li { margin: 4px 0; cursor: pointer; text-decoration: underline dotted; }
 #recrutas-needs a { color: #92400e; font-weight: 600; }
+#recrutas-needs .recrutas-needs-heading { margin: 10px 0 2px; font-weight: 600; }
+#recrutas-needs .recrutas-needs-group + a, #recrutas-needs .recrutas-needs-group + .recrutas-needs-group { display: block; }
 #recrutas-needs .recrutas-needs-close {
   position: absolute; top: 6px; right: 8px;
   border: 0; background: transparent; color: #78350f; font-size: 18px; cursor: pointer;

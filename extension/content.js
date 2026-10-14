@@ -1042,28 +1042,46 @@
     const title = document.createElement('strong');
     title.textContent = `${needsYou.length} question${needsYou.length === 1 ? ' needs' : 's need'} you`;
     const intro = document.createElement('p');
-    intro.textContent = "We only fill what we know. Answer these on this form; for the ones that come up on every form, we'll offer to remember your answer.";
-    const list = document.createElement('ul');
-    for (const n of needsYou) {
-      const el = findElement(n.fieldId);
-      if (el) (el.closest('.select__container, .select-shell') || el).classList.add('recrutas-needs-field');
-      const li = document.createElement('li');
-      li.textContent = String(n.label || n.fieldId).replace(/\s*\*\s*$/, '');
-      if (el) {
-        li.tabIndex = 0;
-        li.addEventListener('click', () => { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.focus?.(); });
+    intro.textContent = 'We only fill what we know.';
+    // Two groups, so the questions worth answering once come first: facts we can keep in
+    // Recrutas (sponsorship, relocation, salary…) are filled on every later form; the rest
+    // belong to this employer's form only.
+    const everyForm = needsYou.filter(n => n.saveAs);
+    const thisForm = needsYou.filter(n => !n.saveAs);
+    const group = (heading, items) => {
+      const box = document.createElement('div');
+      box.className = 'recrutas-needs-group';
+      const h = document.createElement('p');
+      h.className = 'recrutas-needs-heading';
+      h.textContent = `${heading} (${items.length})`;
+      const list = document.createElement('ul');
+      for (const n of items) {
+        const el = findElement(n.fieldId);
+        if (el) (el.closest('.select__container, .select-shell') || el).classList.add('recrutas-needs-field');
+        const li = document.createElement('li');
+        li.textContent = String(n.label || n.fieldId).replace(/\s*\*\s*$/, '');
+        if (el) {
+          li.tabIndex = 0;
+          li.addEventListener('click', () => { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.focus?.(); });
+        }
+        list.appendChild(li);
       }
-      list.appendChild(li);
+      box.append(h, list);
+      return box;
+    };
+    panel.append(close, title, intro);
+    if (everyForm.length) {
+      panel.appendChild(group('Answer once, filled on every form', everyForm));
+      if (typeof answersUrl === 'string' && /^https:\/\//.test(answersUrl)) {
+        const link = document.createElement('a');
+        link.href = answersUrl;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = 'Save these once in Recrutas';
+        panel.appendChild(link);
+      }
     }
-    panel.append(close, title, intro, list);
-    if (typeof answersUrl === 'string' && /^https:\/\//.test(answersUrl)) {
-      const link = document.createElement('a');
-      link.href = answersUrl;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      link.textContent = 'Save these once in Recrutas, and we\'ll fill them on every form';
-      panel.appendChild(link);
-    }
+    if (thisForm.length) {panel.appendChild(group('Only on this form', thisForm));}
     document.body.appendChild(panel);
   }
 
