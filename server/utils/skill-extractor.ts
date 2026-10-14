@@ -1,10 +1,11 @@
+import { SKILL_ALIASES } from '../skill-normalizer';
 /**
  * Shared skill extraction utility.
  * Scans free-text descriptions for known skills using precompiled regexes.
  * Covers tech, healthcare, finance, sales, trades, logistics, and more.
  */
 
-const KNOWN_SKILLS = [
+export const KNOWN_SKILL_TERMS: readonly string[] = [
   // ── Programming languages ──────────────────────────────────────────────
   'javascript', 'typescript', 'python', 'java', 'go', 'golang', 'rust', 'c++', 'c#', 'ruby', 'php', 'swift', 'kotlin', 'scala', 'r',
   // ── Frontend ───────────────────────────────────────────────────────────
@@ -134,21 +135,144 @@ function canonicalize(skill: string): string {
     skill.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 }
 
-// Precompile all patterns once at module load
-const SKILL_PATTERNS: Map<string, RegExp> = new Map(
-  KNOWN_SKILLS.map(skill => [
-    skill,
-    new RegExp(`\\b${skill.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i'),
-  ])
-);
+// ── Reading skills from prose (job descriptions) ───────────────────────────
+// One extractor for every path that reads a posting (ingestion, Fleet import, scrapers, the
+// scorer's fallback). The vocabulary is the list above plus the resume alias table, but prose is
+// not a skills list, so three kinds of term are held back (measured on 4,697 live postings,
+// 2026-10-14, where 'Compensation Analysis' had been tagged on 42,738 jobs, 'Go' on 13,629,
+// 'C' on 4,202, 'React Native' on every 'RN' nursing job):
+//   1. Expansions: a short or partial word mapped to a different, longer skill ('rn' → React
+//      Native, 'compensation' → Compensation Analysis, 'next' → Next.js). In prose the word means
+//      something else. Kept when it has a digit or symbol ('k8s', 'c++').
+//   2. Single letters ('c', 'r').
+//   3. Product and language names that are also everyday words: counted only when written as a
+//      name (capitalized), never as the lowercase word ('Lean Six Sigma' yes, 'a lean team' no).
+// Everything else matches in any case ('triage', 'welding', 'telemetry').
+const EVERYDAY_WORD_NAMES = new Set([
+  'go', 'word', 'excel', 'outlook', 'access', 'teams', 'lean', 'spring', 'express', 'swift', 'rust',
+  'shell', 'spark', 'oracle', 'chef', 'puppet', 'ruby', 'pearl', 'host', 'rest', 'less', 'next',
+  'node', 'server', 'pos', 'pr', 'slack', 'notion', 'sage', 'square', 'box', 'zoom', 'flask',
+  'gatsby', 'ember', 'meteor', 'mercury', 'jest', 'mocha', 'karma', 'jasmine', 'airflow', 'dart',
+  'julia', 'crystal', 'elm', 'ionic', 'electron', 'unity', 'maven', 'gradle', 'ant', 'redux',
+  'vault', 'consul', 'nomad', 'helm', 'storm', 'beam', 'hive', 'pig', 'flink', 'looker', 'mode',
+  'segment', 'amplitude', 'mixpanel', 'heap', 'ads', 'analytics', 'workday', 'epic',
+]);
 
+// Short alias-table acronyms that mean something else in postings ('RN' is a nurse, not React
+// Native; 'PR' is public relations or a pull request; 'POS' a point of sale).
+const AMBIGUOUS_ACRONYMS = new Set(['rn', 'pr', 'pos', 'ar', 'ap', 'ot', 'pt', 'ma', 'pa', 'er', 'or', 'ma']);
+
+let PROSE_TERMS: Array<{ term: string; canonical: string; re: RegExp; nameOnly: boolean; acronymOnly: boolean }> | null = null;
+function proseTerms() {
+  if (PROSE_TERMS) {return PROSE_TERMS;}
+  const curated = new Set(KNOWN_SKILL_TERMS.map(t => t.toLowerCase()));
+  const vocab = new Map<string, string>();  // lowercase term → canonical display name
+  // Canonical names come from the alias table first, the same names resumes are normalized to,
+  // so a job's 'TypeScript' and a candidate's 'TypeScript' compare equal.
+  for (const t of curated) {vocab.set(t, SKILL_ALIASES[t] ?? canonicalize(t));}
+  for (const [alias, canonical] of Object.entries(SKILL_ALIASES)) {
+    const key = alias.toLowerCase();
+    if (!vocab.has(key)) {vocab.set(key, canonical);}
+  }
+  const out: Array<{ term: string; canonical: string; re: RegExp; nameOnly: boolean; acronymOnly: boolean }> = [];
+  for (const [term, canonical] of vocab) {
+    const lettersOnly = /^[a-z]+$/.test(term);
+    if (lettersOnly && term.length === 1) {continue;}                       // 2. single letters
+    // 1. Expansions. The curated list above was written for prose, so its terms are not; an
+    // alias-table word that maps to a different, longer skill is. A short one written in capitals
+    // is an acronym and counts ('EHR'), unless the acronym means something else in postings.
+    const expansion = lettersOnly && !curated.has(term) && term !== canonical.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (expansion && (term.length > 5 || AMBIGUOUS_ACRONYMS.has(term))) {continue;}
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out.push({
+      term, canonical,
+      // Word edges that also work for names ending in a symbol (c++, c#, .net).
+      re: new RegExp(`(?<![A-Za-z0-9])${escaped}(?:s|es)?(?![A-Za-z0-9])`, 'gi'),
+      nameOnly: EVERYDAY_WORD_NAMES.has(term),                              // 3. names that are words
+      acronymOnly: expansion,
+    });
+  }
+  PROSE_TERMS = out;
+  return out;
+}
+
+/** Skills a posting's text asks for, read the way prose is written (see the rules above). */
 export function extractSkillsFromText(text: string | undefined): string[] {
   if (!text) {return [];}
   const found = new Set<string>();
-  for (const [skill, pattern] of SKILL_PATTERNS) {
-    if (pattern.test(text)) {
-      found.add(canonicalize(skill));
+  for (const { canonical, re, nameOnly, acronymOnly } of proseTerms()) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text))) {
+      // A name written as the plain lowercase word is the word, not the name.
+      if (nameOnly && m[0] === m[0].toLowerCase()) {continue;}
+      // An alias-table acronym counts only written in capitals ('EHR', not 'ehr' inside prose).
+      if (acronymOnly && m[0] !== m[0].toUpperCase()) {continue;}
+      found.add(canonical);
+      break;
     }
   }
   return Array.from(found);
+}
+
+// ── The candidate's own skills in a posting ────────────────────────────────
+// The vocabulary above can never list every occupation's skills (2026-10-14: 76% of teaching and
+// 67% of customer-service postings had none tagged; a nurse's 'Telemetry' or 'IV Therapy' matched
+// nothing). So matching also asks the other way round: which of THIS person's skills does the
+// posting mention? Any occupation, no list. Soft skills are left out: they appear in nearly every
+// posting and say nothing about fit.
+const SOFT_SKILLS = new Set([
+  'communication', 'communication skills', 'leadership', 'teamwork', 'team work', 'collaboration',
+  'problem solving', 'problem-solving', 'critical thinking', 'time management', 'adaptability',
+  'creativity', 'attention to detail', 'organization', 'organizational skills', 'interpersonal skills',
+  'work ethic', 'multitasking', 'self-motivated', 'flexibility', 'decision making', 'presentation skills',
+  'analytical skills', 'detail oriented', 'detail-oriented', 'team player', 'positive attitude',
+  'written communication', 'verbal communication', 'customer focus', 'reliability', 'professionalism',
+]);
+
+const mentionCache = new Map<string, Array<{ skill: string; re: RegExp; nameOnly: boolean; capsOnly: boolean }>>();
+
+/** Which of these (candidate) skills the text mentions, read with the prose rules above. */
+export function skillsMentioned(text: string | null | undefined, skills: string[]): string[] {
+  if (!text || skills.length === 0) {return [];}
+  const key = skills.join('\u0001');
+  let terms = mentionCache.get(key);
+  if (!terms) {
+    terms = [];
+    for (const skill of skills) {
+      const s = String(skill ?? '').trim();
+      const lower = s.toLowerCase();
+      if (s.length < 2 || SOFT_SKILLS.has(lower)) {continue;}
+      const escaped = s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+      terms.push({
+        skill: s,
+        re: new RegExp(`(?<![A-Za-z0-9])${escaped}(?:s|es)?(?![A-Za-z0-9])`, 'gi'),
+        nameOnly: EVERYDAY_WORD_NAMES.has(lower),
+        // Written as an acronym ('EHR', 'SQL', 'CNA'): count it only in capitals, not as a word.
+        capsOnly: /^[A-Z]{2,4}$/.test(s),
+      });
+    }
+    if (mentionCache.size > 500) {mentionCache.clear();}
+    mentionCache.set(key, terms);
+  }
+  const found: string[] = [];
+  for (const { skill, re, nameOnly, capsOnly } of terms) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text))) {
+      if (nameOnly && m[0] === m[0].toLowerCase()) {continue;}
+      if (capsOnly && m[0] !== m[0].toUpperCase()) {continue;}
+      found.push(skill);
+      break;
+    }
+  }
+  return found;
+}
+
+/** Lowercase canonical names the prose extractor can produce (for re-reading stored skills). */
+export function extractorVocabulary(): Set<string> {
+  const names = new Set<string>();
+  for (const t of KNOWN_SKILL_TERMS) {names.add((SKILL_ALIASES[t.toLowerCase()] ?? canonicalize(t)).toLowerCase());}
+  for (const canonical of Object.values(SKILL_ALIASES)) {names.add(canonical.toLowerCase());}
+  return names;
 }

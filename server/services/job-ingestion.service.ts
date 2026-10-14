@@ -10,7 +10,7 @@ import { jobPostings, users } from '@shared/schema';
 import { eq } from 'drizzle-orm';
 import { gt } from 'drizzle-orm/sql/expressions';
 import { sql } from 'drizzle-orm/sql';
-import { normalizeSkills, SKILL_ALIASES } from '../skill-normalizer';
+import { normalizeSkills } from '../skill-normalizer';
 import { classifyWorkType } from '../lib/work-type';
 import { checkDbCapacity } from '../lib/db-capacity.js';
 import {
@@ -18,21 +18,8 @@ import {
   type BoardSnapshot, type ActiveJobRow, type BoardExpiryReport,
 } from '../lib/snapshot-expiry';
 import { isJobPostUrl } from '../lib/job-post-url';
-
-/** Extract canonical skills from free-form text using the full alias taxonomy. */
-function extractSkillsFromText(text: string): string[] {
-  if (!text) {return [];}
-  const words = text.split(/[\s,;|•·()[\]{}<>]+/).filter(w => w.length > 0);
-  const found = new Set<string>();
-  for (let i = 0; i < words.length; i++) {
-    for (let n = 1; n <= 4 && i + n <= words.length; n++) {
-      const phrase = words.slice(i, i + n).join(' ').toLowerCase();
-      const canonical = SKILL_ALIASES[phrase];
-      if (canonical) {found.add(canonical);}
-    }
-  }
-  return Array.from(found).slice(0, 20);
-}
+// One prose-safe extractor for every path that reads postings (utils/skill-extractor.ts).
+import { extractSkillsFromText } from '../utils/skill-extractor';
 
 // System user UUID for external jobs (well-known constant)
 const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000000';

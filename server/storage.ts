@@ -2134,6 +2134,52 @@ export class DatabaseStorage implements IStorage {
         };
       });
 
+      // ── Re-score the best candidates with their full text ─────
+      // The first pass skips descriptions (the heaviest column; the feed reads a few thousand
+      // jobs), so only the jobs' tagged skills count there. For the jobs that can reach the feed,
+      // load the text and score again: the candidate's own skills that the posting mentions now
+      // count (job-scorer.ts skillsMentioned), whatever the occupation. One query, ≤ RERANK_JOBS rows.
+      console.time('rerank-with-text');
+      const RERANK_JOBS = 300;
+      const rerankIds = recommendations
+        .filter(j => j.matchScore >= MIN_MATCH_SCORE - 15)
+        .sort((a, b) => b.matchScore - a.matchScore)
+        .slice(0, RERANK_JOBS)
+        .filter(j => !j.description)
+        .map(j => j.id);
+      if (rerankIds.length > 0) {
+        try {
+          const textRows: any[] = await db
+            .select({ id: jobPostings.id, description: jobPostings.description })
+            .from(jobPostings)
+            .where(inArray(jobPostings.id, rerankIds));
+          const texts = new Map<number, string>(textRows.map(r => [r.id, r.description || '']));
+          for (let i = 0; i < recommendations.length; i++) {
+            const job = recommendations[i];
+            const text = texts.get(job.id);
+            if (!text) {continue;}
+            const score = scoreJob(candidateSkills, candidate.experienceLevel, { ...job, description: text }, candidateEmbedding, candidateTitles, {
+              location: candidate.location,
+              workType: candidate.workType,
+            }, vectorDistMap.get(job.id));
+            recommendations[i] = {
+              ...job,
+              matchScore: score.matchScore,
+              matchTier: score.matchTier,
+              skillMatches: score.skillMatches,
+              partialSkillMatches: score.partialSkillMatches,
+              aiExplanation: score.aiExplanation,
+              scoreComponents: score.components,
+              confidenceLevel: score.confidenceLevel,
+            };
+          }
+        } catch (err) {
+          // Keep the first-pass scores: a slow text load must not empty the feed.
+          console.warn('[feed] re-score with text skipped:', (err as Error).message);
+        }
+      }
+      console.timeEnd('rerank-with-text');
+
       // ── Preference boost: soft signals, not hard filters ──────
       // Jobs matching preferences get a bonus; non-matching jobs are
       // demoted in rank but never eliminated. This ensures a user
