@@ -124,7 +124,7 @@ describe('did you hear back', () => {
       app(8, {}, { status: 'interview_scheduled', appliedAt: daysAgo(20), lastStatusUpdate: daysAgo(20) }),
       app(9, {}, { appliedAt: daysAgo(20), lastStatusUpdate: daysAgo(2) }),                 // answered "not yet" 2 days ago
     ]);
-    await screen.findByText('Role 7');
+    await screen.findAllByText('Role 7');  // also in the job-search log when it's open and the date is this week
     expect(screen.queryByTestId('hear-back')).toBeNull();
   });
 });

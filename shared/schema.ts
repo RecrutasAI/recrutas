@@ -10,6 +10,7 @@ import {
   boolean,
   numeric,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm/sql";
 import { customType } from "drizzle-orm/pg-core/columns/custom";
 import { unique } from "drizzle-orm/pg-core/unique-constraint";
 import { uuid } from "drizzle-orm/pg-core/columns/uuid";
@@ -174,6 +175,8 @@ export const jobPostings = pgTable("job_postings", {
   jobExternalUnique: unique("job_external_unique").on(table.externalId, table.source),
   // Indices for common queries
   idxJobLiveness: index("idx_job_liveness").on(table.livenessStatus, table.expiresAt),
+  // Active jobs still without location keys: compute-location-keys finds them hourly (migrations/add-location-keys-missing-index.sql).
+  idxJobLocationKeysMissing: index("idx_job_postings_location_keys_missing").on(table.id).where(sql`status = 'active' AND location_keys IS NULL`),
   idxJobTrustScore: index("idx_job_trust_score").on(table.trustScore),
   idxJobTalentOwner: index("idx_job_talent_owner").on(table.talentOwnerId),
   idxJobGhostScore: index("idx_job_ghost_score").on(table.ghostJobScore),
