@@ -19,7 +19,7 @@
 
 import { parseSkillsInput, getRelatedSkills } from './skill-normalizer';
 import { pickedKey } from '../shared/places';
-import { extractSkillsFromText } from './utils/skill-extractor';
+import { extractSkillsFromText, skillsMentioned } from './utils/skill-extractor';
 import { cosineSimilarity } from './ml-matching';
 
 // ── Learned weights (loaded from DB, refreshed every 10min) ──────────
@@ -401,7 +401,6 @@ export function scoreJob(
 
   const normalizedCand = candidateSkills.map(s => s.toLowerCase());
   const normalizedJob = parseSkillsInput(jobSkills).map(s => s.toLowerCase());
-  const jobSkillsCount = Math.max(normalizedJob.length, 3);
 
   const exactMatches: string[] = [];
   const exactMatchSet = new Set<string>();
@@ -410,6 +409,21 @@ export function scoreJob(
       exactMatchSet.add(normalizedCand[i]);
       exactMatches.push(candidateSkills[i]);
     }
+  }
+
+  // The candidate's own skills that the posting's text mentions (utils/skill-extractor.ts), so
+  // skills outside our vocabulary count too: a nurse's 'Telemetry', a teacher's 'IEP'. Only when
+  // the text is at hand (the feed loads it for the jobs it re-scores, fetchScoredJobs).
+  const mentioned = job.description || job.title
+    ? skillsMentioned(`${job.title ?? ''}\n${job.description ?? ''}`, candidateSkills)
+    : [];
+  let mentionedOnly = 0;
+  for (const skill of mentioned) {
+    const key = skill.toLowerCase();
+    if (exactMatchSet.has(key)) {continue;}
+    exactMatchSet.add(key);
+    exactMatches.push(skill);
+    if (!normalizedJob.includes(key)) {mentionedOnly++;}
   }
 
   const partialMatches: string[] = [];
@@ -424,6 +438,9 @@ export function scoreJob(
     }
   }
 
+  // Out of everything the job asks for that we can see: its tagged skills plus the candidate's
+  // skills its text mentions (at least 3, so one listed skill isn't 100%).
+  const jobSkillsCount = Math.max(normalizedJob.length + mentionedOnly, 3);
   const effectiveMatches = exactMatches.length + 0.5 * partialMatches.length;
   const keywordScore = Math.min(100, Math.round((effectiveMatches / jobSkillsCount) * 100));
   const hasSkillOverlap = effectiveMatches > 0;
