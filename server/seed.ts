@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-dotenv.config({ path: '/home/abaskabato/recrutas/.env' });
+dotenv.config();
 
 import { db } from "./db";
 import { users, candidateProfiles, jobPostings, jobMatches, activityLogs, jobApplications } from "../shared/schema.js";

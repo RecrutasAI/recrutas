@@ -35,15 +35,39 @@ Recrutas is a free job search for people looking for work in the US. Today (phas
 
 ---
 
+## Where the project stands (October 2026)
+
+**In one line:** the candidate side is finished and in daily use; the public launch is planned for late October 2026; the employer side comes after.
+
+**Live today**
+- **Over 1.1 million US jobs from 17,800+ companies**, every one read from the company's own hiring system, with a link to the real posting. Jobs disappear from Recrutas when the company takes them down.
+- **Resume matching for any line of work**, not just tech: nurses, teachers, trades, sales and office roles get matches ranked by their titles, skills and experience, with a plain-English reason for each.
+- **Apply / Stretch / Skip** on every match, so you know before you apply whether a job requires a clearance, citizenship or more years than you have.
+- **The Auto-Fill extension** for Chrome and Firefox. It fills only what it knows from your profile, marks what it couldn't, and never submits for you.
+- **After you apply**, Recrutas tells you when a job you applied to is taken down or reposted.
+- **An MCP connector**, tested with Claude Code, for asking an AI assistant about your matches.
+
+**Built but not switched on**
+- **The employer side** (job posts, skills exams, direct chat with candidates). This is phase 2.
+- **A backup sign-in server** that takes over if Supabase sign-in goes down. It's installed but not yet armed.
+
+**Known limits, stated plainly**
+- **US jobs only**, for now.
+- **Resumes are read by free AI services in turn.** On a very busy day some resumes are read by a simpler rules-based parser and upgraded later.
+- **Email runs on a free plan** (about 85 email sign-ups a day; Google sign-up has no limit).
+- **Skills for some occupations are still being improved.** Matching always looks at the role and experience as well.
+
+---
+
 ## How it runs
 
 | Piece | Where | Notes |
 |---|---|---|
 | Web app (React 18 + Vite) and API (Express) | Vercel | Auto-deploys from `main`. The API is serverless (`api/index.js`). |
 | Database: PostgreSQL 17 + pgvector | Self-hosted on a Hetzner VPS, behind pgBouncer | Holds jobs, profiles, matches, the feed cache and every switch. |
-| Sign-in and resume files | Supabase (Auth + Storage) | Nothing else. The API checks sign-in tokens itself (`server/middleware/auth.ts`). If Supabase Storage is down, resumes are kept in Postgres and moved back later (`server/lib/resume-files.ts`). |
-| Job supply | "The Fleet" and the matcher (separate repos) on GitHub Actions + Hugging Face | Reads ~15K company boards; only jobs that match a real person are loaded into our database (`scripts/fleet-matcher.ts`). |
-| Scheduled jobs | VPS cron (`infra/vps/crontab`) | ATS scrapes, liveness checks, place keys, embeddings, parse retries, backups. |
+| Sign-in and resume files | Supabase (Auth + Storage) | Nothing else. The API checks sign-in tokens itself (`server/middleware/auth.ts`). If Supabase Storage is down, resumes are kept in Postgres and moved back later (`server/lib/resume-files.ts`). A backup sign-in server is installed on the VPS (`infra/vps/auth/`) but not yet armed. |
+| Job supply | "The Fleet" and the matcher (separate repos) on GitHub Actions + Hugging Face | Reads company hiring systems daily (over 1.1M US jobs from 17,800+ companies, Oct 2026); only jobs that match a real person are loaded into our database (`scripts/fleet-matcher.ts`). Skills are read from posting text by one shared extractor (`server/utils/skill-extractor.ts`). |
+| Scheduled jobs | VPS cron (`infra/vps/crontab`) | ATS scrapes, liveness checks, place keys, embeddings, parse retries, backups. A failed job emails the owner and the dev inbox; a job that stops running is caught by a stale-job check every 30 minutes. |
 | Protection under load | Autopilot (`scripts/autopilot.ts`, every minute) + the feed gate | Stretches the cache, pauses background jobs, shows a banner, caps concurrent feed scoring; flips back on recovery. |
 | Resume AI | Free providers in rotation (Groq → Gemini → OpenRouter → Cloudflare), then a rules parser | `server/lib/ai-client.ts`. |
 | Backups | pgBackRest to Cloudflare R2 (encrypted) + nightly dumps, with weekly restore tests | `infra/vps/README.md`. |

@@ -87,7 +87,7 @@ describe('decideAutopilot', () => {
     const d0 = decideAutopilot(calm, on, { signupWaitlist: 'autopilot' }, { healthySince: {} }, t0);
     expect(keys(d0).signupWaitlist).toBeUndefined();
     expect(keys(decideAutopilot(calm, on, { signupWaitlist: 'autopilot' }, d0.state, at(15))).signupWaitlist).toBe(false);
-    expect(keys(decideAutopilot(calm, on, { signupWaitlist: 'abas@recrutas.ai' }, d0.state, at(15))).signupWaitlist).toBeUndefined();
+    expect(keys(decideAutopilot(calm, on, { signupWaitlist: 'admin@example.com' }, d0.state, at(15))).signupWaitlist).toBeUndefined();
   });
 
   it('posts the sign-in banner after Supabase is down 2 min, and takes it down after 5 min up', () => {
@@ -105,7 +105,7 @@ describe('decideAutopilot', () => {
 
   it('keeps an admin banner, and each rule only clears its own banner', () => {
     const admin = { text: 'Maintenance tonight', level: 'info' as const };
-    const d = decideAutopilot({ ...calm, supabaseUp: false }, S({ noticeBanner: admin }), { noticeBanner: 'abas@recrutas.ai' }, { healthySince: {}, supabaseDownSince: t0.toISOString() }, at(5));
+    const d = decideAutopilot({ ...calm, supabaseUp: false }, S({ noticeBanner: admin }), { noticeBanner: 'admin@example.com' }, { healthySince: {}, supabaseDownSince: t0.toISOString() }, at(5));
     expect(keys(d).noticeBanner).toBeUndefined();
     // Connections recovering must not take down the Supabase banner.
     const s = decideAutopilot({ ...calm, supabaseUp: false }, S({ noticeBanner: SUPABASE_NOTICE }), { noticeBanner: 'autopilot' },
@@ -123,7 +123,7 @@ describe('decideAutopilot', () => {
     // Replaces its own Supabase banner, never an admin's.
     expect(keys(decideAutopilot(down, S({ noticeBanner: SUPABASE_NOTICE }), { noticeBanner: 'autopilot' }, since, at(5))).noticeBanner).toEqual(FAILOVER_NOTICE);
     const admin = { text: 'Maintenance tonight', level: 'info' as const };
-    expect(keys(decideAutopilot(down, S({ noticeBanner: admin }), { noticeBanner: 'abas@recrutas.ai' }, since, at(5)))).toEqual({ authProvider: 'recrutas' });
+    expect(keys(decideAutopilot(down, S({ noticeBanner: admin }), { noticeBanner: 'admin@example.com' }, since, at(5)))).toEqual({ authProvider: 'recrutas' });
   });
 
   it('never switches sign-in back by itself, but emails when Supabase is back', () => {
@@ -136,7 +136,7 @@ describe('decideAutopilot', () => {
   });
 
   it('respects a pinned or admin-chosen sign-in server (setSetting refuses pinned; decide never reverts)', () => {
-    const d = decideAutopilot({ ...calm, supabaseUp: false, backupAuthReady: true }, S({ authProvider: 'recrutas' }), { authProvider: 'abas@recrutas.ai' },
+    const d = decideAutopilot({ ...calm, supabaseUp: false, backupAuthReady: true }, S({ authProvider: 'recrutas' }), { authProvider: 'admin@example.com' },
       { healthySince: {}, supabaseDownSince: t0.toISOString() }, at(10));
     expect(keys(d).authProvider).toBeUndefined();
     expect(d.alerts.map(a => a.key)).not.toContain('autopilot-supabase-down');

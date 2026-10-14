@@ -6,7 +6,7 @@ You are implementing fixes for a recruiting platform built with:
 - **Backend**: Node.js/Express, TypeScript
 - **Frontend**: React, TypeScript
 - **Database**: PostgreSQL via Drizzle ORM
-- **Current Working Directory**: `/home/abaskabato/recrutas`
+- **Current Working Directory**: the repository root
 
 ## Your Task
 

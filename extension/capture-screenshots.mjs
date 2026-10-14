@@ -2,8 +2,8 @@ import { chromium } from 'playwright';
 import { readFileSync } from 'node:fs';
 
 const EXEC = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1169/chrome-linux/headless_shell';
-const EXT = '/home/akabas7/recrutas/extension/dist/chrome';
-const OUT = '/home/akabas7/recrutas/extension/screenshots';
+const EXT = new URL('./dist/chrome', import.meta.url).pathname;
+const OUT = new URL('./screenshots', import.meta.url).pathname;
 const JOB = 'https://job-boards.greenhouse.io/adyen/jobs/8002490';
 const contentCss = readFileSync(EXT + '/content.css', 'utf8');
 
