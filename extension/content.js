@@ -149,6 +149,52 @@
     return '';
   }
 
+  // The question a control answers when the page doesn't tie it to a <label> or <legend>:
+  // Lever writes "Legal First Name ✱" or "Will you require sponsorship? ✱" in a <div>
+  // beside the input, so the fill sent the AI "Type your response" (the placeholder) and,
+  // for Yes/No radios, the first option's text "Yes" as the question (2026-10-15, Hermeus).
+  // Climb from the control(s) to the first ancestor holding text that isn't inside any form
+  // control's own subtree (option labels, neighbouring questions); that text is the question.
+  const CONTROL = 'input:not([type="hidden"]), select, textarea, button, [role="listbox"], [role="combobox"]';
+  function textOutsideControls(node) {
+    let out = '';
+    for (const c of node.childNodes) {
+      if (c.nodeType === 3) { out += ' ' + c.textContent; continue; }
+      if (c.nodeType !== 1) continue;
+      if (/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(c.tagName)) continue;
+      if (c.matches(CONTROL) || c.querySelector(CONTROL)) continue;
+      if (c.closest('#recrutas-fill-btn, #recrutas-banner, .recrutas-banner')) continue;
+      if (c.hidden || c.getAttribute('aria-hidden') === 'true') continue;
+      // Hidden validation messages ("A resume is required", Breezy) are not the question.
+      const cs = getComputedStyle(c);
+      if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+      out += ' ' + (c.innerText ?? c.textContent);
+    }
+    return out.replace(/\s+/g, ' ').trim();
+  }
+  const GENERIC_PLACEHOLDER = /^(type|enter|write|add|select|choose|start typing|search|your answer|answer|response|e\.g\.|eg\b|\.\.\.|…)/i;
+  function questionNear(controls) {
+    let node = controls[0].parentElement;
+    while (node && !controls.every(c => node.contains(c))) node = node.parentElement;
+    for (let depth = 0; node && node.tagName !== 'FORM' && node !== document.body && depth < 5; depth++, node = node.parentElement) {
+      const text = textOutsideControls(node);
+      // A paragraph (instructions, a job description) is not the question.
+      if (text.length > 250) return { text: '', node: null };
+      if (text.length >= 2) return { text, node };
+    }
+    return { text: '', node: null };
+  }
+  // Required, as the page shows it: the attribute, aria-required on the control or its group,
+  // or the visible marks forms use instead (Lever's "✱" and .required-field, a trailing "*").
+  function isRequired(controls, label, near) {
+    if (controls.some(c => c.required || c.getAttribute('aria-required') === 'true')) return true;
+    if (controls[0].closest('[role="radiogroup"][aria-required="true"], [role="group"][aria-required="true"]')) return true;
+    if (/✱|\*\s*$|\(required\)\s*$/i.test(label || '')) return true;
+    const scope = near || controls[0].parentElement;
+    return !!(scope && (scope.matches('.required-field, .required, .is-required, [data-required="true"]')
+      || scope.querySelector(':scope > .required-field, :scope .application-field.required-field, :scope > * > .required')));
+  }
+
   function getLabelText(el) {
     if (el.id) {
       const scope = el.getRootNode ? el.getRootNode() : document;
@@ -232,12 +278,18 @@
       seen.add(fieldId);
       if (!el.id && !el.name) el.setAttribute('data-recrutas-id', fieldId);
 
+      const near = questionNear([el]);
+      // A specific placeholder ("Full Name", Breezy) is a better label than text found nearby;
+      // a generic one ("Type your response", Lever) is not a label at all.
+      const placeholder = (el.getAttribute('placeholder') || '').trim();
+      const specific = placeholder && !GENERIC_PLACEHOLDER.test(placeholder) ? placeholder : '';
+      const label = getLabelText(el) || el.getAttribute('aria-label') || questionLabel(el) || specific || near.text || placeholder || '';
       const field = {
         id: fieldId,
         type: type,
-        label: getLabelText(el) || el.getAttribute('aria-label') || questionLabel(el) || el.getAttribute('placeholder') || '',
+        label,
         name: el.getAttribute('name') || '',
-        required: el.required || el.getAttribute('aria-required') === 'true',
+        required: isRequired([el], label, near.node),
       };
 
       if (el.tagName === 'SELECT') {
@@ -291,6 +343,7 @@
       // not any single option's label.
       const first = group.radios[0];
       const fieldset = first.closest('fieldset');
+      const near = questionNear(group.radios);
       const groupLabel =
         (fieldset?.querySelector(':scope > legend')?.textContent?.trim()) ||
         first.getAttribute('aria-label') ||
@@ -298,13 +351,14 @@
           ? byId(first.getAttribute('aria-labelledby'), first)?.textContent?.trim() || ''
           : '') ||
         questionLabel(first, group.radios) ||
-        getLabelText(first);
+        near.text ||
+        getLabelText(first);  // last resort: an option's own text is not the question
       fields.push({
         id: key,
         type: 'radio',
         label: groupLabel || '',
         name: group.name,
-        required: group.radios.some(r => r.required || r.getAttribute('aria-required') === 'true'),
+        required: isRequired(group.radios, groupLabel, near.node),
         options: options.length > 0 ? options : undefined,
       });
     }
@@ -316,16 +370,17 @@
       const boxes = groupBoxes(name);
       const first = boxes[0];
       const fieldset = first.closest('fieldset');
+      const near = questionNear(boxes);
       const label =
         (fieldset?.querySelector(':scope > legend')?.textContent?.trim()) ||
         first.getAttribute('aria-label') ||
-        questionLabel(first, boxes) || '';
+        questionLabel(first, boxes) || near.text || '';
       fields.push({
         id: name,
         type: 'checkbox',
         label,
         name,
-        required: boxes.some(b => b.required || b.getAttribute('aria-required') === 'true'),
+        required: isRequired(boxes, label, near.node),
         options: boxes.map(b => (getLabelText(b) || b.value || '').trim()).filter(Boolean),
         multiple: true,
       });
@@ -379,9 +434,9 @@
       fields.push({
         id: fieldId,
         type: 'custom_select',
-        label: getLabelText(el) || el.getAttribute('aria-label') || questionLabel(el) || '',
+        label: getLabelText(el) || el.getAttribute('aria-label') || questionLabel(el) || questionNear([el]).text || '',
         name: '',
-        required: el.getAttribute('aria-required') === 'true',
+        required: isRequired([el], getLabelText(el) || questionNear([el]).text, questionNear([el]).node),
         options: options.length > 0 ? options : undefined,
       });
     }
@@ -527,6 +582,32 @@
       !o.closest('[class*="iti__"], .iti, [class*="intl-tel"]') &&
       (o.offsetParent !== null || o.getClientRects().length > 0)
     );
+  }
+
+  // Greenhouse's react-select dropdowns render their options only while open, so the fill sent
+  // them with no options and the AI typed answers the menu didn't have ("Job board", "Master's
+  // degree" into a Yes/No; Centria, 2026-10-15). Open each one briefly and read its options.
+  // Opening selects nothing; Escape closes it. Bounded so a long form can't stall the fill.
+  async function readDropdownOptions(fields) {
+    const started = Date.now();
+    for (const f of fields) {
+      if (f.type !== 'custom_select' || f.options?.length) continue;
+      if (Date.now() - started > 6000) break;
+      const el = findElement(f.id);
+      if (!el || !el.closest('.select__control, [class*="-control"]')) continue;
+      try {
+        pointerPress(dropdownContainer(el));
+        let opts = [];
+        for (let i = 0; i < 6 && !opts.length; i++) {
+          await new Promise(r => setTimeout(r, 80));
+          opts = visibleOptionNodes().map(o => o.textContent.trim()).filter(t => t && !/^no options$/i.test(t));
+        }
+        if (opts.length) f.options = [...new Set(opts)].slice(0, 80);
+      } catch { /* leave it without options */ }
+      sendKey(el, 'Escape', 27);
+      el.blur();
+      await new Promise(r => setTimeout(r, 40));
+    }
   }
 
   // Full pointer+mouse press. react-select v5 opens/commits on POINTER events, not
@@ -1016,6 +1097,32 @@
 
   // Facts we never guess (work authorization, sponsorship, salary…): list them,
   // outline the fields, and offer to save the answers once in Recrutas.
+  // Nothing required is left empty without saying so: after the fill, any required question that
+  // is still unanswered and not already listed joins "needs you" (an answer that didn't apply, or
+  // one the server had nothing for). The benchmark found required fields left silently empty.
+  function fieldAnswered(f) {
+    if (f.type === 'radio' || f.type === 'checkbox') {
+      const name = f.name || f.id;
+      const group = document.querySelectorAll(`input[name="${CSS.escape(name)}"]`);
+      if (group.length) return Array.from(group).some(i => i.checked);
+    }
+    const el = findElement(f.id);
+    if (!el) return true;  // can't see it: don't claim it's empty
+    if (el.type === 'file') return !!el.files?.length;
+    if (f.type === 'custom_select') return committedValue(dropdownContainer(el), el) || !!(el.value || '').trim();
+    if (el.type === 'checkbox' || el.type === 'radio') return el.checked;
+    return !!(el.value || '').trim();
+  }
+  function addUnansweredRequired(fields, needsYou) {
+    const listed = new Set(needsYou.map(n => n.fieldId));
+    for (const f of fields) {
+      if (!f.required || listed.has(f.id) || f.type === 'hidden') continue;
+      if (fieldAnswered(f)) continue;
+      needsYou.push({ fieldId: f.id, label: (f.label || f.name || f.id).trim().slice(0, 140), fact: 'other' });
+      listed.add(f.id);
+    }
+  }
+
   function showNeedsYou(needsYou, answersUrl) {
     document.getElementById('recrutas-needs')?.remove();
     document.querySelectorAll('.recrutas-needs-field').forEach(e => e.classList.remove('recrutas-needs-field'));
@@ -1181,10 +1288,21 @@
 
     try {
       const fields = scrapeFields();
+      // Test hook: the real-browser bench sets data-recrutas-debug on <html> to read exactly
+      // what the fill sends (question text, required, options). Never set by real pages.
+      if (document.documentElement.getAttribute('data-recrutas-debug') === '1') {
+        document.documentElement.setAttribute('data-recrutas-fields', JSON.stringify(fields.map(f => ({ id: f.id, type: f.type, label: f.label, required: f.required, options: f.options }))));
+      }
 
       if (fields.length === 0) {
         showBanner('No form fields found on this page', 'warning');
         return;
+      }
+
+      if (btn) btn.textContent = 'Reading the form…';
+      await readDropdownOptions(fields);
+      if (document.documentElement.getAttribute('data-recrutas-debug') === '1') {
+        document.documentElement.setAttribute('data-recrutas-fields', JSON.stringify(fields.map(f => ({ id: f.id, type: f.type, label: f.label, required: f.required, options: f.options }))));
       }
 
       const jobContext = extractJobContext();
@@ -1236,6 +1354,7 @@
       }
 
       if (!actions || actions.length === 0) {
+        addUnansweredRequired(fields, needsYou);
         showNeedsYou(needsYou, answersUrl);
         showBanner('AI could not determine how to fill this form', 'warning');
         return;
@@ -1243,9 +1362,33 @@
 
       if (btn) btn.textContent = `Filling ${actions.length} fields…`;
 
-      const { filled, failed } = await executeActions(actions, resumeUrl);
+      let { filled, failed } = await executeActions(actions, resumeUrl);
+
+      // Answers can reveal more questions: Lever's disability answer shows a signature Name and
+      // Date, and "If yes, explain" boxes appear on a Yes. They weren't on the page when it was
+      // read, so read it once more and fill what's new (2026-10-15, Hermeus).
+      await new Promise(r => setTimeout(r, 400));
+      const firstIds = new Set(fields.map(f => f.id));
+      const revealed = scrapeFields().filter(f => !firstIds.has(f.id));
+      if (revealed.length) {
+        await readDropdownOptions(revealed);
+        const more = await withTimeout(
+          sendMessage({ type: 'FILL_FORM_AI', fields: revealed.slice(0, BATCH), jobContext: jobContext.text }),
+          65000, 'Form fill timed out — please try again.'
+        ).catch(() => null);
+        if (more?.success) {
+          const second = await executeActions(more.actions || [], resumeUrl || more.resumeUrl);
+          filled += second.filled;
+          failed = failed.concat(second.failed);
+          actions.push(...(more.actions || []));
+          needsYou.push(...(more.needsYou || []));
+        }
+        fields.push(...revealed);
+      }
+
       if (filled > 0) markApplyContextFilled();
       tagSources(actions, failed);
+      addUnansweredRequired(fields, needsYou);
       showNeedsYou(needsYou, answersUrl);
 
       // Report stats + telemetry to background
