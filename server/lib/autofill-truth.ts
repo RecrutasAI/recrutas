@@ -145,7 +145,7 @@ const OPT_IN = /\bsms\b|text messag|receive (updates|communications|messages|tex
 const ABOUT_THE_JOB = /position (you are |you're )?applying (for|to)|role (you are |you're )?applying for|job (title )?(you are |you're )?applying for|requisition|job (id|number|code)/i;
 
 const PROFILE_FIELD = /first[\s_-]?name|last[\s_-]?name|full[\s_-]?name|^name\b|e-?mail|phone|mobile|linkedin|github|portfolio|website|\bcity\b|location|country|\bstate\b|address|zip|postal|latitude|longitude/i;
-const DEFAULT_FIELD = /gender|race|ethnic|hispanic|latino|veteran|disability|pronoun|confirm|acknowledge|certify|consent|i agree|privacy|terms/i;
+const DEFAULT_FIELD = /gender|race|ethnic|hispanic|latino|veteran|disability|pronoun|confirm|acknowledge|certify|consent|i agree|privacy|terms|^\s*date\s*$|signature date|date signed|today'?s date/i;
 /** "If yes, please explain…": it depends on the candidate's answer to the question before it. */
 const FOLLOW_UP = /^\s*(\(?if (yes|no|so|applicable|not|you (answered|selected|checked|were|have|are|do|did))\b|please (explain|specify|describe|provide)[^?]{0,40}\bif (yes|so|applicable)\b)/i;
 const HOW_HEARD = /how did you (hear|find|learn)|how'?d you (hear|find)|where did you (hear|find|see|learn)|how did this (job|role|position) come|^(application )?source$/i;

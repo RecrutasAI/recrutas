@@ -29,6 +29,12 @@ describe('profileKeyFor (real labels)', () => {
     expect(key('Current company')).toBe('currentCompany');
     expect(key('Street address')).toBeNull();
   });
+  it('a signature date is today (Lever disability form)', () => {
+    expect(key('Date')).toBe('todayDate');
+    expect(key('Signature date')).toBe('todayDate');
+    expect(key('Start date')).toBeNull();
+    expect(key('Date of birth')).toBeNull();
+  });
   it('only keys the profile has a value for', () => {
     expect(profileKeyFor({ label: 'GitHub' }, k => k !== 'github')).toBeNull();
   });
