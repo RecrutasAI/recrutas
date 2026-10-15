@@ -214,3 +214,8 @@ RUN=/opt/recrutas/app/infra/vps/run-cron.sh
 # Autopilot: flips the console's protective switches under load and back when
 # recovered (docs/scaling-strategy.md). Never changes infrastructure.
 * * * * * $RUN autopilot 2 npx tsx scripts/autopilot.ts
+
+# Backup sign-in server (infra/vps/auth): copy Supabase's accounts every 10 minutes, so the
+# copy is never older than the 30 minutes Autopilot requires before it fails over to it.
+# Refuses (and alerts) while sign-in is running on the backup, so nothing made there is lost.
+*/10 * * * * $RUN sync-auth-users 5 bash infra/vps/auth/sync-auth-users.sh
