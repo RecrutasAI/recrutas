@@ -15,6 +15,7 @@ import 'dotenv/config';
 import { sql } from 'drizzle-orm/sql';
 import { db, client } from '../server/db.js';
 import { runAsPipeline, type PipelineSummary } from '../server/services/pipeline-run.service.js';
+import { writeInChunks } from '../server/lib/chunked-write.js';
 
 const dryRun = process.argv.includes('--dry-run');
 const LIMIT = Number((process.argv.find(a => a.startsWith('--limit=')) ?? '--limit=3000').split('=')[1]);
@@ -51,8 +52,15 @@ async function main(): Promise<PipelineSummary> {
     }));
   }
   if (!dryRun) {
-    if (live.length) {await db.execute(sql`UPDATE job_postings SET liveness_status = 'active', last_liveness_check = NOW() WHERE id IN ${live}`);}
-    if (gone.length) {await db.execute(sql`UPDATE job_postings SET status = 'closed', liveness_status = 'removed', updated_at = NOW() WHERE id IN ${gone} AND status = 'active'`);}
+    // Time-sized chunks (server/lib/chunked-write.ts): 2,813 ids in one UPDATE timed out on 2026-10-14.
+    await writeInChunks(live, async ids => {
+      await db.execute(sql`UPDATE job_postings SET liveness_status = 'active', last_liveness_check = NOW() WHERE id IN ${ids}`);
+      return ids.length;
+    });
+    await writeInChunks(gone, async ids => {
+      await db.execute(sql`UPDATE job_postings SET status = 'closed', liveness_status = 'removed', updated_at = NOW() WHERE id IN ${ids} AND status = 'active'`);
+      return ids.length;
+    });
   }
   const msg = `${jobs.length} checked: ${live.length} live, ${gone.length} closed by the employer, ${unknown} unknown${dryRun ? ' (dry run)' : ''}`;
   console.log(`[SRLiveness] ${msg}`);

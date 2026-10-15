@@ -12,6 +12,7 @@ import { sql } from 'drizzle-orm/sql';
 import { db, client } from '../server/db.js';
 import { runAsPipeline, type PipelineSummary } from '../server/services/pipeline-run.service.js';
 import { keysForLocation } from '../server/lib/place-index.js';
+import { writeInChunks } from '../server/lib/chunked-write.js';
 
 const BATCH = 2000;
 const MAX_MS = 25 * 60 * 1000;
@@ -35,11 +36,14 @@ async function main(): Promise<PipelineSummary> {
       if (keys.some(k => !k.startsWith('state|') && k !== 'remote')) {withPlace++;}
       return sql`(${b.id}::int, ${`{${keys.map(k => `"${k.replace(/"/g, '')}"`).join(',')}}`}::text[])`;
     });
-    const res: any = await db.execute(sql`
-      UPDATE job_postings j SET location_keys = v.keys
-      FROM (VALUES ${sql.join(values, sql`, `)}) AS v(id, keys)
-      WHERE j.id = v.id AND j.location_keys IS DISTINCT FROM v.keys`);
-    written += Number(res?.count ?? res?.rowCount ?? 0);
+    // Written in time-sized chunks: see server/lib/chunked-write.ts for why 2,000 at once timed out.
+    written += await writeInChunks(values, async chunk => {
+      const res: any = await db.execute(sql`
+        UPDATE job_postings j SET location_keys = v.keys
+        FROM (VALUES ${sql.join(chunk, sql`, `)}) AS v(id, keys)
+        WHERE j.id = v.id AND j.location_keys IS DISTINCT FROM v.keys`);
+      return Number(res?.count ?? res?.rowCount ?? 0);
+    });
     read += batch.length;
     if (read % 20000 < BATCH) {console.log(`[LocationKeys] ${read} read, ${written} written`);}
   }

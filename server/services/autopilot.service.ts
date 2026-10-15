@@ -31,8 +31,15 @@ export interface AutopilotInput {
   diskPct: number;
   /** Live jobs with no embedding yet: they can't be matched until it catches up. */
   embeddingBacklog?: number | null;
-  /** Minutes the oldest of them has waited. Batches run every 6 h, so only age means trouble. */
-  embeddingOldestMin?: number | null;
+  /** Minutes since any job was last embedded. Batches run every 6 h: over 14 h means two were missed. */
+  embeddingSinceLastMin?: number | null;
+  /**
+   * Waiting jobs a batch should already have embedded: created and last changed over an hour
+   * before the newest embedding, yet still without one. Not the oldest job's age: a closed job
+   * that its board lists again is reopened with its old created_at, and on 2026-10-14 one such
+   * job made the alert say "20 hours" a minute after it started waiting.
+   */
+  embeddingSkipped?: number | null;
   /** Supabase sign-in and storage both answered; null when not checked. */
   supabaseUp?: boolean | null;
   /** Our backup sign-in server answers publicly and its account copy is under 30 min old. */
@@ -167,10 +174,21 @@ export function decideAutopilot(i: AutopilotInput, settings: Settings, setBy: Se
   if (i.diskPct > 85) {
     alerts.push({ key: 'autopilot-disk', subject: `[recrutas] disk ${i.diskPct}% full`, body: `The VPS disk is ${i.diskPct}% full. Check WAL and backup retention first (the usual cause), then add a volume. Autopilot does not act on disk.` });
   }
-  // Thousands waiting between the 6-hourly batches is normal; an old one means a batch was missed.
-  if ((i.embeddingBacklog ?? 0) > 0 && (i.embeddingOldestMin ?? 0) > EMBED_ALERT_MIN) {
-    const h = ((i.embeddingOldestMin ?? 0) / 60).toFixed(1);
-    alerts.push({ key: 'autopilot-embedding-backlog', subject: `[recrutas] new jobs unmatched for ${h} h (${i.embeddingBacklog} waiting)`, body: `${i.embeddingBacklog} live jobs have no matching data yet and the oldest has waited ${h} hours: at least two 6-hourly batches were missed, so these jobs are not reaching candidates. Admin console → Today → "Match new jobs now" runs a batch; its result shows there.` });
+  // Thousands waiting between the 6-hourly batches is normal. Trouble is batches not running,
+  // or running and leaving jobs behind.
+  const stalled = (i.embeddingSinceLastMin ?? 0) > EMBED_ALERT_MIN;
+  const skipped = i.embeddingSkipped ?? 0;
+  if ((i.embeddingBacklog ?? 0) > 0 && (stalled || skipped > 0)) {
+    const h = ((i.embeddingSinceLastMin ?? 0) / 60).toFixed(1);
+    alerts.push({
+      key: 'autopilot-embedding-backlog',
+      subject: stalled
+        ? `[recrutas] no new jobs matched for ${h} h (${i.embeddingBacklog} waiting)`
+        : `[recrutas] ${skipped} jobs left unmatched by the last batch`,
+      body: stalled
+        ? `${i.embeddingBacklog} live jobs have no matching data, and no job has been embedded for ${h} hours: at least two 6-hourly batches were missed, so new jobs are not reaching candidates. Check /opt/recrutas/logs/batch-embeddings.log. Admin console → Today → "Match new jobs now" runs a batch.`
+        : `${skipped} live jobs were already waiting when the last batch ran, and it didn't embed them (of ${i.embeddingBacklog} waiting in all). Look for errors in /opt/recrutas/logs/batch-embeddings.log; the next batch retries them.`,
+    });
   }
   if (settings.authProvider === 'recrutas' && supabaseUpLong) {
     alerts.push({ key: 'autopilot-supabase-back', subject: '[recrutas] Supabase is back; sign-in is still on our backup', body: 'Supabase has answered for 5 minutes. Sign-in stays on our backup server until you switch it back in the admin console (System → Sign-in server). Before switching back: accounts created or passwords changed on the backup since the switch exist only there.' });

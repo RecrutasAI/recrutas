@@ -19,6 +19,7 @@ import { sql } from 'drizzle-orm/sql';
 import { db, client } from '../server/db.js';
 import { extractSkillsFromText, extractorVocabulary } from '../server/utils/skill-extractor.js';
 import { normalizeSkills } from '../server/skill-normalizer.js';
+import { isStatementTimeout, writeInChunks } from '../server/lib/chunked-write.js';
 
 const apply = process.argv.includes('--apply');
 const fromArg = process.argv.indexOf('--from-id');
@@ -40,7 +41,8 @@ async function writeWithRetry(updates: Array<{ id: number; skills: string[] }>, 
       WHERE j.id = v.id AND j.skills IS DISTINCT FROM v.skills`);
     return Number(res?.count ?? res?.rowCount ?? 0);
   } catch (err) {
-    if (attempt >= RETRIES) {throw err;}
+    // A timeout means the chunk is too big: writeInChunks resizes it, so don't wait and halve here.
+    if (attempt >= RETRIES || isStatementTimeout(err)) {throw err;}
     const wait = 15_000 * (attempt + 1);
     console.warn(`[JobSkills] write failed (${(err as Error).message.slice(0, 80)}); retrying ${updates.length} rows in halves after ${wait / 1000}s`);
     await sleep(wait);
@@ -76,7 +78,9 @@ async function main(): Promise<void> {
       for (const s of next) {if (!old.some(o => o.toLowerCase() === s.toLowerCase())) {added.set(s, (added.get(s) ?? 0) + 1);}}
       updates.push({ id: job.id, skills: next });
     }
-    if (apply && updates.length) {written += await writeWithRetry(updates);}
+    // Time-sized chunks first (server/lib/chunked-write.ts: 1,000 rows at once timed out on
+    // 2026-10-14); writeWithRetry still covers other transient errors per chunk.
+    if (apply && updates.length) {written += await writeInChunks(updates, chunk => writeWithRetry(chunk));}
     if (read % 20000 < BATCH) {console.log(`[JobSkills] ${read} read (up to id ${lastId}), ${changed} would change${apply ? `, ${written} written` : ''}`);}
     await sleep(PAUSE_MS);
   }
