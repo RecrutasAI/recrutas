@@ -275,7 +275,9 @@ const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 // Defaults are open-weights models; override per-deployment. Verify/adjust slugs
 // at https://openrouter.ai/models (append ":free" for the rate-limited free tier).
 const OPENROUTER_TEXT_MODEL = () => process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.3-70b-instruct';
-const OPENROUTER_VISION_MODEL = () => process.env.OPENROUTER_VISION_MODEL || 'meta-llama/llama-4-scout';
+// meta-llama/llama-4-scout lost its last free route (404 "No endpoints found", 2026-10-15);
+// Gemma 4 31B is a free vision model there now. scripts/check-ai-models.ts probes it daily.
+const OPENROUTER_VISION_MODEL = () => process.env.OPENROUTER_VISION_MODEL || 'google/gemma-4-31b-it:free';
 
 // Some open models wrap JSON in ```json fences despite response_format; strip them
 // so callers can JSON.parse the result directly (Gemini/Groq already return clean).

@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { cleanFieldLabel, profileKeyFor } from './lib/fill-patterns';
 import { campaignCode } from './lib/campaign-code';
 import { activeAuthBaseUrl } from "./lib/auth-provider";
 import { isFallbackKey, readFallbackFile, removeResumeFile, resumeFileInfo, resumeFileUrl, verifyResumeFileLink } from "./lib/resume-files";
@@ -1265,21 +1266,31 @@ Analyze the form and return the actions JSON to fill every field you can.`;
       try {
         let aiResponse: string;
 
+        // The screenshot helps, but the DOM field list carries every label and option, so a
+        // failed vision call falls back to text before the pattern matcher. Before 2026-10-15 a
+        // vision failure went straight to the pattern matcher: with Gemini answering 503 "high
+        // demand" and OpenRouter's vision model retired, most fills lost every custom question
+        // although the text providers were answering in ~3 s.
+        let visionResponse: string | null = null;
         if (screenshot && isAIAvailable('image')) {
-          // Vision path: send screenshot + DOM fields to a vision-capable provider
           console.log('[Extension] Using vision-powered fill with screenshot');
-          aiResponse = await Promise.race([
+          visionResponse = await Promise.race([
             callAIWithImage(systemPrompt, userPrompt, screenshot, 'image/jpeg', {
               temperature: 0.2,
               maxOutputTokens: 4000,
             }),
             new Promise<string>((_, reject) =>
-              setTimeout(() => reject(new Error('Vision AI timeout')), 25000)
+              setTimeout(() => reject(new Error('Vision AI timeout')), 20000)
             ),
-          ]);
+          ]).catch(err => {
+            console.warn('[Extension] vision fill failed, using text:', (err as Error).message.slice(0, 160));
+            return null;
+          });
+        }
+        if (visionResponse) {
+          aiResponse = visionResponse;
         } else {
-          // Text-only fallback
-          console.log('[Extension] Using text-only fill (no screenshot)');
+          console.log('[Extension] Using text-only fill');
           aiResponse = await Promise.race([
             callAI(systemPrompt, userPrompt, {
               priority: 'medium',
@@ -1409,31 +1420,11 @@ Analyze the form and return the actions JSON to fill every field you can.`;
     const isUSLocation = (loc: string) =>
       /\b(usa|u\.?s\.?a?|united states|america)\b/i.test(loc) || US_STATE_CODE.test(loc) || US_STATE_NAME.test(loc);
 
-    const PATTERNS: Record<string, RegExp[]> = {
-      firstName: [/first[\s_-]?name/i, /fname/i, /given[\s_-]?name/i],
-      lastName: [/last[\s_-]?name/i, /lname/i, /surname/i, /family[\s_-]?name/i],
-      fullName: [/^full[\s_-]?name$/i, /^name$/i, /^your[\s_-]?name$/i],
-      email: [/e[\s_-]?mail/i],
-      phone: [/phone/i, /telephone/i, /mobile/i, /cell/i],
-      linkedin: [/linkedin/i],
-      github: [/github/i],
-      portfolio: [/portfolio/i, /personal[\s_-]?site/i, /^website$/i],
-      // City-level only: a street "Address" field must not get "Seattle, WA".
-      location: [/^location\b/i, /^city\b/i, /^current (?:location|city)\b/i, /^where are you (?:located|based)/i],
-      currentTitle: [/current[\s_-]?title/i, /job[\s_-]?title/i, /^title$/i],
-      currentCompany: [/current[\s_-]?(company|employer)/i, /^company$/i],
-      school: [/school/i, /university/i, /institution/i, /college/i],
-      degree: [/degree/i, /education/i],
-    };
-
     const actions: Array<{ fieldId: string; action: string; value?: string }> = [];
 
     for (const field of fields) {
       const searchText = `${field.label || ''} ${field.name || ''} ${field.id || ''}`.toLowerCase();
-      // The label alone, minus the required-marker and punctuation, so anchored
-      // patterns match real labels: "Location (City)*" and "Name*" never matched
-      // ^location$ / ^name$ against the label+name+id blob.
-      const labelText = (field.label || '').replace(/[*:]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const labelText = cleanFieldLabel(field.label || '');
 
       if (field.type === 'file') {
         if (isResumeFileField(field)) {
@@ -1442,15 +1433,9 @@ Analyze the form and return the actions JSON to fill every field you can.`;
         continue;
       }
 
-      for (const [key, patterns] of Object.entries(PATTERNS)) {
-        if (patterns.some(p => p.test(searchText) || p.test(labelText)) && profileData[key]) {
-          actions.push({
-            fieldId: field.id,
-            action: field.type === 'select' ? 'select' : 'type',
-            value: profileData[key],
-          });
-          break;
-        }
+      const key = profileKeyFor(field, k => !!profileData[k]);
+      if (key) {
+        actions.push({ fieldId: field.id, action: field.type === 'select' ? 'select' : 'type', value: profileData[key] });
       }
 
       // Type-based fallbacks
