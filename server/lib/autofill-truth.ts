@@ -57,7 +57,8 @@ const FACTS: Array<[Fact, RegExp]> = [
   ['sponsorship', /sponsor|\bvisa\b|\bh-?1b\b/i],
   ['work_auth', /(legally |lawfully )?(authori[sz]ed|eligible|permitted|right|allowed) (to work|for employment)|work authori[sz]ation|without restriction|work permit|permission to work/i],
   ['citizenship', /\bu\.?s\.? citizen|citizen of the united states|citizenship/i],
-  ['over18', /(at least|over|older than) (18|eighteen)|18 years of age|age of 18/i],
+  // "Are you 18 years or over?" (Centria, 2026-10-15) was missed and the AI answered "6".
+  ['over18', /(at least|over|older than) (18|eighteen)|18 years of age|age of 18|\b(18|eighteen)( years)?( of age| old)? or (over|older|above)\b|\b18\+|\bage 18\b|\bunder (the age of )?18\b/i],
   ['clearance', /security clearance|\bclearance\b|\bts\/sci\b|top secret/i],
   ['relocation', /relocat/i],
   ['drivers_license', /driver'?s'? licen[cs]e|driving licen[cs]e|valid licen[cs]e to drive/i],
@@ -73,7 +74,8 @@ const FACTS: Array<[Fact, RegExp]> = [
   ['years_experience', /\byears? of (\w+ )*experience|\d+\+? (or more )?years|how many years/i],
   ['prior_employment', /\b(worked|been employed|employed)\b.{0,60}\b(before|previously|in the past)\b|\bpreviously (worked|been employed)\b|\b(former(ly)?|past|current|existing) (an? )?employee\b|ever been employed by|currently (work|employed) (for|at|by)/i],
   ['languages', /\blanguages?\b|\bfluent\b|fluency|bilingual|\bspeak\b|proficiency in (spanish|english|french|german|mandarin|portuguese)/i],
-  ['education_level', /highest (level of )?(education|degree)|level of education|high school diploma|\bged\b|education level|degree (have you|did you) (complete|earn)/i],
+  // Also "Do you have a bachelor's degree?", but not "a degree in nursing": a level can't answer a subject.
+  ['education_level', /highest (level of )?(education|degree)|level of education|high school diploma|\bged\b|education level|degree (have you|did you) (complete|earn)|^(?!.*\b(degree|diploma) (in|related)\b).*\b(have|hold|possess|completed?|earned?|obtained?)\b.{0,25}\b(bachelor'?s?|master'?s?|associate'?s?|doctorate|ph\.?\s?d|(4|four|2|two)[- ]year degree|undergraduate degree)\b/i],
 ];
 
 /** A question's wording as the shared map keys it: lowercased, punctuation removed. */
@@ -186,7 +188,15 @@ function yesNoAction(field: FillField, yes: boolean): Pick<FillAction, 'action' 
   const value = (yes ? opts.find(o => isYes(o)) : opts.find(o => isNo(o))) || (yes ? 'Yes' : 'No');
   return { action: field.type === 'select' || field.type === 'radio' ? 'select' : 'click_then_type', value };
 }
-const looksYesNo = (field: FillField) => !!field.options?.length && field.options.some(o => isYes(o)) && field.options.some(o => isNo(o));
+/**
+ * A question answered Yes or No: its options are a yes and a no or, when the options aren't known
+ * (Greenhouse dropdowns load them on open), it is worded as one ("Do you have…?", "Are you…?").
+ */
+const looksYesNo = (field: FillField) => {
+  const opts = (field.options || []).filter(o => o.trim() && !/^(select|choose)\b|^-+$/i.test(o.trim()));
+  if (opts.length) {return opts.some(o => isYes(o)) && opts.some(o => isNo(o));}
+  return /^\s*(are|do|does|did|have|has|had|can|could|will|would|is|was|were|should)\b[^?]*\?/i.test(field.label || '');
+};
 
 /** Everything the candidate owns that an answer may come from. */
 export interface TruthContext {
@@ -374,11 +384,27 @@ function howHeardAnswer(field: FillField): Pick<FillAction, 'action' | 'value' |
     : { action: 'skip', value: undefined, evidence };
 }
 
+/** Degree levels, highest first, as a question names them; the names match highestEducation's levels. */
+const DEGREE_RANK: Array<[string, RegExp]> = [
+  ['Doctorate', /\b(ph\.?\s?d|doctor(ate|al)?)\b/i],
+  ["Master's degree", /\bmaster'?s?\b|\bmba\b/i],
+  ["Bachelor's degree", /\bbachelor'?s?\b|\b(4|four)[- ]year degree\b|\bundergraduate degree\b/i],
+  ["Associate's degree", /\bassociate'?s?\b|\b(2|two)[- ]year degree\b/i],
+  ['High school diploma or GED', /high school|\bged\b|diploma/i],
+];
+
 function educationAnswer(field: FillField, ctx: TruthContext): Pick<FillAction, 'action' | 'value' | 'evidence'> | null {
   const e = highestEducation(ctx.resume);
   if (!e) {return null;}
   const label = field.label || '';
-  if (/high school|ged\b|diploma/i.test(label) && looksYesNo(field)) {return { ...yesNoAction(field, true), evidence: e.evidence };}
+  // "Do you have a High School Diploma or GED?" / "…a bachelor's degree?": Yes when the highest
+  // degree on the resume is at least that level. Below it, the candidate answers (never a guessed No).
+  if (looksYesNo(field)) {
+    const asked = DEGREE_RANK.findIndex(([, re]) => re.test(label));
+    const have = DEGREE_RANK.findIndex(([name]) => name === e.level);
+    if (asked >= 0 && have >= 0 && have <= asked) {return { ...yesNoAction(field, true), evidence: e.evidence };}
+    return null;
+  }
   if (field.options?.length) {
     const key = e.level.split(/['\s]/)[0].toLowerCase();  // doctorate | master | bachelor | associate | high
     const pick = field.options.find(o => o.toLowerCase().includes(key === 'doctorate' ? 'doctor' : key))
@@ -482,7 +508,9 @@ export function enforceTruth(actions: FillAction[], fields: FillField[], ctx: Tr
       const saved = key ? (ctx.stated[key] || '').trim() : '';
       if (saved) { kept.push({ fieldId: field.id, ...savedAnswer(field, fact, saved, ai), source: 'answer' }); continue; }
       const c = computed(field, fact, ctx);
-      if (c) { kept.push({ fieldId: field.id, ...c }); continue; }
+      // Safety net: a yes/no question only ever gets a yes or a no.
+      const fitsYesNo = !c || c.action === 'skip' || !looksYesNo(field) || isYes(String(c.value ?? '')) || isNo(String(c.value ?? ''));
+      if (c && fitsYesNo) { kept.push({ fieldId: field.id, ...c }); continue; }
       needs(field, fact);
       continue;
     }
@@ -505,13 +533,22 @@ export function enforceTruth(actions: FillAction[], fields: FillField[], ctx: Tr
 
     if (OPT_IN.test(label)) {
       const no = field.options?.find(o => isNo(o) || /^(2\.\s*)?no\b|only (want|use)|do not|don'?t|opt[- ]?out|decline/i.test(o));
-      if (no || !field.options?.length) {kept.push({ fieldId: field.id, action: field.options?.length ? (field.type === 'select' || field.type === 'radio' ? 'select' : 'click_then_type') : 'skip', value: no, source: 'default', evidence: "Not signed up for messages or job alerts on your behalf" });}
+      if (no) {kept.push({ fieldId: field.id, action: field.type === 'select' || field.type === 'radio' ? 'select' : 'click_then_type', value: no, source: 'default', evidence: "Not signed up for messages or job alerts on your behalf" });}
+      // Required and no way to say no (a consent box, or a dropdown whose options aren't known):
+      // the candidate decides. Skipping it silently left a required field empty (Salesdraft, Comstock).
       else if (field.required) {needs(field, 'other');}
+      else {kept.push({ fieldId: field.id, action: 'skip', source: 'default', evidence: "Not signed up for messages or job alerts on your behalf" });}
       continue;
     }
     if (!ai || ai.action === 'skip') { if (field.required && !ai?.reason?.match(/captcha|signature/i)) {needs(field, 'other');} else if (ai) {kept.push(ai);} continue; }
     if (ABOUT_THE_JOB.test(label)) { kept.push({ ...ai, source: 'default', evidence: 'From this job posting' }); continue; }
     const source = sourceOf(field, ai);
+    // A yes/no question gets a yes or a no. "Do you have a High School Diploma or GED?" was
+    // answered "Master's degree", and "Are you 18 years or over?" "6" (Centria, 2026-10-15).
+    if (source === 'resume' && looksYesNo(field) && !isYes(String(ai.value ?? '')) && !isNo(String(ai.value ?? ''))) {
+      if (field.required) {needs(field, 'other');}
+      continue;
+    }
     // No quote, no answer: a claim about the candidate needs a line of their resume behind it.
     if (source === 'resume' && ai.action !== 'upload_resume') {
       // A value that is itself on the resume (a title, an employer, a school) is its own quote; a bare yes/no never is.
