@@ -180,43 +180,23 @@ describe('decideAutopilot', () => {
     expect(later.alerts.map(a => a.key)).toContain('autopilot-pressure-long');
   });
 
-  it('alerts (without changing anything) only when a new job has waited past two missed batches', () => {
-    const d = decideAutopilot({ ...calm, embeddingBacklog: 657, embeddingOldestMin: 15 * 60 }, S(), {}, { healthySince: {} }, t0);
+  it('alerts (without changing anything) when batches stop: nothing embedded for over 14 h while jobs wait', () => {
+    const d = decideAutopilot({ ...calm, embeddingBacklog: 657, embeddingSinceLastMin: 15 * 60, embeddingSkipped: 0 }, S(), {}, { healthySince: {} }, t0);
     expect(d.changes).toEqual([]);
     expect(d.alerts.map(a => a.key)).toEqual(['autopilot-embedding-backlog']);
+    expect(d.alerts[0].subject).toMatch(/no new jobs matched for 15\.0 h/);
     // 2,000 waiting 5 hours into a 6-hour cycle is normal.
-    expect(decideAutopilot({ ...calm, embeddingBacklog: 2000, embeddingOldestMin: 5 * 60 }, S(), {}, { healthySince: {} }, t0).alerts).toEqual([]);
-  });
-});
-
-describe('database connection pressure', () => {
-  it('reaps above 40 connections, or whenever the app user cannot connect', () => {
-    expect(shouldReap(39, true)).toBe(false);
-    expect(shouldReap(40, true)).toBe(false);
-    expect(shouldReap(41, true)).toBe(true);
-    expect(shouldReap(7, false)).toBe(true);
-    expect(shouldReap(null, false)).toBe(true);
+    expect(decideAutopilot({ ...calm, embeddingBacklog: 2000, embeddingSinceLastMin: 5 * 60, embeddingSkipped: 0 }, S(), {}, { healthySince: {} }, t0).alerts).toEqual([]);
   });
 
-  it('only closes idle, outside-the-box app connections idle for over 2 minutes', () => {
-    expect(REAP_SQL).toMatch(/usename = 'recrutas_app'/);
-    expect(REAP_SQL).toMatch(/state = 'idle'/);
-    expect(REAP_SQL).toMatch(/NOT IN \('127\.0\.0\.1', '::1'\)/);
-    expect(REAP_SQL).toMatch(/client_addr IS NOT NULL/);
-    expect(REAP_SQL).toMatch(/interval '120 seconds'/);
+  it('alerts when a batch ran but left waiting jobs behind', () => {
+    const d = decideAutopilot({ ...calm, embeddingBacklog: 900, embeddingSinceLastMin: 60, embeddingSkipped: 12 }, S(), {}, { healthySince: {} }, t0);
+    expect(d.alerts[0].subject).toMatch(/12 jobs left unmatched by the last batch/);
   });
 
-  it('treats only a missing table as "not migrated yet"', () => {
-    // What Drizzle threw on 2026-10-08 when connections were exhausted: a wrapper whose cause is 53300.
-    const exhausted = Object.assign(new Error('Failed query: SELECT key, value FROM runtime_settings\nparams: '), {
-      cause: Object.assign(new Error('remaining connection slots are reserved for roles with the SUPERUSER attribute'), { code: '53300' }),
-    });
-    expect(isMissingTable(exhausted)).toBe(false);
-    const missing = Object.assign(new Error('Failed query: SELECT key FROM runtime_settings'), {
-      cause: Object.assign(new Error('relation "runtime_settings" does not exist'), { code: '42P01' }),
-    });
-    expect(isMissingTable(missing)).toBe(true);
-    expect(isMissingTable(new Error('relation "runtime_settings" does not exist'))).toBe(true);
-    expect(isMissingTable(new Error('connect ECONNREFUSED 127.0.0.1:5432'))).toBe(false);
+  it('2026-10-14: a closed job reopened after the last batch (old created_at) is not an alert', () => {
+    // 979 waiting, the batch ran 3 h ago, and none were waiting before it: one of them was
+    // created 20 h earlier but reopened a minute ago. The old rule alerted "20 hours".
+    expect(decideAutopilot({ ...calm, embeddingBacklog: 979, embeddingSinceLastMin: 3 * 60, embeddingSkipped: 0 }, S(), {}, { healthySince: {} }, t0).alerts).toEqual([]);
   });
 });

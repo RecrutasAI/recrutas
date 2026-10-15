@@ -154,7 +154,15 @@ async function main(): Promise<void> {
       SELECT count(*)::int AS n, percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95
       FROM request_metrics WHERE endpoint = '/api/ai-matches' AND created_at > NOW() - INTERVAL '15 minutes'`).then(r => rows(r)[0]),
     db.execute(sql`SELECT count(*)::int AS n FROM pg_stat_activity`).then(r => rows(r)[0]),
-    db.execute(sql`SELECT count(*)::int AS n, EXTRACT(EPOCH FROM (NOW() - min(created_at))) / 60 AS oldest_min FROM job_postings WHERE status = 'active' AND vector_embedding IS NULL`).then(r => rows(r)[0]).catch(() => null),
+    // Two scans of job_postings (~0.1 s each, measured 2026-10-15); see AutopilotInput for why
+    // this isn't the oldest job's age.
+    db.execute(sql`
+      WITH last AS (SELECT max(embedding_updated_at) AS t FROM job_postings)
+      SELECT count(*)::int AS n,
+             EXTRACT(EPOCH FROM (NOW() - (SELECT t FROM last))) / 60 AS since_last_min,
+             count(*) FILTER (WHERE created_at < (SELECT t FROM last) - INTERVAL '1 hour'
+                                AND updated_at < (SELECT t FROM last) - INTERVAL '1 hour')::int AS skipped
+      FROM job_postings WHERE status = 'active' AND vector_embedding IS NULL`).then(r => rows(r)[0]).catch(() => null),
     supabaseUp(),
     backupAuthReady(),
   ]);
@@ -167,7 +175,8 @@ async function main(): Promise<void> {
     dbConnections: suConnections ?? (Number(conns?.n) || 0),
     diskPct: diskPct(),
     embeddingBacklog: backlog ? Number(backlog.n) : null,
-    embeddingOldestMin: backlog?.oldest_min === null || backlog?.oldest_min === undefined ? null : Number(backlog.oldest_min),
+    embeddingSinceLastMin: backlog?.since_last_min === null || backlog?.since_last_min === undefined ? null : Number(backlog.since_last_min),
+    embeddingSkipped: backlog ? Number(backlog.skipped) : null,
     supabaseUp: supabase,
     backupAuthReady: backupAuth,
   };
