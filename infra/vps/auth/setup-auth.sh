@@ -62,7 +62,9 @@ GOTRUE_EXTERNAL_EMAIL_ENABLED=true
 # Matches Supabase today: accounts are confirmed on sign-up.
 GOTRUE_MAILER_AUTOCONFIRM=true
 GOTRUE_SMTP_HOST=smtp.resend.com
-GOTRUE_SMTP_PORT=465
+# Not 465: Hetzner blocks outgoing 25 and 465 (2026-10-15 every email timed out after 10 s).
+# Resend takes the same TLS connection on 2465.
+GOTRUE_SMTP_PORT=2465
 GOTRUE_SMTP_USER=resend
 GOTRUE_SMTP_PASS=$(appvar RESEND_API_KEY)
 GOTRUE_SMTP_ADMIN_EMAIL=noreply@recrutas.ai
