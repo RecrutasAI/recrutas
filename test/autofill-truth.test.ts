@@ -167,3 +167,18 @@ describe('enforceTruth for required questions nothing answered', () => {
     expect(actions.map(a => a.fieldId)).toEqual(['site']);
   });
 });
+
+describe('enforceTruth: name fields are the profile, whatever the form calls them', () => {
+  it('keeps "Full legal name" from the profile (Ashby, Coder, 2026-10-15) without a resume quote', () => {
+    const fields = [{ id: 'n', type: 'text', label: 'Full legal name', required: true }];
+    const { actions, needsYou } = enforceTruth([{ fieldId: 'n', action: 'type', value: 'Test E2E' }], fields, ctx());
+    expect(actions).toEqual([expect.objectContaining({ fieldId: 'n', value: 'Test E2E', source: 'profile' })]);
+    expect(needsYou).toEqual([]);
+  });
+  it('and "Legal First Name✱" (Lever, Hermeus)', () => {
+    const fields = [{ id: 'f', type: 'text', label: 'Legal First Name✱', required: true }];
+    const { actions } = enforceTruth([{ fieldId: 'f', action: 'type', value: 'Test' }], fields, ctx());
+    expect(actions[0]).toEqual(expect.objectContaining({ source: 'profile' }));
+  });
+});
+
