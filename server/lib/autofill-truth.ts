@@ -20,6 +20,7 @@
  */
 import { resolveLocation, type PlaceIndex } from '../../shared/places';
 import { type ResumeFacts, highestEducation, workHistoryValue, yearsWith } from './resume-facts';
+import { profileKeyFor } from './fill-patterns';
 
 export type FillSource = 'profile' | 'resume' | 'answer' | 'default' | 'draft';
 export type Fact =
@@ -151,7 +152,11 @@ const ESSAY = /^\s*why\b|\bwhy (are|do|did|would) you\b|\bdescribe\b|\btell us\b
 /** A contact or location field: a short label naming it ("Email", "LinkedIn profile link"), not a question that mentions it. */
 const isProfileField = (field: FillField) => {
   const label = (field.label || field.name || '').trim();
-  return label.length <= 45 && PROFILE_FIELD.test(label) && !/\?/.test(label);
+  if (label.length > 45 || /\?/.test(label)) {return false;}
+  // Name labels come from the same patterns as the fill's matcher (fill-patterns.ts), so the two
+  // can't disagree: "Full legal name" (Ashby) was filled from the profile, then dropped here as a
+  // resume claim with no quote (2026-10-15).
+  return PROFILE_FIELD.test(label) || ['fullName', 'firstName', 'lastName'].includes(profileKeyFor({ label }, () => true) ?? '');
 };
 
 function sourceOf(field: FillField, action: FillAction): FillSource {
