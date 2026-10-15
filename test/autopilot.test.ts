@@ -194,6 +194,11 @@ describe('decideAutopilot', () => {
     expect(d.alerts[0].subject).toMatch(/12 jobs left unmatched by the last batch/);
   });
 
+  it('2026-10-15: jobs still queued in a batch that is running right now are not "left behind"', () => {
+    // 13:02:05: the 13:00 batch had just embedded its newest jobs and was finishing the older 166.
+    expect(decideAutopilot({ ...calm, embeddingBacklog: 167, embeddingSinceLastMin: 0.1, embeddingSkipped: 166 }, S(), {}, { healthySince: {} }, t0).alerts).toEqual([]);
+  });
+
   it('2026-10-14: a closed job reopened after the last batch (old created_at) is not an alert', () => {
     // 979 waiting, the batch ran 3 h ago, and none were waiting before it: one of them was
     // created 20 h earlier but reopened a minute ago. The old rule alerted "20 hours".

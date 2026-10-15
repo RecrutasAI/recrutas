@@ -177,7 +177,11 @@ export function decideAutopilot(i: AutopilotInput, settings: Settings, setBy: Se
   // Thousands waiting between the 6-hourly batches is normal. Trouble is batches not running,
   // or running and leaving jobs behind.
   const stalled = (i.embeddingSinceLastMin ?? 0) > EMBED_ALERT_MIN;
-  const skipped = i.embeddingSkipped ?? 0;
+  // A batch embeds newest first, so while one is running the newest embedding is "now" and the
+  // older jobs still in its queue look left behind: on 2026-10-15 13:02:05 this fired for 166 jobs
+  // four seconds before the 13:00 batch finished embedding them. Judge only a finished batch.
+  const batchQuiet = (i.embeddingSinceLastMin ?? 0) >= 15;
+  const skipped = batchQuiet ? (i.embeddingSkipped ?? 0) : 0;
   if ((i.embeddingBacklog ?? 0) > 0 && (stalled || skipped > 0)) {
     const h = ((i.embeddingSinceLastMin ?? 0) / 60).toFixed(1);
     alerts.push({
