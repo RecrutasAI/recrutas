@@ -177,7 +177,7 @@ export function MarketRadar({ onStart }: { onStart: () => void }) {
               Recrutas job index · {name}
             </div>
             <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-              <span className="font-geist-mono text-4xl sm:text-5xl tracking-tight tabular-nums" data-testid="index-live">{d ? d.live.toLocaleString() : "—"}</span>
+              <span className="font-geist-mono text-4xl sm:text-5xl tracking-tight tabular-nums" data-testid="index-live">{d ? d.live.toLocaleString() : "..."}</span>
               <span className="text-sm text-neutral-500">live jobs</span>
               {d && typeof d.openedLast24h === "number" && (
                 <span className="font-geist-mono text-sm tabular-nums">

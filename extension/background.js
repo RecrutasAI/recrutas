@@ -55,7 +55,7 @@ async function refreshAccessToken() {
   if (!refreshToken) throw new Error('No refresh token');
 
   const supabaseUrl = await getSupabaseUrl();
-  if (!supabaseUrl) throw new Error('Cannot refresh — no Supabase URL');
+  if (!supabaseUrl) throw new Error('Cannot refresh: no Supabase URL');
 
   const baseUrl = await getRecruitasUrl();
   const res = await fetch(`${baseUrl}/api/auth/extension-refresh`, {
@@ -236,7 +236,7 @@ async function fillFormAI(fields, jobContext) {
     });
   } catch (err) {
     if (err.name === 'AbortError') {
-      throw new Error('Form fill timed out — please try again.');
+      throw new Error('Form fill timed out. Please try again.');
     }
     throw err;
   } finally {

@@ -72,7 +72,7 @@ const JobCard = ({ job, index, onApply, onLike, onChat, isLiked, theme }: { job:
         {(job.job?.salaryMin && job.job?.salaryMax) || job.salary ? (
           <p className={`text-sm font-semibold mt-1 sm:mt-2 ${theme === 'dark' ? 'text-slate-200' : 'text-gray-800'}`}>
             {job.job?.salaryMin && job.job?.salaryMax
-              ? `$${(job.job.salaryMin / 1000).toFixed(0)}k–${(job.job.salaryMax / 1000).toFixed(0)}k`
+              ? `$${(job.job.salaryMin / 1000).toFixed(0)}k to ${(job.job.salaryMax / 1000).toFixed(0)}k`
               : job.salary}
           </p>
         ) : null}

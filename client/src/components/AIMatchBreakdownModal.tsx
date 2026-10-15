@@ -185,7 +185,7 @@ export default function AIMatchBreakdownModal({
             : null,
         ]
           .filter(Boolean)
-          .join(" – ")
+          .join(" to ")
       : null;
 
   return (
