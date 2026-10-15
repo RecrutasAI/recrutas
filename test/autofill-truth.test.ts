@@ -182,3 +182,59 @@ describe('enforceTruth: name fields are the profile, whatever the form calls the
   });
 });
 
+describe('enforceTruth: real failures from Greenhouse and Breezy forms (2026-10-15)', () => {
+  // Greenhouse react-select dropdowns arrive with no options; these are the AI answers the server produced.
+  const centria = [
+    { id: 'age', type: 'custom_select', label: 'Are you 18 years or over?*', required: true },
+    { id: 'hs', type: 'custom_select', label: 'Do you have a High School Diploma or GED?*', required: true },
+  ];
+  it('"Are you 18 years or over?" is the over-18 fact, never the AI\'s "6"', () => {
+    const { actions, needsYou } = enforceTruth([{ fieldId: 'age', action: 'type', value: '6', evidence: '6 years of experience' }], [centria[0]], ctx());
+    expect(actions.find(a => a.fieldId === 'age')?.value).not.toBe('6');
+    expect(needsYou.map(n => n.fact)).toContain('over18');
+  });
+  it('a yes/no question answered with a fact ("Master\'s degree") is not kept: the candidate answers it', () => {
+    const { actions, needsYou } = enforceTruth([{ fieldId: 'hs', action: 'type', value: "Master's degree", evidence: 'Master of Science' }], [centria[1]], ctx());
+    expect(actions.find(a => a.fieldId === 'hs')).toBeUndefined();
+    expect(needsYou.map(n => n.fieldId)).toContain('hs');
+  });
+  it('a required opt-in with no way to say no is flagged, not silently skipped (Salesdraft SMS box, Comstock dropdown)', () => {
+    const sms = { id: 'sms', type: 'checkbox', label: 'By providing your phone number you agree to receive informational text messages from SalesDraft Recruiting.', required: true };
+    const updates = { id: 'up', type: 'custom_select', label: 'I would like to receive updates from a recruiter about jobs and/or application activity via text message*', required: true };
+    const { actions, needsYou } = enforceTruth([], [sms, updates], ctx());
+    expect(actions).toEqual([]);
+    expect(needsYou.map(n => n.fieldId).sort()).toEqual(['sms', 'up']);
+  });
+  it('an optional opt-in is still left alone', () => {
+    const { actions, needsYou } = enforceTruth([], [{ id: 'nl', type: 'checkbox', label: 'Sign me up for the newsletter', required: false }], ctx());
+    expect(needsYou).toEqual([]);
+    expect(actions[0]).toEqual(expect.objectContaining({ action: 'skip' }));
+  });
+  it('a yes/no question answered Yes with a quote from the resume is kept', () => {
+    const resume = { text: 'EDUCATION\nMaster of Science, Computer Science, 2016\nHigh School Diploma, 2010' };
+    const { actions } = enforceTruth([{ fieldId: 'hs', action: 'type', value: 'Yes', evidence: 'High School Diploma, 2010' }], [centria[1]], ctx({}, resume));
+    expect(actions.find(a => a.fieldId === 'hs')).toEqual(expect.objectContaining({ value: 'Yes', source: 'resume' }));
+  });
+  it('the same Yes with no quote on the resume is not kept', () => {
+    const { actions } = enforceTruth([{ fieldId: 'hs', action: 'type', value: 'Yes', evidence: 'High School Diploma, 2010' }], [centria[1]], ctx());
+    expect(actions.find(a => a.fieldId === 'hs')).toBeUndefined();
+  });
+});
+
+describe('educationAnswer: degree-level yes/no questions', () => {
+  const q = { id: 'ba', type: 'custom_select', label: "Do you have a bachelor's degree?*", required: true };
+  it("a master's on the resume answers Yes to a bachelor's question", () => {
+    const { actions } = enforceTruth([], [q], ctx({}, { text: "Master of Science in Nursing, 2019" }));
+    expect(actions[0]).toEqual(expect.objectContaining({ value: 'Yes', source: 'resume' }));
+  });
+  it("an associate's degree does not become a No: the candidate answers", () => {
+    const { actions, needsYou } = enforceTruth([], [q], ctx({}, { text: "Associate of Applied Science, 2015" }));
+    expect(actions).toEqual([]);
+    expect(needsYou.map(n => n.fieldId)).toEqual(['ba']);
+  });
+  it('a subject-specific degree question is not answered from the level', () => {
+    const nursing = { id: 'rn', type: 'custom_select', label: 'Do you have a bachelor\'s degree in Nursing?*', required: true };
+    const { actions } = enforceTruth([], [nursing], ctx({}, { text: "Master of Science in Computer Science, 2019" }));
+    expect(actions.find(a => a.fieldId === 'rn' && a.value === 'Yes')).toBeUndefined();
+  });
+});
