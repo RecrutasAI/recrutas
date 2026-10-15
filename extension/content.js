@@ -1074,7 +1074,7 @@
 
   // ── Where each answer came from ────────────────────────────────────────────
 
-  const SOURCE_LABEL = { profile: 'Profile', resume: 'Resume', answer: 'Your answer', default: 'Default', draft: 'Draft — review' };
+  const SOURCE_LABEL = { profile: 'Profile', resume: 'Resume', answer: 'Your answer', default: 'Default', draft: 'Draft, review it' };
 
   // A small tag after each filled field saying where its value came from, so the
   // candidate can check it before submitting. Evidence (e.g. "About 6 years of
@@ -1258,7 +1258,7 @@
             button.textContent = 'Saved for every form ✓';
           } catch (err) {
             button.disabled = false;
-            button.textContent = "Couldn't save — try again";
+            button.textContent = "Couldn't save. Try again";
           }
         });
       }
@@ -1333,7 +1333,7 @@
             jobContext: jobContext.text,
           }),
           65000,
-          'Form fill timed out — please try again.'
+          'Form fill timed out. Please try again.'
         );
 
         if (!response) {
@@ -1374,7 +1374,7 @@
         await readDropdownOptions(revealed);
         const more = await withTimeout(
           sendMessage({ type: 'FILL_FORM_AI', fields: revealed.slice(0, BATCH), jobContext: jobContext.text }),
-          65000, 'Form fill timed out — please try again.'
+          65000, 'Form fill timed out. Please try again.'
         ).catch(() => null);
         if (more?.success) {
           const second = await executeActions(more.actions || [], resumeUrl || more.resumeUrl);
@@ -1404,11 +1404,11 @@
       if (wantsResume && resumeMissing) {
         showBanner('Your resume file is missing. Upload it again in Recrutas, then attach it here.', 'warning');
       } else if (filled === 0) {
-        showBanner('Could not fill any fields — try a different page', 'warning');
+        showBanner('Could not fill any fields. Try a different page.', 'warning');
       } else if (failed.length > 0) {
-        showBanner(`Filled ${filled} field${filled !== 1 ? 's' : ''} · ${failed.length} skipped — review before submitting`, 'success');
+        showBanner(`Filled ${filled} field${filled !== 1 ? 's' : ''} · ${failed.length} skipped. Review before submitting.`, 'success');
       } else {
-        showBanner(`Filled ${filled} field${filled !== 1 ? 's' : ''} — review before submitting`, 'success');
+        showBanner(`Filled ${filled} field${filled !== 1 ? 's' : ''}. Review before submitting.`, 'success');
       }
     } catch (err) {
       // Report failed fill for telemetry
@@ -1425,7 +1425,7 @@
       if (err.message?.includes('Not authenticated') || err.message?.includes('Session expired')) {
         showBanner('Sign in to Recrutas extension first', 'error');
       } else {
-        showBanner(err.message || 'Extension error — try reloading', 'error');
+        showBanner(err.message || 'Extension error. Try reloading the page.', 'error');
       }
     } finally {
       isFilling = false;

@@ -21,6 +21,7 @@
 import { resolveLocation, type PlaceIndex } from '../../shared/places';
 import { type ResumeFacts, highestEducation, workHistoryValue, yearsWith } from './resume-facts';
 import { profileKeyFor } from './fill-patterns';
+import { plainDashes } from './plain-dashes';
 
 export type FillSource = 'profile' | 'resume' | 'answer' | 'default' | 'draft';
 export type Fact =
@@ -563,5 +564,6 @@ export function enforceTruth(actions: FillAction[], fields: FillField[], ctx: Tr
   // Actions for ids not in the field list (the AI's own additions) are dropped: nothing to check them against.
   // Every element stays listed, even when a form renders one question as two (a dropdown and
   // its input): the extension shows the question once but watches each element for an answer.
-  return { actions: kept, needsYou };
+  // No en/em dashes in anything typed for the candidate (an AI tell; drafts go to employers).
+  return { actions: kept.map(a => (a.action === 'type' && typeof a.value === 'string' ? { ...a, value: plainDashes(a.value) } : a)), needsYou };
 }

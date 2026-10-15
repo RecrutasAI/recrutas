@@ -14,7 +14,7 @@ HOW IT WORKS:
 2. Install this extension and sign in
 3. Navigate to any job application page
 4. Click the floating "Fill with Recrutas" button or press Alt+Shift+R
-5. AI analyzes the form and fills every field — name, email, phone, work history, screening questions, even resume upload
+5. AI analyzes the form and fills the fields it knows: name, email, phone, work history, screening questions, even resume upload
 6. Review the filled form and submit
 
 FEATURES:

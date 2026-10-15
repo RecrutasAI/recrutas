@@ -155,7 +155,7 @@ export default function JobsTab({
                       <span className="flex items-center gap-1">
                         <DollarSign className="h-3.5 w-3.5" />
                         {job.salaryMin && job.salaryMax
-                          ? `${job.salaryMin.toLocaleString()} – ${job.salaryMax.toLocaleString()}`
+                          ? `${job.salaryMin.toLocaleString()} to ${job.salaryMax.toLocaleString()}`
                           : job.salaryMin
                             ? `From ${job.salaryMin.toLocaleString()}`
                             : `Up to ${job.salaryMax?.toLocaleString()}`}

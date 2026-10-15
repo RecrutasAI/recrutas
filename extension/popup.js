@@ -80,7 +80,7 @@ async function loadProfileStatus() {
 
     if (!response.success) {
       showProfileItem('resume', false, 'Could not load profile');
-      showProfileItem('skills', false, '—');
+      showProfileItem('skills', false, 'None yet');
       return;
     }
 
@@ -91,7 +91,7 @@ async function loadProfileStatus() {
     showProfileItem(
       'resume',
       hasResume,
-      hasResume ? 'Resume uploaded' : 'No resume — upload at recrutas.ai'
+      hasResume ? 'Resume uploaded' : 'No resume yet. Upload one at recrutas.ai'
     );
 
     // Skills status
@@ -113,7 +113,7 @@ async function loadProfileStatus() {
     }
   } catch {
     showProfileItem('resume', false, 'Could not check profile');
-    showProfileItem('skills', false, '—');
+    showProfileItem('skills', false, 'None yet');
   }
 }
 
@@ -163,7 +163,7 @@ document.getElementById('fill-btn').addEventListener('click', async () => {
     btn.textContent = 'Filling…';
     setTimeout(() => window.close(), 800);
   } catch {
-    btn.textContent = 'Failed — try again';
+    btn.textContent = 'Failed. Try again';
     btn.disabled = false;
     setTimeout(() => {
       btn.innerHTML = `

@@ -29,7 +29,7 @@ const REPLY_TO = 'support@recrutas.ai';
 export async function sendEmail(opts: SendEmailOptions): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
-    console.warn('[Email] RESEND_API_KEY not set — skipping email to', opts.to);
+    console.warn('[Email] RESEND_API_KEY not set, skipping email to', opts.to);
     return;
   }
 
@@ -67,7 +67,7 @@ function workTypeLabel(w?: string | null): string {
 function salaryLabel(min?: number | null, max?: number | null): string {
   if (!min && !max) return '';
   const fmt = (n: number) => n >= 1000 ? `$${Math.round(n / 1000)}k` : `$${n}`;
-  if (min && max) return `${fmt(min)} – ${fmt(max)}`;
+  if (min && max) return `${fmt(min)} to ${fmt(max)}`;
   if (min) return `${fmt(min)}+`;
   return `Up to ${fmt(max!)}`;
 }
