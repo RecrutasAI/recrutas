@@ -7,7 +7,7 @@
  * and "Your name", and Lever's required mark "✱" broke the anchored patterns.
  */
 export type ProfileKey = 'firstName' | 'lastName' | 'fullName' | 'email' | 'phone' | 'linkedin' | 'github'
-  | 'portfolio' | 'location' | 'currentTitle' | 'currentCompany' | 'school' | 'degree';
+  | 'portfolio' | 'location' | 'currentTitle' | 'currentCompany' | 'school' | 'degree' | 'todayDate';
 
 const PATTERNS: [ProfileKey, RegExp[]][] = [
   // Checked first: "First and last name" is one full name, not a last name.
@@ -16,6 +16,8 @@ const PATTERNS: [ProfileKey, RegExp[]][] = [
   ['fullName', [/^(?:(?:your|full|legal|complete|candidate'?s?|applicant'?s?)\s+)*name(?:\s*\(.*\))?$/i, /^first\s*(?:and|&)\s*last\s+name/i]],
   ['firstName', [/first[\s_-]?name/i, /fname/i, /given[\s_-]?name/i]],
   ['lastName', [/last[\s_-]?name/i, /lname/i, /surname/i, /family[\s_-]?name/i]],
+  // The date beside a signature (Lever's disability form: "Name" + "Date"): today.
+  ['todayDate', [/^date$/i, /\bsignature date\b|\bdate signed\b|\btoday'?s date\b/i]],
   ['email', [/e[\s_-]?mail/i]],
   ['phone', [/phone/i, /telephone/i, /mobile/i, /cell/i]],
   ['linkedin', [/linkedin/i]],

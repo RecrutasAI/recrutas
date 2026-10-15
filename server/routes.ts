@@ -1148,6 +1148,8 @@ export async function registerRoutes(app: Express): Promise<Express> {
         school: parsed.education?.[0]?.institution || '',
         degree: parsed.education?.[0]?.degree || '',
         experienceYears: resume.totalYears != null ? String(resume.totalYears) : '',
+        // US format, as signature-date fields ask (MM/DD/YYYY), in Pacific time like the rest of the app.
+        todayDate: new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', month: '2-digit', day: '2-digit', year: 'numeric' }).format(new Date()),
         ...Object.fromEntries(Object.entries(((profile as any).jobPreferences?.applicationAnswers || {}) as Record<string, string>)
           .filter(([, v]) => typeof v === 'string' && v).map(([k, v]) => [`stated_${k}`, v])),
       };

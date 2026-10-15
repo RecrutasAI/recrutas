@@ -238,3 +238,11 @@ describe('educationAnswer: degree-level yes/no questions', () => {
     expect(actions.find(a => a.fieldId === 'rn' && a.value === 'Yes')).toBeUndefined();
   });
 });
+
+describe('enforceTruth: signature fields (Lever disability form)', () => {
+  it("keeps today's date in a signature Date, as a default", () => {
+    const { actions } = enforceTruth([{ fieldId: 'd', action: 'type', value: '10/15/2026' }], [{ id: 'd', type: 'text', label: 'Date' }], ctx());
+    expect(actions[0]).toEqual(expect.objectContaining({ value: '10/15/2026', source: 'default' }));
+  });
+});
+
