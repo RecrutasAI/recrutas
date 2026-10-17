@@ -1,5 +1,5 @@
 import Groq from 'groq-sdk';
-import { throttledGroqRequest, type GroqPriority } from './groq-limiter';
+import { getLimiterStats, throttledGroqRequest, type GroqPriority } from './groq-limiter';
 
 export type { GroqPriority };
 
@@ -368,6 +368,9 @@ async function callCloudflareText(systemPrompt: string, userPrompt: string, opts
     body: JSON.stringify({
       model: opts.model ?? cloudflareModel(),
       messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+      // gpt-oss thinks at length by default: a 25-field form fill took 16.6 s and 67 neurons,
+      // with low effort 4.7 s and 36, same 25 answers (2026-10-17). Same setting as on Groq.
+      ...((opts.model ?? cloudflareModel()).includes('gpt-oss') ? { reasoning_effort: 'low' } : {}),
       temperature: opts.temperature ?? 0.1,
       ...(opts.maxOutputTokens ? { max_tokens: opts.maxOutputTokens } : {}),
     }),
@@ -414,6 +417,72 @@ export async function callAI(systemPrompt: string, userPrompt: string, opts: Cal
       case 'openrouter': return callOpenRouterText(systemPrompt, userPrompt, opts);
     }
   }, opts);
+}
+
+/**
+ * One quick try per provider, fastest first, inside one time budget: for a person waiting
+ * on the answer (the extension's form fill). callAI suits background work: it retries a busy
+ * provider with backoff before failing over, so with Gemini answering 503 "high demand" the
+ * fill spent its whole 15 s budget on Gemini retries and never reached Groq, which answers
+ * in under a second (measured 2026-10-17 from the VPS: Groq 0.2-0.4 s, Cloudflare 1.0-1.3 s,
+ * Gemini 5-9 s with retries). The fill then fell to the pattern matcher and left most
+ * questions empty after a long wait.
+ */
+export type FastProvider = 'groq' | 'cloudflare' | 'gemini';
+export const FAST_TEXT_ORDER: FastProvider[] = ['groq', 'cloudflare', 'gemini'];
+// No single provider may take more than this, so a slow one leaves time for the next. Groq
+// answers a fill in ~0.6 s; longer means its 8,000 tokens/min free limit has it queued, so
+// move on. Cloudflare takes ~5 s at low reasoning effort.
+const FAST_PER_PROVIDER_MS: Record<FastProvider, number> = { groq: 3_000, cloudflare: 9_000, gemini: 8_000 };
+
+export async function raceProvidersInOrder<P extends string>(
+  order: P[],
+  attempt: (p: P, timeoutMs: number) => Promise<string>,
+  budgetMs: number,
+  capMs: Partial<Record<P, number>> = {},
+  now: () => number = Date.now,
+): Promise<{ text: string; provider: P }> {
+  const started = now();
+  const errors: string[] = [];
+  for (const p of order) {
+    const left = budgetMs - (now() - started);
+    if (left < 1_000) {break;}
+    const timeoutMs = Math.min(left, capMs[p] ?? left);
+    try {
+      const text = await Promise.race([
+        attempt(p, timeoutMs),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`timed out after ${timeoutMs} ms`)), timeoutMs)),
+      ]);
+      if (!text || !text.trim()) {throw new Error('empty answer');}
+      return { text, provider: p };
+    } catch (err) {
+      errors.push(`${p}: ${(err as Error).message.slice(0, 120)}`);
+    }
+  }
+  throw new Error(`No fast AI answer: ${errors.join('; ') || 'no time left'}`);
+}
+
+function fastProviderConfigured(p: FastProvider): boolean {
+  if (p === 'cloudflare') {return textProviderConfigured('cloudflare');}
+  // Groq paused after repeated 429s: it would only queue the fill until the cap.
+  if (p === 'groq' && getLimiterStats().circuitOpen) {return false;}
+  return providerHasKey(p);
+}
+
+export async function callAIFast(
+  systemPrompt: string,
+  userPrompt: string,
+  opts: CallAIOptions & { budgetMs?: number } = {},
+): Promise<{ text: string; provider: FastProvider }> {
+  const order = FAST_TEXT_ORDER.filter(fastProviderConfigured);
+  return raceProvidersInOrder(order, (p, timeoutMs) => {
+    const o = { ...opts, timeoutMs };
+    switch (p) {
+      case 'groq': return callGroqText(systemPrompt, userPrompt, o);
+      case 'cloudflare': return callCloudflareText(systemPrompt, userPrompt, o);
+      case 'gemini': return geminiRequest([{ text: userPrompt }], systemPrompt, o, timeoutMs);
+    }
+  }, opts.budgetMs ?? 20_000, FAST_PER_PROVIDER_MS);
 }
 
 /** Image (screenshot) + text → JSON string. Vision-capable providers only. */

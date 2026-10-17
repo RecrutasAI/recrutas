@@ -47,7 +47,7 @@ import {
   waitlistEntries,
 } from "@shared/schema";
 import { generateScreeningQuestions } from "./ai-service";
-import { callAI, callAIWithImage, isAIAvailable } from "./lib/ai-client";
+import { callAI, callAIFast, callAIWithImage, isAIAvailable } from "./lib/ai-client";
 import { db, testDbConnection } from "./db";
 import { seedDatabase } from "./seed.js";
 import { ResumeService, ResumeProcessingError } from './services/resume.service';
@@ -1274,8 +1274,13 @@ Analyze the form and return the actions JSON to fill every field you can.`;
         // vision failure went straight to the pattern matcher: with Gemini answering 503 "high
         // demand" and OpenRouter's vision model retired, most fills lost every custom question
         // although the text providers were answering in ~3 s.
+        // The screenshot only helps when the field list lacks the questions: the extension reads
+        // every label and option from the page. Vision runs on Gemini alone, and with Gemini busy
+        // it cost up to 20 s per batch before the text call even started (2026-10-17).
+        const unlabeled = fields.filter((f: any) => !String(f.label || '').trim()).length;
+        const needsVision = unlabeled >= 3 && unlabeled / fields.length > 0.3;
         let visionResponse: string | null = null;
-        if (screenshot && isAIAvailable('image')) {
+        if (screenshot && needsVision && isAIAvailable('image')) {
           console.log('[Extension] Using vision-powered fill with screenshot');
           visionResponse = await Promise.race([
             callAIWithImage(systemPrompt, userPrompt, screenshot, 'image/jpeg', {
@@ -1283,7 +1288,7 @@ Analyze the form and return the actions JSON to fill every field you can.`;
               maxOutputTokens: 4000,
             }),
             new Promise<string>((_, reject) =>
-              setTimeout(() => reject(new Error('Vision AI timeout')), 20000)
+              setTimeout(() => reject(new Error('Vision AI timeout')), 12000)
             ),
           ]).catch(err => {
             console.warn('[Extension] vision fill failed, using text:', (err as Error).message.slice(0, 160));
@@ -1293,18 +1298,17 @@ Analyze the form and return the actions JSON to fill every field you can.`;
         if (visionResponse) {
           aiResponse = visionResponse;
         } else {
-          console.log('[Extension] Using text-only fill');
-          aiResponse = await Promise.race([
-            callAI(systemPrompt, userPrompt, {
-              priority: 'medium',
-              estimatedTokens: 2000,
-              temperature: 0.2,
-              maxOutputTokens: 4000,
-            }),
-            new Promise<string>((_, reject) =>
-              setTimeout(() => reject(new Error('AI timeout')), 15000)
-            ),
-          ]);
+          // Fastest free provider first, one try each (callAIFast in server/lib/ai-client.ts).
+          const started = Date.now();
+          const fast = await callAIFast(systemPrompt, userPrompt, {
+            priority: 'high',
+            estimatedTokens: 2000,
+            temperature: 0.2,
+            maxOutputTokens: 4000,
+            budgetMs: 20_000,
+          });
+          console.log(`[Extension] text fill via ${fast.provider} in ${Date.now() - started} ms (${fields.length} fields)`);
+          aiResponse = fast.text;
         }
 
         const parsed = JSON.parse(extractJsonObject(aiResponse));
